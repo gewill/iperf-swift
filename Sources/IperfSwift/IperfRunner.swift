@@ -159,6 +159,9 @@ public class IperfRunner {
             if let duration = configuration.duration {
                 iperf_set_test_duration(currentTest, Int32(duration))
             }
+            if let numberOfBytes = configuration.numberOfBytes {
+                iperf_set_test_bytes(currentTest, UInt64(numberOfBytes))
+            }
             if let timeout = configuration.timeout {
                 iperf_set_test_connect_timeout(currentTest, Int32(timeout) * 1000)
             }

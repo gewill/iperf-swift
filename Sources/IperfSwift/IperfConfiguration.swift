@@ -46,6 +46,7 @@ public struct IperfConfiguration {
     public var rate: UInt64 = .init(1024 * 1024)
 
     public var duration: TimeInterval?
+    public var numberOfBytes: UInt64?
     public var timeout: TimeInterval?
     public var tos: Int?
 
