@@ -32,6 +32,7 @@ public struct IperfIntervalResult: Identifiable {
     }
     public var error: IperfError = .UNKNOWN
     public var prot: IperfProtocol = .tcp
+    public var reverse: Int32 = 0
     
     public init(
         runnerState: IperfRunnerState = .unknown,

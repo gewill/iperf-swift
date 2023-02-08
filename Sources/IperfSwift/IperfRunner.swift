@@ -83,6 +83,7 @@ public class IperfRunner {
         var result = IperfIntervalResult(prot: configuration.prot)
         result.debugDescription = "OK"
         result.state = IperfState(rawValue: runningTest.state) ?? .UNKNOWN
+        result.reverse = runningTest.reverse
         
         if result.state == .IPERF_DONE {
             state = .finished
