@@ -1,6 +1,6 @@
 # Swift wrapper for iPerf
 
-An easy to use Swift wrapper for iPerf.
+An easy to use Swift wrapper for [iPerf](https://github.com/esnet/iperf).
 
 ## Usage
 
