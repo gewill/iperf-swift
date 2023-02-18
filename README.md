@@ -68,3 +68,9 @@ class IperfRunnerController: ObservableObject, Identifiable {
 ## Not implemented
 
 The code which requires OpenSSL library is currently commented. 
+
+## License
+
+iperf-swift is released under the MIT license.
+iperf is released under the BSD license.
+See LICENSE for details.
