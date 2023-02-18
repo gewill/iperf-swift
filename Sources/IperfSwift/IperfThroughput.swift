@@ -14,13 +14,13 @@ public struct IperfThroughput {
     }
     
     public var Kbps: Double {
-        return bps / 1024
+        return bps / 1000
     }
     public var Mbps: Double {
-        return Kbps / 1024
+        return Kbps / 1000
     }
     public var Gbps: Double {
-        return Mbps / 1024
+        return Mbps / 1000
     }
     
     public init(bytesPerSecond initValue: Double) {
