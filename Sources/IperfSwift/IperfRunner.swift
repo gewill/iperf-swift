@@ -131,6 +131,9 @@ public class IperfRunner {
             iperf_set_test_reporter_interval(currentTest, Double(reporterInterval))
             iperf_set_test_stats_interval(currentTest, Double(reporterInterval))
         }
+        if configuration.omit > 0 {
+            iperf_set_test_omit(currentTest, omit: Int32(configuration.omit))
+        }
         
         if configuration.role == .server {
             if let addr = addr {
