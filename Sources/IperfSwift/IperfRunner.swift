@@ -98,7 +98,9 @@ public class IperfRunner {
         while true {
             let intervalResultsP: UnsafeMutablePointer<iperf_interval_results>? = extract_iperf_interval_results(OpaquePointer(stream))
             if let intervalResults = intervalResultsP?.pointee {
-                result.streams.append(IperfStreamIntervalResult(intervalResults))
+                if intervalResults.omitted == 0 {
+                    result.streams.append(IperfStreamIntervalResult(intervalResults))
+                }
             }
             if stream.pointee.streams.sle_next == nil {
                 break
@@ -132,7 +134,7 @@ public class IperfRunner {
             iperf_set_test_stats_interval(currentTest, Double(reporterInterval))
         }
         if configuration.omit > 0 {
-            iperf_set_test_omit(currentTest, omit: Int32(configuration.omit))
+            iperf_set_test_omit(currentTest, Int32(configuration.omit))
         }
         
         if configuration.role == .server {
