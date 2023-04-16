@@ -7,12 +7,12 @@
 
 import Foundation
 
-public enum IperfError: Int32 {
+public enum IperfError: Int32, CaseIterable {
     case UNKNOWN = -1
     case IENONE = 0             // No error
     /* Parameter errors */
-    case IESERVCLIENT = 1       // Iperf cannot be both server and client
-    case IENOROLE = 2           // Iperf must either be a client (-c) or server (-s)
+    case IESERVCLIENT = 1       // iPerf cannot be both server and client
+    case IENOROLE = 2           // iPerf must either be a client (-c) or server (-s)
     case IESERVERONLY = 3       // This option is server only
     case IECLIENTONLY = 4       // This option is client only
     case IEDURATION = 5         // test duration too long. Maximum value = %dMAX_TIME
@@ -35,7 +35,7 @@ public enum IperfError: Int32 {
     case IESETCLIENTAUTH = 22   // Bad configuration of client authentication
     case IESETSERVERAUTH = 23   // Bad configuration of server authentication
     case IEBADFORMAT = 24        // Bad format argument to -f
-    case IEREVERSEBIDIR = 25    // Iperf cannot be both reverse and bidirectional
+    case IEREVERSEBIDIR = 25    // iPerf cannot be both reverse and bidirectional
     case IEBADPORT = 26        // Bad port number
     case IETOTALRATE = 27       // Total required bandwidth is larger than server's limit
     case IETOTALINTERVAL = 28   // Invalid time interval for calculating average data rate
@@ -108,9 +108,9 @@ public enum IperfError: Int32 {
             return "No error"
         /* Parameter errors */
         case .IESERVCLIENT:
-            return "Iperf cannot be both server and client"
+            return "iPerf cannot be both server and client"
         case .IENOROLE:
-            return "Iperf must either be a client (-c) or server (-s)"
+            return "iPerf must either be a client (-c) or server (-s)"
         case .IESERVERONLY:
             return "This option is server only"
         case .IECLIENTONLY:
@@ -156,7 +156,7 @@ public enum IperfError: Int32 {
         case .IEBADFORMAT:
             return "Bad format argument to -f"
         case .IEREVERSEBIDIR:
-            return "Iperf cannot be both reverse and bidirectional"
+            return "iPerf cannot be both reverse and bidirectional"
         case .IEBADPORT:
             return "Bad port number"
         case .IETOTALRATE:
