@@ -24,8 +24,6 @@
  * This code is distributed under a BSD style license, see the LICENSE
  * file for complete information.
  */
-#import "iperf.h"
-
 enum {
     UNIT_LEN = 32
 };

@@ -29,23 +29,18 @@
 
 #ifdef __linux__
 #include <linux/types.h>
-#else
-# include <stdint.h>
-# include <netinet/in.h>
-typedef int32_t __s32;
-typedef uint8_t __u8;
-typedef uint16_t __u16;
-typedef uint32_t __u32;
-#endif
+#include <linux/version.h>
 
-/*                                                                                                                                                                             
-   It is just a stripped copy of the Linux kernel header "linux/in6.h" 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0)
+#include <linux/in6.h>
+#endif
+#ifndef __ANDROID__
+/*
+   It is just a stripped copy of the Linux kernel header "linux/in6.h"
    "Flow label" things are still not defined in "netinet/in*.h" headers,
    but we cannot use "linux/in6.h" immediately because it currently
-   conflicts with "netinet/in.h" .
+   conflicts with "netinet/in.h" . (in kernel versions < 3.7.0)
 */
-
-#ifndef __ANDROID__
 struct in6_flowlabel_req
 {
     struct in6_addr flr_dst;
@@ -76,6 +71,7 @@ struct in6_flowlabel_req
 #define IPV6_FLOWINFO_FLOWLABEL 0x000fffff
 #define IPV6_FLOWINFO_PRIORITY  0x0ff00000
 
+#endif
 #define IPV6_FLOWLABEL_MGR      32
 #define IPV6_FLOWINFO_SEND      33
 

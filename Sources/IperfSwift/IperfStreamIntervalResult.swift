@@ -26,12 +26,12 @@ public struct IperfStreamIntervalResult {
     var cnt_error: Int32 = 0
     var omitted: Int32 = 0
     
-    var intervalRetrans: Int32 = 0
-    var intervalSacks: Int32 = 0
-    var sndCwnd: Int32 = 0
-    var rtt: Int32 = 0
-    var rttvar: Int32 = 0
-    var pmtu: Int32 = 0
+    var intervalRetrans: Int = 0
+    var snd_wnd: Int = 0
+    var sndCwnd: Int = 0
+    var rtt: Int = 0
+    var rttvar: Int = 0
+    var pmtu: Int = 0
     
     var startTime: Double = 0
     var endTime: Double = 0
@@ -73,7 +73,7 @@ public struct IperfStreamIntervalResult {
         omitted = results.omitted
         
         intervalRetrans = results.interval_retrans
-        intervalSacks = results.interval_sacks
+        snd_wnd = results.snd_wnd
         sndCwnd = results.snd_cwnd
         rtt = results.rtt
         rttvar = results.rttvar
