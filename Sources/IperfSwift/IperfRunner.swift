@@ -136,6 +136,9 @@ public class IperfRunner {
         if configuration.omit > 0 {
             iperf_set_test_omit(currentTest, Int32(configuration.omit))
         }
+        if let logfile = configuration.logfile {
+            iperf_set_test_logfile(currentTest, logfile)
+        }
         
         if configuration.role == .server {
             if let addr = addr {

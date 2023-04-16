@@ -53,6 +53,7 @@ public struct IperfConfiguration {
     public var reporterInterval: TimeInterval?
     public var statsInterval: TimeInterval?
     public var omit: Int = 0
-
+    public var logfile: String?
+    
     public init() {}
 }
