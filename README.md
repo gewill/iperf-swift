@@ -69,6 +69,15 @@ class IperfRunnerController: ObservableObject, Identifiable {
 
 The code which requires OpenSSL library is currently commented. 
 
+## Sync [iPerf](https://github.com/esnet/iperf)
+
+Thanks to ndfred [sync.sh](https://github.com/ndfred/iperf-ios/blob/master/sync.sh)
+
+1. Run `sync.sh`
+2. Add `#include <File.h>` in `/Sources/IperfCLib/include/iperf.h` and `Sources/IperfCLib/include/iperf_util.h`
+3. Add `#ifdef __linux__` in`Sources/IperfCLib/include/flowlabel.h`
+4. Add `#if defined(HAVE_SSL)` in `Sources/IperfCLib/include/iperf_auth.h`
+
 ## License
 
 iperf-swift is released under the MIT license.
