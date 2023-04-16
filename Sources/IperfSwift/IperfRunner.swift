@@ -62,6 +62,7 @@ public class IperfRunner {
     
     // MARK: Callbacks
     private let reporterCallback: @convention(c) (UnsafeMutablePointer<iperf_test>?) -> Void = { refTest in
+        iperf_reporter_callback(refTest)
         DispatchQueue.main.async {
             if let testPointer = refTest {
                 let testUID = String(testPointer.hashValue)
@@ -139,6 +140,7 @@ public class IperfRunner {
         if let logfile = configuration.logfile {
             iperf_set_test_logfile(currentTest, logfile)
         }
+        iperf_set_verbose(currentTest, configuration.verbose ? 1 : 0)
         
         if configuration.role == .server {
             if let addr = addr {

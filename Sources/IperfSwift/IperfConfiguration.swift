@@ -54,6 +54,7 @@ public struct IperfConfiguration {
     public var statsInterval: TimeInterval?
     public var omit: Int = 0
     public var logfile: String?
+    public var verbose: Bool = false
     
     public init() {}
 }
