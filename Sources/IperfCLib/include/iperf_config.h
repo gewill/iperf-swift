@@ -68,7 +68,7 @@
 /* #undef HAVE_SO_MAX_PACING_RATE */
 
 /* OpenSSL Is Available */
-/* #undef HAVE_SSL */
+#define HAVE_SSL 1
 
 /* Define to 1 if you have the <stdint.h> header file. */
 #define HAVE_STDINT_H 1

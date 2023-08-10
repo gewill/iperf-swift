@@ -14,7 +14,7 @@ git clone --quiet --depth 1 --single-branch "$REPO_URL" --branch "$TAG" "$CHECKO
 echo "Configuring the source files"
 pushd "$PWD"
 cd "$CHECKOUT_PATH"
-# ./configure --without-openssl > /dev/null
+./configure > /dev/null
 popd
 
 echo "Copying relevant source files"
