@@ -16,14 +16,14 @@ public struct IperfStreamIntervalResult {
 //    void     *custom_data;
     var bytesTransferred: UInt64 = 0
     var intervalDuration: Double = 0
-    var intervalPacketCount: Int32 = 0
-    var intervalOutoforderPackets: Int32 = 0
-    var intervalCntError: Int32 = 0
+    var intervalPacketCount: Int64 = 0
+    var intervalOutoforderPackets: Int64 = 0
+    var intervalCntError: Int64 = 0
     
-    var packetCount: Int32 = 0
+    var packetCount: Int64 = 0
     var jitter: Double = 0
-    var outoforderPackets: Int32 = 0
-    var cnt_error: Int32 = 0
+    var outoforderPackets: Int64 = 0
+    var cnt_error: Int64 = 0
     var omitted: Int32 = 0
     
     var intervalRetrans: Int = 0
