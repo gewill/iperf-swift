@@ -78,33 +78,33 @@ int check_authentication(const char *username, const char *password, const time_
 
     char *s_username, *s_password;
     int i;
-    FILE *ptr_file;
-    char buf[1024];
 
-    ptr_file =fopen(filename,"r");
-    if (!ptr_file)
-        return 2;
+    char *text_copy = strdup(filename); // Create a copy of the input text
 
-    while (fgets(buf,1024, ptr_file)){
-        //strip the \n or \r\n chars
-        for (i = 0; buf[i] != '\0'; i++){
-            if (buf[i] == '\n' || buf[i] == '\r'){
-                buf[i] = '\0';
+    char *line = strtok(text_copy, "\n"); // Tokenize the text by lines
+
+    while (line != NULL) {
+        // Strip the \r chars
+        for (i = 0; line[i] != '\0'; i++) {
+            if (line[i] == '\r') {
+                line[i] = '\0';
                 break;
             }
         }
-        //skip empty / not completed / comment lines
-        if (strlen(buf) == 0 || strchr(buf, ',') == NULL || buf[0] == '#'){
+        // Skip empty / not completed / comment lines
+        if (strlen(line) == 0 || strchr(line, ',') == NULL || line[0] == '#') {
+            line = strtok(NULL, "\n");
             continue;
         }
-        s_username = strtok(buf, ",");
+        s_username = strtok(line, ",");
         s_password = strtok(NULL, ",");
-        if (strcmp( username, s_username ) == 0 && strcmp( passwordHash, s_password ) == 0){
-            fclose(ptr_file);
+        if (strcmp(username, s_username) == 0 && strcmp(passwordHash, s_password) == 0) {
+            free(text_copy); // Free the allocated memory
             return 0;
         }
+        line = strtok(NULL, "\n");
     }
-    fclose(ptr_file);
+    free(text_copy); // Free the allocated memory
     return 3;
 }
 

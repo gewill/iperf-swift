@@ -56,5 +56,18 @@ public struct IperfConfiguration {
     public var logfile: String?
     public var verbose: Bool = false
     
+    // Authentication
+    public var isAuth: Bool = false
+    
+    // Client
+    public var publicKey: String = ""
+    public var username: String = ""
+    public var password: String = ""
+
+    // Server
+    public var privateKey: String = ""
+    public var authorizedUsers: String = ""
+    public var timeSkewThreshold: Int32 = 10
+    
     public init() {}
 }

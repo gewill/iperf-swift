@@ -146,6 +146,12 @@ public class IperfRunner {
             if let addr = addr {
                 iperf_set_test_bind_address(currentTest, addr)
             }
+            
+            if configuration.isAuth {
+                iperf_set_test_server_rsa_privkey(currentTest, configuration.privateKey)
+                iperf_set_test_server_authorized_users(currentTest, configuration.authorizedUsers)
+                iperf_set_test_server_skew_threshold(currentTest, configuration.timeSkewThreshold)
+            }
         }
         
         if configuration.role == .client {
@@ -177,6 +183,12 @@ public class IperfRunner {
             }
             if let tos = configuration.tos {
                 iperf_set_test_tos(currentTest, Int32(tos))
+            }
+            
+            if configuration.isAuth {
+                iperf_set_test_client_rsa_pubkey(currentTest, configuration.publicKey)
+                iperf_set_test_client_username(currentTest, configuration.username)
+                iperf_set_test_client_password(currentTest, configuration.password)
             }
         }
     }
