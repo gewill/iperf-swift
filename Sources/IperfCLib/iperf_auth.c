@@ -77,34 +77,22 @@ int check_authentication(const char *username, const char *password, const time_
     sha256(&salted[0], passwordHash);
 
     char *s_username, *s_password;
-    int i;
 
     char *text_copy = strdup(filename); // Create a copy of the input text
+    char *p = text_copy;
 
-    char *line = strtok(text_copy, "\n"); // Tokenize the text by lines
-
-    while (line != NULL) {
-        // Strip the \r chars
-        for (i = 0; line[i] != '\0'; i++) {
-            if (line[i] == '\r') {
-                line[i] = '\0';
-                break;
-            }
-        }
-        // Skip empty / not completed / comment lines
-        if (strlen(line) == 0 || strchr(line, ',') == NULL || line[0] == '#') {
-            line = strtok(NULL, "\n");
-            continue;
-        }
+     // Tokenize the text by lines
+    while (p) {
+        char *line = strsep(&p, "\n");
         s_username = strtok(line, ",");
         s_password = strtok(NULL, ",");
         if (strcmp(username, s_username) == 0 && strcmp(passwordHash, s_password) == 0) {
-            free(text_copy); // Free the allocated memory
+            free(text_copy);
             return 0;
         }
-        line = strtok(NULL, "\n");
     }
-    free(text_copy); // Free the allocated memory
+
+    free(text_copy);
     return 3;
 }
 
