@@ -65,9 +65,9 @@ class IperfRunnerController: ObservableObject, Identifiable {
 
 ```
 
-## Not implemented
+## OpenSSL
 
-The code which requires OpenSSL library is currently commented. 
+Need compiling OpenSSL, see https://github.com/x2on/OpenSSL-for-iPhone
 
 ## Sync [iPerf](https://github.com/esnet/iperf)
 
