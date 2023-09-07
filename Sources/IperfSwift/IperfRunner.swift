@@ -185,8 +185,6 @@ public class IperfRunner {
                 iperf_set_test_tos(currentTest, Int32(tos))
             }
             
-            iperf_set_test_zerocopy(currentTest, configuration.zerocopy ? 1 : 0)
-            
             if configuration.isAuth {
                 iperf_set_test_client_rsa_pubkey(currentTest, configuration.publicKey)
                 iperf_set_test_client_username(currentTest, configuration.username)

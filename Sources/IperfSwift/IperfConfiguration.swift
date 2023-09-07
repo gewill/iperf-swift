@@ -49,7 +49,6 @@ public struct IperfConfiguration {
     public var numberOfBytes: UInt64?
     public var timeout: TimeInterval?
     public var tos: Int?
-    public var zerocopy: Bool = true
 
     public var reporterInterval: TimeInterval?
     public var statsInterval: TimeInterval?
