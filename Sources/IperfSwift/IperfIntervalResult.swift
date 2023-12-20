@@ -13,7 +13,7 @@ public struct IperfIntervalResult: Identifiable {
     
     public var streams: [IperfStreamIntervalResult] = []
     
-    public var totalBytes: UInt64 = 0
+    public var totalBytes: Int = 0
     public var totalPackets: Int64 = 0
     public var totalLostPackets: Int64 = 0
     public var totalOutoforderPackets: Int64 = 0

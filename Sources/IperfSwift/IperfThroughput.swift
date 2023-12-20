@@ -27,7 +27,7 @@ public struct IperfThroughput {
         rawValue = initValue
     }
     
-    public init(bytes initValue: UInt64, seconds: TimeInterval) {
+    public init(bytes initValue: Int, seconds: TimeInterval) {
         self.init(bytesPerSecond: Double(initValue) / seconds)
     }
 }

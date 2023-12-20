@@ -14,7 +14,7 @@ public struct IperfStreamIntervalResult {
 //    struct tcp_info tcpInfo; /* getsockopt(TCP_INFO) for Linux, {Free,Net}BSD */
 //    TAILQ_ENTRY(iperf_interval_results) irlistentries;
 //    void     *custom_data;
-    var bytesTransferred: UInt64 = 0
+    var bytesTransferred: Int = 0
     var intervalDuration: Double = 0
     var intervalPacketCount: Int64 = 0
     var intervalOutoforderPackets: Int64 = 0
