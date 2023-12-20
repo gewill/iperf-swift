@@ -211,7 +211,7 @@ public class IperfRunner {
                 code = iperf_run_server(self.currentTest)
             }
             if code < 0 || i_errno != IperfError.IENONE.rawValue,
-               self.state != .finished {
+               self.currentTest?.pointee.done == 0 {
                 self.onError(IperfError.init(rawValue: i_errno) ?? .UNKNOWN)
             } else {
                 guard let configuration = self.configuration else {
