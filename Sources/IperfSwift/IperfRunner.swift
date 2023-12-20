@@ -86,6 +86,10 @@ public class IperfRunner {
         result.state = IperfState(rawValue: runningTest.state) ?? .UNKNOWN
         result.reverse = runningTest.reverse
         
+        if result.state == .EXCHANGE_RESULTS {
+            state = .finished
+        }
+
         if result.state == .IPERF_DONE {
             state = .finished
             if configuration.role == .server {
@@ -206,7 +210,8 @@ public class IperfRunner {
             } else {
                 code = iperf_run_server(self.currentTest)
             }
-            if code < 0 || i_errno != IperfError.IENONE.rawValue {
+            if code < 0 || i_errno != IperfError.IENONE.rawValue,
+               self.state != .finished {
                 self.onError(IperfError.init(rawValue: i_errno) ?? .UNKNOWN)
             } else {
                 guard let configuration = self.configuration else {
