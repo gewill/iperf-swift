@@ -49,6 +49,12 @@
 /* Define to 1 if you have the <poll.h> header file. */
 #define HAVE_POLL_H 1
 
+/* Define if you have POSIX threads libraries and header files. */
+#define HAVE_PTHREAD 1
+
+/* Have PTHREAD_PRIO_INHERIT. */
+#define HAVE_PTHREAD_PRIO_INHERIT 1
+
 /* Define to 1 if you have the `sched_setaffinity' function. */
 /* #undef HAVE_SCHED_SETAFFINITY */
 
@@ -69,6 +75,9 @@
 
 /* OpenSSL Is Available */
 #define HAVE_SSL 1
+
+/* Define to 1 if you have the <stdatomic.h> header file. */
+#define HAVE_STDATOMIC_H 1
 
 /* Define to 1 if you have the <stdint.h> header file. */
 #define HAVE_STDINT_H 1
@@ -125,7 +134,7 @@
 #define PACKAGE_NAME "iperf"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "iperf 3.14"
+#define PACKAGE_STRING "iperf 3.16"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "iperf"
@@ -134,7 +143,11 @@
 #define PACKAGE_URL "https://software.es.net/iperf/"
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "3.14"
+#define PACKAGE_VERSION "3.16"
+
+/* Define to necessary symbol if this constant uses a non-standard name on
+   your system. */
+/* #undef PTHREAD_CREATE_JOINABLE */
 
 /* Define to 1 if all of the C90 standard headers exist (not just the ones
    required in a freestanding environment). This macro is provided for
@@ -142,7 +155,7 @@
 #define STDC_HEADERS 1
 
 /* Version number of package */
-#define VERSION "3.14"
+#define VERSION "3.16"
 
 /* Define to empty if `const' does not conform to ANSI C. */
 /* #undef const */
