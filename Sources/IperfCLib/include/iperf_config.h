@@ -1,16 +1,16 @@
 /* src/iperf_config.h.  Generated from iperf_config.h.in by configure.  */
 /* src/iperf_config.h.in.  Generated from configure.ac by autoheader.  */
 
-/* Define to 1 if you have the `clock_gettime' function. */
+/* Define to 1 if you have the 'clock_gettime' function. */
 #define HAVE_CLOCK_GETTIME 1
 
-/* Define to 1 if you have the `cpuset_setaffinity' function. */
+/* Define to 1 if you have the 'cpuset_setaffinity' function. */
 /* #undef HAVE_CPUSET_SETAFFINITY */
 
 /* Have CPU affinity support. */
 /* #undef HAVE_CPU_AFFINITY */
 
-/* Define to 1 if you have the `daemon' function. */
+/* Define to 1 if you have the 'daemon' function. */
 #define HAVE_DAEMON 1
 
 /* Define to 1 if you have the <dlfcn.h> header file. */
@@ -25,7 +25,7 @@
 /* Have IPv6 flowlabel support. */
 /* #undef HAVE_FLOWLABEL */
 
-/* Define to 1 if you have the `getline' function. */
+/* Define to 1 if you have the 'getline' function. */
 #define HAVE_GETLINE 1
 
 /* Define to 1 if you have the <inttypes.h> header file. */
@@ -55,26 +55,26 @@
 /* Have PTHREAD_PRIO_INHERIT. */
 #define HAVE_PTHREAD_PRIO_INHERIT 1
 
-/* Define to 1 if you have the `sched_setaffinity' function. */
+/* Define to 1 if you have the 'sched_setaffinity' function. */
 /* #undef HAVE_SCHED_SETAFFINITY */
 
 /* Have SCTP support. */
 /* #undef HAVE_SCTP_H */
 
-/* Define to 1 if you have the `sendfile' function. */
+/* Define to 1 if you have the 'sendfile' function. */
 #define HAVE_SENDFILE 1
 
-/* Define to 1 if you have the `SetProcessAffinityMask' function. */
+/* Define to 1 if you have the 'SetProcessAffinityMask' function. */
 /* #undef HAVE_SETPROCESSAFFINITYMASK */
 
 /* Have SO_BINDTODEVICE sockopt. */
-/* #undef HAVE_SO_BINDTODEVICE */
+#define HAVE_SO_BINDTODEVICE 1
 
 /* Have SO_MAX_PACING_RATE sockopt. */
 /* #undef HAVE_SO_MAX_PACING_RATE */
 
 /* OpenSSL Is Available */
-#define HAVE_SSL 1
+/* #undef HAVE_SSL */
 
 /* Define to 1 if you have the <stdatomic.h> header file. */
 #define HAVE_STDATOMIC_H 1
@@ -94,7 +94,7 @@
 /* Define to 1 if you have the <string.h> header file. */
 #define HAVE_STRING_H 1
 
-/* Define to 1 if the system has the type `struct sctp_assoc_value'. */
+/* Define to 1 if the system has the type 'struct sctp_assoc_value'. */
 /* #undef HAVE_STRUCT_SCTP_ASSOC_VALUE */
 
 /* Define to 1 if you have the <sys/endian.h> header file. */
@@ -134,7 +134,7 @@
 #define PACKAGE_NAME "iperf"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "iperf 3.16"
+#define PACKAGE_STRING "iperf 3.17.1"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "iperf"
@@ -143,19 +143,19 @@
 #define PACKAGE_URL "https://software.es.net/iperf/"
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "3.16"
+#define PACKAGE_VERSION "3.17.1"
 
 /* Define to necessary symbol if this constant uses a non-standard name on
    your system. */
 /* #undef PTHREAD_CREATE_JOINABLE */
 
-/* Define to 1 if all of the C90 standard headers exist (not just the ones
+/* Define to 1 if all of the C89 standard headers exist (not just the ones
    required in a freestanding environment). This macro is provided for
    backward compatibility; new code need not use it. */
 #define STDC_HEADERS 1
 
 /* Version number of package */
-#define VERSION "3.16"
+#define VERSION "3.17.1"
 
-/* Define to empty if `const' does not conform to ANSI C. */
+/* Define to empty if 'const' does not conform to ANSI C. */
 /* #undef const */
