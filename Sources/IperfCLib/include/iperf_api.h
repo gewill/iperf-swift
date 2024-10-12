@@ -225,6 +225,7 @@ void    iperf_set_test_client_rsa_pubkey(struct iperf_test *ipt, const char *cli
 void    iperf_set_test_server_authorized_users(struct iperf_test *ipt, const char *server_authorized_users);
 void    iperf_set_test_server_skew_threshold(struct iperf_test *ipt, int server_skew_threshold);
 void    iperf_set_test_server_rsa_privkey(struct iperf_test *ipt, const char *server_rsa_privkey_base64);
+void    iperf_set_test_use_pkcs1_padding(struct iperf_test *ipt, int use_pkcs1_padding);
 #endif // HAVE_SSL
 
 void	iperf_set_test_connect_timeout(struct iperf_test *ipt, int ct);

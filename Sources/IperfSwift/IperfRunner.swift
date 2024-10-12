@@ -195,6 +195,10 @@ public class IperfRunner {
                 iperf_set_test_client_password(currentTest, configuration.password)
             }
         }
+
+        if configuration.isAuth {
+            iperf_set_test_use_pkcs1_padding(currentTest, configuration.usePkcs1Padding ? 1 : 0)
+        }
     }
     
     private func startIperfProcess() {

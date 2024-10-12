@@ -749,6 +749,12 @@ iperf_set_test_server_skew_threshold(struct iperf_test *ipt, int server_skew_thr
 }
 
 void
+iperf_set_test_use_pkcs1_padding(struct iperf_test *ipt, int use_pkcs1_padding)
+{
+    ipt->use_pkcs1_padding = use_pkcs1_padding;
+}
+
+void
 iperf_set_test_server_rsa_privkey(struct iperf_test *ipt, const char *server_rsa_privkey_base64)
 {
     ipt->server_rsa_private_key = load_privkey_from_base64(server_rsa_privkey_base64);

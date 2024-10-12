@@ -58,6 +58,7 @@ public struct IperfConfiguration {
     
     // Authentication
     public var isAuth: Bool = false
+    public var usePkcs1Padding: Bool = false
     
     // Client
     public var publicKey: String = ""
