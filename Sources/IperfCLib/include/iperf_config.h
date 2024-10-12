@@ -74,9 +74,9 @@
 /* #undef HAVE_SO_MAX_PACING_RATE */
 
 /* OpenSSL Is Available */
-/* #undef HAVE_SSL */
+#define HAVE_SSL 1
 
-/* Define to 1 if you have the <stdatomic.h> header file. */
+/* Define to 1 if you have the <iperf_stdatomic.h> header file. */
 #define HAVE_STDATOMIC_H 1
 
 /* Define to 1 if you have the <stdint.h> header file. */

@@ -24,7 +24,7 @@
 #include <pthread.h>
 #include <stdint.h>
 
-#include "stdatomic.h"
+#include "iperf_stdatomic.h"
 
 static pthread_mutex_t atomic_lock = PTHREAD_MUTEX_INITIALIZER;
 

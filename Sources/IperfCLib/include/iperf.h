@@ -69,9 +69,9 @@
  * with normal integers and warn.
  */
 #ifdef HAVE_STDATOMIC_H
-#include <stdatomic.h>
+#include <iperf_stdatomic.h>
 #else
-#warning "No <stdatomic.h> available."
+#warning "No <iperf_stdatomic.h> available."
 typedef uint64_t atomic_uint_fast64_t;
 #endif // HAVE_STDATOMIC_H
 
