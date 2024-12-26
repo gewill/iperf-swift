@@ -4,6 +4,9 @@
 /* Define to 1 if you have the 'clock_gettime' function. */
 #define HAVE_CLOCK_GETTIME 1
 
+/* Define to 1 if you have the 'clock_nanosleep' function. */
+/* #undef HAVE_CLOCK_NANOSLEEP */
+
 /* Define to 1 if you have the 'cpuset_setaffinity' function. */
 /* #undef HAVE_CPUSET_SETAFFINITY */
 
@@ -42,6 +45,9 @@
 
 /* Define to 1 if you have the <linux/tcp.h> header file. */
 /* #undef HAVE_LINUX_TCP_H */
+
+/* Define to 1 if you have the 'nanosleep' function. */
+#define HAVE_NANOSLEEP 1
 
 /* Define to 1 if you have the <netinet/sctp.h> header file. */
 /* #undef HAVE_NETINET_SCTP_H */
@@ -134,7 +140,7 @@
 #define PACKAGE_NAME "iperf"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "iperf 3.17.1"
+#define PACKAGE_STRING "iperf 3.18"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "iperf"
@@ -143,7 +149,7 @@
 #define PACKAGE_URL "https://software.es.net/iperf/"
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "3.17.1"
+#define PACKAGE_VERSION "3.18"
 
 /* Define to necessary symbol if this constant uses a non-standard name on
    your system. */
@@ -155,7 +161,7 @@
 #define STDC_HEADERS 1
 
 /* Version number of package */
-#define VERSION "3.17.1"
+#define VERSION "3.18"
 
 /* Define to empty if 'const' does not conform to ANSI C. */
 /* #undef const */

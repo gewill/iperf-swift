@@ -1,7 +1,7 @@
 #!/bin/sh -e
 
 REPO_URL="https://github.com/esnet/iperf.git"
-TAG="3.17.1"
+TAG="3.18"
 CHECKOUT_PATH="iperf3"
 SRC_PATH="Sources/IperfCLib"
 
