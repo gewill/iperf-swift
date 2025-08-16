@@ -34,6 +34,9 @@
 /* Define to 1 if you have the <inttypes.h> header file. */
 #define HAVE_INTTYPES_H 1
 
+/* Have MPTCP protocol. */
+/* #undef HAVE_IPPROTO_MPTCP */
+
 /* Have IP_DONTFRAG sockopt. */
 #define HAVE_IP_DONTFRAG 1
 
@@ -45,6 +48,9 @@
 
 /* Define to 1 if you have the <linux/tcp.h> header file. */
 /* #undef HAVE_LINUX_TCP_H */
+
+/* Have MSG_TRUNC recv option. */
+#define HAVE_MSG_TRUNC 1
 
 /* Define to 1 if you have the 'nanosleep' function. */
 #define HAVE_NANOSLEEP 1
@@ -104,7 +110,7 @@
 /* #undef HAVE_STRUCT_SCTP_ASSOC_VALUE */
 
 /* Define to 1 if you have the <sys/endian.h> header file. */
-/* #undef HAVE_SYS_ENDIAN_H */
+#define HAVE_SYS_ENDIAN_H 1
 
 /* Define to 1 if you have the <sys/socket.h> header file. */
 #define HAVE_SYS_SOCKET_H 1
@@ -120,6 +126,9 @@
 
 /* Have tcpi_snd_wnd field in tcp_info. */
 /* #undef HAVE_TCP_INFO_SND_WND */
+
+/* Have TCP_KEEPIDLE sockopt. */
+/* #undef HAVE_TCP_KEEPALIVE */
 
 /* Have TCP_USER_TIMEOUT sockopt. */
 /* #undef HAVE_TCP_USER_TIMEOUT */
@@ -140,7 +149,7 @@
 #define PACKAGE_NAME "iperf"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "iperf 3.18"
+#define PACKAGE_STRING "iperf 3.19.1"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "iperf"
@@ -149,7 +158,7 @@
 #define PACKAGE_URL "https://software.es.net/iperf/"
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "3.18"
+#define PACKAGE_VERSION "3.19.1"
 
 /* Define to necessary symbol if this constant uses a non-standard name on
    your system. */
@@ -161,7 +170,7 @@
 #define STDC_HEADERS 1
 
 /* Version number of package */
-#define VERSION "3.18"
+#define VERSION "3.19.1"
 
 /* Define to empty if 'const' does not conform to ANSI C. */
 /* #undef const */
