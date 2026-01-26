@@ -149,7 +149,7 @@
 #define PACKAGE_NAME "iperf"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "iperf 3.19.1"
+#define PACKAGE_STRING "iperf 3.20"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "iperf"
@@ -158,7 +158,7 @@
 #define PACKAGE_URL "https://software.es.net/iperf/"
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "3.19.1"
+#define PACKAGE_VERSION "3.20"
 
 /* Define to necessary symbol if this constant uses a non-standard name on
    your system. */
@@ -170,7 +170,7 @@
 #define STDC_HEADERS 1
 
 /* Version number of package */
-#define VERSION "3.19.1"
+#define VERSION "3.20"
 
 /* Define to empty if 'const' does not conform to ANSI C. */
 /* #undef const */
