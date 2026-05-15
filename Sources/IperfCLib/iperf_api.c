@@ -824,6 +824,12 @@ iperf_set_test_tos(struct iperf_test *ipt, int tos)
 }
 
 void
+iperf_set_test_dscp(struct iperf_test *ipt, int dscp)
+{
+    ipt->settings->tos = dscp << 2;
+}
+
+void
 iperf_set_test_extra_data(struct iperf_test *ipt, const char *dat)
 {
     ipt->extra_data = strdup(dat);

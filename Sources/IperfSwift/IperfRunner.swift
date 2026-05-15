@@ -188,6 +188,9 @@ public class IperfRunner {
             if let tos = configuration.tos {
                 iperf_set_test_tos(currentTest, Int32(tos))
             }
+            if let dscp = configuration.dscp {
+                iperf_set_test_dscp(currentTest, Int32(dscp))
+            }
             
             if configuration.isAuth {
                 iperf_set_test_client_rsa_pubkey(currentTest, configuration.publicKey)
