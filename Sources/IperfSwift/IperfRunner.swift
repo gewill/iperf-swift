@@ -185,9 +185,6 @@ public class IperfRunner {
             if let timeout = configuration.timeout {
                 iperf_set_test_connect_timeout(currentTest, Int32(timeout) * 1000)
             }
-            if let tos = configuration.tos {
-                iperf_set_test_tos(currentTest, Int32(tos))
-            }
             if let dscp = configuration.dscp {
                 iperf_set_test_dscp(currentTest, Int32(dscp))
             }

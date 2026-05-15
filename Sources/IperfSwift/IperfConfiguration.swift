@@ -48,7 +48,6 @@ public struct IperfConfiguration {
     public var duration: TimeInterval?
     public var numberOfBytes: UInt64?
     public var timeout: TimeInterval?
-    public var tos: Int?
     public var dscp: Int?
 
     public var reporterInterval: TimeInterval?
