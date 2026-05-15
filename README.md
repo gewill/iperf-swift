@@ -71,15 +71,11 @@ Need compiling OpenSSL, see https://github.com/x2on/OpenSSL-for-iPhone
 
 ## Sync [iPerf](https://github.com/esnet/iperf)
 
-Thanks to ndfred [sync.sh](https://github.com/ndfred/iperf-ios/blob/master/sync.sh)
-
 1. Run `sync.sh`
-2. Add `#include <File.h>` in `/Sources/IperfCLib/include/iperf.h` and `Sources/IperfCLib/include/iperf_util.h`
-3. Add `#ifdef __linux__` in`Sources/IperfCLib/include/flowlabel.h`
-4. Add `#if defined(HAVE_SSL)` in `Sources/IperfCLib/include/iperf_auth.h`
-5. Recover usage of `iperf_stdatomic.h` from `stdatomic.h` in all files
-6. Recover `iperf_set_test_use_pkcs1_padding` function in file `iperf_api.h` and `iperf_api.c`
-7. Recover `check_authentication` function in file `iperf_auth.c`
+
+The script automatically handles upstream synchronization, applies necessary portability patches (e.g., `File.h` inclusion, `stdatomic` redirection), and restores project-specific functions like custom authentication logic.
+
+All customization data is stored in the `iperf_sync/` directory.
 
 ## License
 

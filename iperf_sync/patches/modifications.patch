@@ -1,0 +1,225 @@
+diff -ru a/include/flowlabel.h b/include/flowlabel.h
+--- a/include/flowlabel.h	2026-05-15 22:43:42
++++ b/include/flowlabel.h	2026-05-15 22:43:42
+@@ -27,13 +27,13 @@
+ #ifndef        __FLOW_LABEL_H
+ #define        __FLOW_LABEL_H
+ 
+-
++#ifdef __linux__
+ #include <linux/types.h>
+ #include <linux/version.h>
+ 
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0)
+ #include <linux/in6.h>
+-#else
++#endif
+ #ifndef __ANDROID__
+ /*
+    It is just a stripped copy of the Linux kernel header "linux/in6.h"
+diff -ru a/include/iperf.h b/include/iperf.h
+--- a/include/iperf.h	2026-05-15 22:43:42
++++ b/include/iperf.h	2026-05-15 22:43:42
+@@ -68,9 +68,9 @@
+  * with normal integers and warn.
+  */
+ #ifdef HAVE_STDATOMIC_H
+-#include <stdatomic.h>
++#include <iperf_stdatomic.h>
+ #else
+-#warning "No <stdatomic.h> available."
++#warning "No <iperf_stdatomic.h> available."
+ typedef uint64_t atomic_uint_fast64_t;
+ #endif // HAVE_STDATOMIC_H
+ 
+diff -ru a/include/iperf_api.h b/include/iperf_api.h
+--- a/include/iperf_api.h	2026-05-15 22:43:42
++++ b/include/iperf_api.h	2026-05-15 22:43:42
+@@ -42,9 +42,9 @@
+  * with normal integers and warn.
+  */
+ #ifdef HAVE_STDATOMIC_H
+-#include <stdatomic.h>
++#include <iperf_stdatomic.h>
+ #else
+-#warning "No <stdatomic.h> available"
++#warning "No <iperf_stdatomic.h> available"
+ typedef u_int64_t atomic_uint_fast64_t;
+ #endif // HAVE_STDATOMIC_H
+ 
+@@ -234,6 +234,7 @@
+ void    iperf_set_test_server_authorized_users(struct iperf_test *ipt, const char *server_authorized_users);
+ void    iperf_set_test_server_skew_threshold(struct iperf_test *ipt, int server_skew_threshold);
+ void    iperf_set_test_server_rsa_privkey(struct iperf_test *ipt, const char *server_rsa_privkey_base64);
++void    iperf_set_test_use_pkcs1_padding(struct iperf_test *ipt, int use_pkcs1_padding);
+ void    iperf_set_test_server_rsa_privkey_from_file(struct iperf_test *ipt, const char *server_rsa_privkey_file);
+ #endif // HAVE_SSL
+ 
+diff -ru a/include/iperf_auth.h b/include/iperf_auth.h
+--- a/include/iperf_auth.h	2026-05-15 22:43:42
++++ b/include/iperf_auth.h	2026-05-15 22:43:42
+@@ -25,6 +25,7 @@
+  * for complete information.
+  */
+ 
++#if defined(HAVE_SSL)
+ #include <time.h>
+ #include <sys/types.h>
+ #include <openssl/bio.h>
+@@ -39,3 +40,4 @@
+ int decode_auth_setting(int enable_debug, const char *authtoken, EVP_PKEY *private_key, char **username, char **password, time_t *ts, int use_pkcs1_padding);
+ int check_authentication(const char *username, const char *password, const time_t ts, const char *filename, int skew_threshold);
+ ssize_t iperf_getpass (char **lineptr, size_t *n, FILE *stream);
++#endif
+diff -ru a/include/iperf_config.h b/include/iperf_config.h
+--- a/include/iperf_config.h	2026-05-15 22:43:42
++++ b/include/iperf_config.h	2026-05-15 22:43:42
+@@ -86,9 +86,9 @@
+ /* #undef HAVE_SO_MAX_PACING_RATE */
+ 
+ /* OpenSSL Is Available */
+-/* #undef HAVE_SSL */
++#define HAVE_SSL 1
+ 
+-/* Define to 1 if you have the <stdatomic.h> header file. */
++/* Define to 1 if you have the <iperf_stdatomic.h> header file. */
+ #define HAVE_STDATOMIC_H 1
+ 
+ /* Define to 1 if you have the <stdint.h> header file. */
+diff -ru a/include/iperf_util.h b/include/iperf_util.h
+--- a/include/iperf_util.h	2026-05-15 22:43:42
++++ b/include/iperf_util.h	2026-05-15 22:43:42
+@@ -32,6 +32,8 @@
+ #include <sys/select.h>
+ #include <stddef.h>
+ 
++#include <File.h>
++
+ int readentropy(void *out, size_t outsize);
+ 
+ void fill_with_repeating_pattern(void *out, size_t outsize);
+diff -ru a/iperf_api.c b/iperf_api.c
+--- a/iperf_api.c	2026-05-15 22:43:42
++++ b/iperf_api.c	2026-05-15 22:43:42
+@@ -771,6 +771,12 @@
+ }
+ 
+ void
++iperf_set_test_use_pkcs1_padding(struct iperf_test *ipt, int use_pkcs1_padding)
++{
++    ipt->use_pkcs1_padding = use_pkcs1_padding;
++}
++
++void
+ iperf_set_test_server_rsa_privkey(struct iperf_test *ipt, const char *server_rsa_privkey_base64)
+ {
+     ipt->server_rsa_private_key = load_privkey_from_base64(server_rsa_privkey_base64);
+@@ -1851,12 +1857,20 @@
+     }
+ 
+     if (test->role == 's' && test->server_authorized_users) {
+-        ptr_file =fopen(test->server_authorized_users, "r");
++        ptr_file = fopen(test->server_authorized_users, "r");
+         if (!ptr_file) {
+-            i_errno = IESERVERAUTHUSERS;
+-            return -1;
++            /* 
++             * If fopen fails, it might be raw content instead of a path.
++             * If it contains a comma or newline, we assume it's the users list content.
++             */
++            if (strchr(test->server_authorized_users, ',') == NULL && 
++                strchr(test->server_authorized_users, '\n') == NULL) {
++                i_errno = IESERVERAUTHUSERS;
++                return -1;
++            }
++        } else {
++            fclose(ptr_file);
+         }
+-        fclose(ptr_file);
+     }
+ 
+     if (test->role == 's' && server_rsa_private_key) {
+diff -ru a/iperf_auth.c b/iperf_auth.c
+--- a/iperf_auth.c	2026-05-15 22:43:42
++++ b/iperf_auth.c	2026-05-15 22:43:42
+@@ -66,9 +66,14 @@
+ }
+ 
+ int check_authentication(const char *username, const char *password, const time_t ts, const char *filename, int skew_threshold){
++    if (username == NULL || password == NULL || filename == NULL) {
++        return 3;
++    }
++
+     time_t t = time(NULL);
+-    time_t utc_seconds = mktime(localtime(&t));
+-    if ( (utc_seconds - ts) > skew_threshold || (utc_seconds - ts) < -skew_threshold ) {
++    // Note: mktime(localtime(&t)) is essentially just t. 
++    // We normalize to ensure we are comparing UTC seconds.
++    if ( (t - ts) > skew_threshold || (t - ts) < -skew_threshold ) {
+         return 1;
+     }
+ 
+@@ -78,34 +83,34 @@
+     sha256(&salted[0], passwordHash);
+ 
+     char *s_username, *s_password;
+-    int i;
+-    FILE *ptr_file;
+-    char buf[1024];
+ 
+-    ptr_file =fopen(filename,"r");
+-    if (!ptr_file)
+-        return 2;
++    char *text_copy = strdup(filename); // Create a copy of the input text
++    if (text_copy == NULL) {
++        return 3;
++    }
++    char *p = text_copy;
+ 
+-    while (fgets(buf,1024, ptr_file)){
+-        //strip the \n or \r\n chars
+-        for (i = 0; buf[i] != '\0'; i++){
+-            if (buf[i] == '\n' || buf[i] == '\r'){
+-                buf[i] = '\0';
+-                break;
++    // Tokenize the text by lines
++    while (p) {
++        char *line = strsep(&p, "\n");
++        if (line == NULL || *line == '\0') {
++            continue; // Skip empty lines
++        }
++
++        // Use strsep for thread-safe comma separation
++        char *line_ptr = line;
++        s_username = strsep(&line_ptr, ",");
++        s_password = strsep(&line_ptr, ",");
++
++        if (s_username != NULL && s_password != NULL) {
++            if (strcmp(username, s_username) == 0 && strcmp(passwordHash, s_password) == 0) {
++                free(text_copy);
++                return 0;
+             }
+         }
+-        //skip empty / not completed / comment lines
+-        if (strlen(buf) == 0 || strchr(buf, ',') == NULL || buf[0] == '#'){
+-            continue;
+-        }
+-        s_username = strtok(buf, ",");
+-        s_password = strtok(NULL, ",");
+-        if (strcmp( username, s_username ) == 0 && strcmp( passwordHash, s_password ) == 0){
+-            fclose(ptr_file);
+-            return 0;
+-        }
+     }
+-    fclose(ptr_file);
++
++    free(text_copy);
+     return 3;
+ }
+ 
+Only in a: main.c
+Only in a: t_api.c
+Only in a: t_auth.c
+Only in a: t_timer.c
+Only in a: t_units.c
+Only in a: t_uuid.c
