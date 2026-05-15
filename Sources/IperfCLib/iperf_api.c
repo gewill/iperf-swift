@@ -1857,12 +1857,20 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
     }
 
     if (test->role == 's' && test->server_authorized_users) {
-        ptr_file =fopen(test->server_authorized_users, "r");
+        ptr_file = fopen(test->server_authorized_users, "r");
         if (!ptr_file) {
-            i_errno = IESERVERAUTHUSERS;
-            return -1;
+            /* 
+             * If fopen fails, it might be raw content instead of a path.
+             * If it contains a comma or newline, we assume it's the users list content.
+             */
+            if (strchr(test->server_authorized_users, ',') == NULL && 
+                strchr(test->server_authorized_users, '\n') == NULL) {
+                i_errno = IESERVERAUTHUSERS;
+                return -1;
+            }
+        } else {
+            fclose(ptr_file);
         }
-        fclose(ptr_file);
     }
 
     if (test->role == 's' && server_rsa_private_key) {

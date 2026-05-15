@@ -66,9 +66,14 @@ void sha256(const char *string, char outputBuffer[65])
 }
 
 int check_authentication(const char *username, const char *password, const time_t ts, const char *filename, int skew_threshold){
+    if (username == NULL || password == NULL || filename == NULL) {
+        return 3;
+    }
+
     time_t t = time(NULL);
-    time_t utc_seconds = mktime(localtime(&t));
-    if ( (utc_seconds - ts) > skew_threshold || (utc_seconds - ts) < -skew_threshold ) {
+    // Note: mktime(localtime(&t)) is essentially just t. 
+    // We normalize to ensure we are comparing UTC seconds.
+    if ( (t - ts) > skew_threshold || (t - ts) < -skew_threshold ) {
         return 1;
     }
 
@@ -80,16 +85,28 @@ int check_authentication(const char *username, const char *password, const time_
     char *s_username, *s_password;
 
     char *text_copy = strdup(filename); // Create a copy of the input text
+    if (text_copy == NULL) {
+        return 3;
+    }
     char *p = text_copy;
 
-     // Tokenize the text by lines
+    // Tokenize the text by lines
     while (p) {
         char *line = strsep(&p, "\n");
-        s_username = strtok(line, ",");
-        s_password = strtok(NULL, ",");
-        if (strcmp(username, s_username) == 0 && strcmp(passwordHash, s_password) == 0) {
-            free(text_copy);
-            return 0;
+        if (line == NULL || *line == '\0') {
+            continue; // Skip empty lines
+        }
+
+        // Use strsep for thread-safe comma separation
+        char *line_ptr = line;
+        s_username = strsep(&line_ptr, ",");
+        s_password = strsep(&line_ptr, ",");
+
+        if (s_username != NULL && s_password != NULL) {
+            if (strcmp(username, s_username) == 0 && strcmp(passwordHash, s_password) == 0) {
+                free(text_copy);
+                return 0;
+            }
         }
     }
 
