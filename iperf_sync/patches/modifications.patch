@@ -1,6 +1,6 @@
 diff -ru a/include/flowlabel.h b/include/flowlabel.h
---- a/include/flowlabel.h	2026-05-15 22:43:42
-+++ b/include/flowlabel.h	2026-05-15 22:43:42
+--- a/include/flowlabel.h	2026-05-15 22:52:00
++++ b/include/flowlabel.h	2026-05-15 22:52:00
 @@ -27,13 +27,13 @@
  #ifndef        __FLOW_LABEL_H
  #define        __FLOW_LABEL_H
@@ -18,8 +18,8 @@ diff -ru a/include/flowlabel.h b/include/flowlabel.h
  /*
     It is just a stripped copy of the Linux kernel header "linux/in6.h"
 diff -ru a/include/iperf.h b/include/iperf.h
---- a/include/iperf.h	2026-05-15 22:43:42
-+++ b/include/iperf.h	2026-05-15 22:43:42
+--- a/include/iperf.h	2026-05-15 22:52:00
++++ b/include/iperf.h	2026-05-15 22:52:00
 @@ -68,9 +68,9 @@
   * with normal integers and warn.
   */
@@ -33,8 +33,8 @@ diff -ru a/include/iperf.h b/include/iperf.h
  #endif // HAVE_STDATOMIC_H
  
 diff -ru a/include/iperf_api.h b/include/iperf_api.h
---- a/include/iperf_api.h	2026-05-15 22:43:42
-+++ b/include/iperf_api.h	2026-05-15 22:43:42
+--- a/include/iperf_api.h	2026-05-15 22:52:00
++++ b/include/iperf_api.h	2026-05-15 22:52:00
 @@ -42,9 +42,9 @@
   * with normal integers and warn.
   */
@@ -47,7 +47,7 @@ diff -ru a/include/iperf_api.h b/include/iperf_api.h
  typedef u_int64_t atomic_uint_fast64_t;
  #endif // HAVE_STDATOMIC_H
  
-@@ -234,6 +234,7 @@
+@@ -235,6 +235,7 @@
  void    iperf_set_test_server_authorized_users(struct iperf_test *ipt, const char *server_authorized_users);
  void    iperf_set_test_server_skew_threshold(struct iperf_test *ipt, int server_skew_threshold);
  void    iperf_set_test_server_rsa_privkey(struct iperf_test *ipt, const char *server_rsa_privkey_base64);
@@ -56,8 +56,8 @@ diff -ru a/include/iperf_api.h b/include/iperf_api.h
  #endif // HAVE_SSL
  
 diff -ru a/include/iperf_auth.h b/include/iperf_auth.h
---- a/include/iperf_auth.h	2026-05-15 22:43:42
-+++ b/include/iperf_auth.h	2026-05-15 22:43:42
+--- a/include/iperf_auth.h	2026-05-15 22:52:00
++++ b/include/iperf_auth.h	2026-05-15 22:52:00
 @@ -25,6 +25,7 @@
   * for complete information.
   */
@@ -72,9 +72,9 @@ diff -ru a/include/iperf_auth.h b/include/iperf_auth.h
  ssize_t iperf_getpass (char **lineptr, size_t *n, FILE *stream);
 +#endif
 diff -ru a/include/iperf_config.h b/include/iperf_config.h
---- a/include/iperf_config.h	2026-05-15 22:43:42
-+++ b/include/iperf_config.h	2026-05-15 22:43:42
-@@ -86,9 +86,9 @@
+--- a/include/iperf_config.h	2026-05-15 22:52:00
++++ b/include/iperf_config.h	2026-05-15 22:52:00
+@@ -95,9 +95,9 @@
  /* #undef HAVE_SO_MAX_PACING_RATE */
  
  /* OpenSSL Is Available */
@@ -87,8 +87,8 @@ diff -ru a/include/iperf_config.h b/include/iperf_config.h
  
  /* Define to 1 if you have the <stdint.h> header file. */
 diff -ru a/include/iperf_util.h b/include/iperf_util.h
---- a/include/iperf_util.h	2026-05-15 22:43:42
-+++ b/include/iperf_util.h	2026-05-15 22:43:42
+--- a/include/iperf_util.h	2026-05-15 22:52:00
++++ b/include/iperf_util.h	2026-05-15 22:52:00
 @@ -32,6 +32,8 @@
  #include <sys/select.h>
  #include <stddef.h>
@@ -99,9 +99,9 @@ diff -ru a/include/iperf_util.h b/include/iperf_util.h
  
  void fill_with_repeating_pattern(void *out, size_t outsize);
 diff -ru a/iperf_api.c b/iperf_api.c
---- a/iperf_api.c	2026-05-15 22:43:42
-+++ b/iperf_api.c	2026-05-15 22:43:42
-@@ -771,6 +771,12 @@
+--- a/iperf_api.c	2026-05-15 22:52:00
++++ b/iperf_api.c	2026-05-15 22:52:00
+@@ -775,6 +775,12 @@
  }
  
  void
@@ -114,7 +114,7 @@ diff -ru a/iperf_api.c b/iperf_api.c
  iperf_set_test_server_rsa_privkey(struct iperf_test *ipt, const char *server_rsa_privkey_base64)
  {
      ipt->server_rsa_private_key = load_privkey_from_base64(server_rsa_privkey_base64);
-@@ -1851,12 +1857,20 @@
+@@ -1887,12 +1893,20 @@
      }
  
      if (test->role == 's' && test->server_authorized_users) {
@@ -140,8 +140,8 @@ diff -ru a/iperf_api.c b/iperf_api.c
  
      if (test->role == 's' && server_rsa_private_key) {
 diff -ru a/iperf_auth.c b/iperf_auth.c
---- a/iperf_auth.c	2026-05-15 22:43:42
-+++ b/iperf_auth.c	2026-05-15 22:43:42
+--- a/iperf_auth.c	2026-05-15 22:52:00
++++ b/iperf_auth.c	2026-05-15 22:52:00
 @@ -66,9 +66,14 @@
  }
  

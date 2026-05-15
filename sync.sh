@@ -2,7 +2,7 @@
 
 # Configuration
 REPO_URL="https://github.com/esnet/iperf.git"
-TAG="3.20"
+TAG="3.21"
 CHECKOUT_PATH="iperf3"
 SRC_PATH="Sources/IperfCLib"
 SYNC_DATA="iperf_sync"
@@ -37,6 +37,8 @@ echo "Applying customizations..."
 if [ -f "$SYNC_DATA/patches/modifications.patch" ]; then
     echo "  Applying modifications.patch..."
     patch -p1 -d "$SRC_PATH" < "$SYNC_DATA/patches/modifications.patch"
+    # Clean up residual .orig files created by patch
+    find "$SRC_PATH" -name "*.orig" -delete
 else
     echo "  WARNING: modifications.patch not found!"
 fi
