@@ -83,6 +83,12 @@ Run all tests:
 swift test
 ```
 
+Run only the Swift Wrapper unit tests:
+
+```sh
+swift test --filter IperfSwiftUnitTests
+```
+
 Run only the iPerf CLI interoperability tests:
 
 ```sh

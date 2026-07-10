@@ -39,6 +39,8 @@ public struct IperfStreamIntervalResult {
     var endTime: Double = 0
     
     var intervalTimeDiff = TimeInterval(0.0)
+
+    init() {}
     
     init(_ results: iperf_interval_results) {
         var diff = iperf_time()

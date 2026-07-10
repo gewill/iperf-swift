@@ -49,6 +49,16 @@ public struct IperfIntervalResult: Identifiable {
     }
     
     mutating public func evaulate() {
+        totalBytes = 0
+        totalPackets = 0
+        totalLostPackets = 0
+        totalOutoforderPackets = 0
+        averageJitter = 0.0
+        duration = 0.0
+        startTime = 0.0
+        endTime = 0.0
+        throughput = IperfThroughput(bytesPerSecond: 0.0)
+
         var sumJitter: Double = 0.0
         for s in streams {
             totalBytes += s.bytesTransferred
