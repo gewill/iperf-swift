@@ -1,0 +1,16 @@
+{
+  "object": {
+    "pins": [
+      {
+        "package": "OpenSSL",
+        "repositoryURL": "https://github.com/Lakr233/openssl-spm.git",
+        "state": {
+          "branch": null,
+          "revision": "9f3b525d960fe71e534482310e96cd9c4f2faa17",
+          "version": "3.6.2"
+        }
+      }
+    ]
+  },
+  "version": 1
+}

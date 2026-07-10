@@ -67,14 +67,14 @@ class IperfRunnerController: ObservableObject, Identifiable {
 
 ## OpenSSL
 
-OpenSSL is required. You can use [openssl-spm](https://github.com/Lakr233/openssl-spm) for easy integration.
+OpenSSL is provided through [openssl-spm](https://github.com/Lakr233/openssl-spm). The package uses its XCFramework, so consuming apps do not inherit a Homebrew dylib path and can sign the OpenSSL binaries with the app.
 
 ## Testing
 
-The integration tests require a local `iperf3` executable with authentication support. On Apple Silicon, install it with Homebrew:
+The integration tests require a local `iperf3` executable with authentication support. Install it with Homebrew:
 
 ```sh
-brew install iperf3 openssl@3
+brew install iperf3
 ```
 
 Run all tests:
@@ -82,8 +82,6 @@ Run all tests:
 ```sh
 swift test
 ```
-
-The package defaults to Homebrew's Apple Silicon path. On another machine, set `OPENSSL_PREFIX` to the OpenSSL installation prefix.
 
 Run only the iPerf CLI interoperability tests:
 

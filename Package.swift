@@ -2,9 +2,6 @@
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
-import Foundation
-
-let opensslPrefix = ProcessInfo.processInfo.environment["OPENSSL_PREFIX"] ?? "/opt/homebrew/opt/openssl@3"
 
 let package = Package(
     name: "IperfSwift",
@@ -14,36 +11,26 @@ let package = Package(
             targets: ["IperfCLib", "IperfSwift"]),
     ],
     dependencies: [
-        // Dependencies declare other packages that this package depends on.
-        // .package(url: /* package url */, from: "1.0.0"),
+        .package(
+            url: "https://github.com/Lakr233/openssl-spm.git",
+            from: "3.6.2"
+        ),
     ],
     targets: [
         .target(
             name: "IperfCLib",
-            dependencies: [],
-            path: "Sources/IperfCLib",
-            cSettings: [
-                .unsafeFlags(["-I", "\(opensslPrefix)/include"])
+            dependencies: [
+                .product(name: "OpenSSL", package: "openssl-spm")
             ],
-            linkerSettings: [
-                .unsafeFlags(["-L\(opensslPrefix)/lib"]),
-                .linkedLibrary("ssl"),
-                .linkedLibrary("crypto")
-            ]
+            path: "Sources/IperfCLib"
         ),
         .target(
             name: "IperfSwift",
             dependencies: ["IperfCLib"],
-            path: "Sources/IperfSwift",
-            swiftSettings: [
-                .unsafeFlags(["-Xcc", "-I\(opensslPrefix)/include"])
-            ]
+            path: "Sources/IperfSwift"
         ),
         .testTarget(
             name: "iperf-swiftTests",
-            dependencies: ["IperfSwift"],
-            swiftSettings: [
-                .unsafeFlags(["-Xcc", "-I\(opensslPrefix)/include"])
-            ]),
+            dependencies: ["IperfSwift"]),
     ]
 )
