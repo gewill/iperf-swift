@@ -91,6 +91,15 @@ swift test --filter IperfCLIIntegrationTests
 
 These tests start local Swift or `iperf3` 3.21 peers, generate temporary RSA keys and authorized-user data, and allocate random local ports. They cover successful authentication, rejection of incorrect credentials, macOS `bind-dev`, DSCP 46 socket configuration, and macOS TCP connection statistics. The temporary files are removed after each test. Linux-only GSO/GRO kernel offload behavior requires a Linux CI runner and is not exercised by the macOS test suite.
 
+## TODO
+
+- Gradually expand the test suite with focused unit tests for the Swift wrapper
+  layer, including configuration mapping, lifecycle transitions, callbacks,
+  error propagation, and result aggregation.
+- Add more interoperability tests against the macOS command-line `iperf3`
+  client and server, covering TCP, UDP, authentication, DSCP, interface
+  binding, and representative failure cases.
+
 ## Sync [iPerf](https://github.com/esnet/iperf)
 
 1. Run `sync.sh`
@@ -101,6 +110,6 @@ All customization data is stored in the `iperf_sync/` directory.
 
 ## License
 
-iperf-swift is released under the MIT license.
-iperf is released under the BSD license.
-See LICENSE for details.
+Project-specific code is released under the [MIT License](LICENSE).
+The bundled iperf code keeps the upstream license in [LICENSE-iperf](LICENSE-iperf).
+The OpenSSL dependency is documented in [LICENSE-OpenSSL.md](LICENSE-OpenSSL.md).
