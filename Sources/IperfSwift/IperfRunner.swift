@@ -150,6 +150,9 @@ public class IperfRunner {
             if let addr = addr {
                 iperf_set_test_bind_address(currentTest, addr)
             }
+            if let bindDevice = configuration.bindDevice {
+                iperf_set_test_bind_dev(currentTest, bindDevice)
+            }
             
             if configuration.isAuth {
                 iperf_set_test_server_rsa_privkey(currentTest, configuration.privateKey)
@@ -175,6 +178,9 @@ public class IperfRunner {
             
             if let addr = addr {
                 iperf_set_test_server_hostname(currentTest, addr)
+            }
+            if let bindDevice = configuration.bindDevice {
+                iperf_set_test_bind_dev(currentTest, bindDevice)
             }
             if let duration = configuration.duration {
                 iperf_set_test_duration(currentTest, Int32(duration))

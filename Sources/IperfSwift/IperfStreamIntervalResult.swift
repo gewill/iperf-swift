@@ -26,12 +26,14 @@ public struct IperfStreamIntervalResult {
     var cnt_error: Int64 = 0
     var omitted: Int32 = 0
     
-    var intervalRetrans: Int = 0
-    var snd_wnd: Int = 0
-    var sndCwnd: Int = 0
-    var rtt: Int = 0
-    var rttvar: Int = 0
-    var pmtu: Int = 0
+    public var intervalRetrans: Int = 0
+    public var snd_wnd: Int = 0
+    /// Congestion window in bytes, populated from macOS `tcp_info` in iperf 3.21.
+    public var sndCwnd: Int = 0
+    /// Round-trip time in microseconds, when the platform exposes TCP info.
+    public var rtt: Int = 0
+    public var rttvar: Int = 0
+    public var pmtu: Int = 0
     
     var startTime: Double = 0
     var endTime: Double = 0

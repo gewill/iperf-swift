@@ -12,6 +12,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         var configuration = IperfConfiguration()
         configuration.role = .server
         configuration.address = "127.0.0.1"
+        configuration.bindDevice = "lo0"
         configuration.port = port
         configuration.isAuth = true
         configuration.privateKey = credentials.privateKeyBase64
@@ -52,6 +53,57 @@ final class IperfCLIIntegrationTests: XCTestCase {
         XCTAssertEqual(result.status, 0, result.output)
     }
 
+    func testSwiftClientReportsMacOSTCPInfo() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.duration = 1
+        configuration.reverse = .upload
+
+        let tcpInfoReported = expectation(description: "macOS TCP info is reported")
+        let finished = expectation(description: "Swift client finished")
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { result in
+                if result.streams.contains(where: { $0.sndCwnd > 0 && $0.rtt > 0 }) {
+                    tcpInfoReported.fulfill()
+                }
+            },
+            { error in
+                XCTFail("Swift client failed: \(error.debugDescription)")
+                finished.fulfill()
+            },
+            { state in
+                if state == .finished {
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 5)
+        wait(for: [tcpInfoReported], timeout: 3)
+    }
+
     func testSwiftServerRejectsWrongAuthenticatedCLIClient() throws {
         let tools = try TestTools()
         let credentials = try tools.makeCredentials()
@@ -74,7 +126,8 @@ final class IperfCLIIntegrationTests: XCTestCase {
         let serverFailed = expectation(description: "Swift server rejects the client")
         server.start(
             { _ in },
-            { _ in
+            { error in
+                XCTAssertEqual(error, .IEAUTHTEST)
                 serverFailed.fulfill()
             },
             { state in

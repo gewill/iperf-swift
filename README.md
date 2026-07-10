@@ -91,7 +91,7 @@ Run only the iPerf CLI interoperability tests:
 swift test --filter IperfCLIIntegrationTests
 ```
 
-These tests start the Swift server, use the local `iperf3` 3.21 client, generate temporary RSA keys and authorized-user data, and allocate random local ports. They cover successful authentication and rejection of incorrect credentials. The temporary files are removed after each test.
+These tests start local Swift or `iperf3` 3.21 peers, generate temporary RSA keys and authorized-user data, and allocate random local ports. They cover successful authentication, rejection of incorrect credentials, macOS `bind-dev`, and macOS TCP connection statistics. The temporary files are removed after each test. Linux-only GSO/GRO kernel offload behavior requires a Linux CI runner and is not exercised by the macOS test suite.
 
 ## Sync [iPerf](https://github.com/esnet/iperf)
 

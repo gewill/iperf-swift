@@ -37,6 +37,8 @@ public enum IperfDirection: Int32, Codable {
 
 public struct IperfConfiguration {
     public var address: String? = "127.0.0.1"
+    /// Network interface used for socket binding, for example `lo0` on macOS.
+    public var bindDevice: String?
     public var numStreams = 2
     public var role = IperfRole.client
     public var reverse = IperfDirection.download
