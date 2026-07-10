@@ -53,7 +53,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         XCTAssertEqual(result.status, 0, result.output)
     }
 
-    func testSwiftClientReportsMacOSTCPInfo() throws {
+    func testSwiftClientAppliesDSCPAndReportsMacOSTCPInfo() throws {
         let tools = try TestTools()
         let port = try TestTools.freePort()
         let cliServer = Process()
@@ -76,6 +76,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         configuration.port = port
         configuration.duration = 1
         configuration.reverse = .upload
+        configuration.dscp = 46
 
         let tcpInfoReported = expectation(description: "macOS TCP info is reported")
         let finished = expectation(description: "Swift client finished")
