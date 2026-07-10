@@ -128,6 +128,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         let finished = expectation(description: "Swift client finished")
         var didReportTCPInfo = false
         var didFinish = false
+        var states: [IperfRunnerState] = []
         let client = IperfRunner(with: configuration)
         addTeardownBlock {
             client.stop()
@@ -148,6 +149,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 }
             },
             { state in
+                states.append(state)
                 if state == .finished && !didFinish {
                     didFinish = true
                     finished.fulfill()
@@ -157,6 +159,9 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
         wait(for: [finished], timeout: 5)
         wait(for: [tcpInfoReported], timeout: 3)
+        XCTAssertTrue(states.contains(.initialising), states.debugDescription)
+        XCTAssertTrue(states.contains(.running), states.debugDescription)
+        XCTAssertTrue(states.contains(.finished), states.debugDescription)
     }
 
     func testSwiftServerRejectsWrongAuthenticatedCLIClient() throws {
@@ -208,6 +213,79 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
         XCTAssertNotEqual(result.status, 0, result.output)
         wait(for: [serverFailed], timeout: 3)
+    }
+
+    func testSwiftServerAcceptsAuthenticatedUDPCLIClient() throws {
+        let tools = try TestTools()
+        let credentials = try tools.makeCredentials()
+        let port = try TestTools.freePort()
+
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "127.0.0.1"
+        configuration.bindDevice = "lo0"
+        configuration.port = port
+        configuration.isAuth = true
+        configuration.privateKey = credentials.privateKeyBase64
+        configuration.authorizedUsers = credentials.authorizedUsers
+
+        let server = IperfRunner(with: configuration)
+        addTeardownBlock {
+            server.stop()
+        }
+
+        let serverRunning = expectation(description: "Swift authenticated UDP server is running")
+        server.start(
+            { _ in },
+            { error in
+                XCTFail("Swift authenticated UDP server failed: (error.debugDescription)")
+            },
+            { state in
+                if state == .running {
+                    serverRunning.fulfill()
+                }
+            }
+        )
+        wait(for: [serverRunning], timeout: 3)
+
+        let result = try tools.run(
+            tools.iperf3,
+            arguments: [
+                "-c", "127.0.0.1",
+                "-p", String(port),
+                "-u",
+                "-b", "10M",
+                "-t", "1",
+                "--username", credentials.username,
+                "--rsa-public-key-path", credentials.publicKeyURL.path,
+                "-J"
+            ],
+            environment: ["IPERF3_PASSWORD": credentials.password]
+        )
+
+        XCTAssertEqual(result.status, 0, result.output)
+        XCTAssertTrue(result.output.localizedCaseInsensitiveContains("lost_packets"), result.output)
+    }
+
+    func testCLIClientReportsConnectionFailure() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+
+        let result = try tools.run(
+            tools.iperf3,
+            arguments: [
+                "-c", "127.0.0.1",
+                "-p", String(port),
+                "-t", "1"
+            ]
+        )
+
+        XCTAssertNotEqual(result.status, 0, result.output)
+        XCTAssertTrue(
+            result.output.localizedCaseInsensitiveContains("connect") ||
+            result.output.localizedCaseInsensitiveContains("refused"),
+            result.output
+        )
     }
 }
 
