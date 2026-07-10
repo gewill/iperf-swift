@@ -53,6 +53,52 @@ final class IperfCLIIntegrationTests: XCTestCase {
         XCTAssertEqual(result.status, 0, result.output)
     }
 
+    func testSwiftServerAcceptsUDPCLIClient() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "127.0.0.1"
+        configuration.bindDevice = "lo0"
+        configuration.port = port
+
+        let server = IperfRunner(with: configuration)
+        addTeardownBlock {
+            server.stop()
+        }
+
+        let serverRunning = expectation(description: "Swift UDP server is running")
+        server.start(
+            { _ in },
+            { error in
+                XCTFail("Swift UDP server failed: \(error.debugDescription)")
+            },
+            { state in
+                if state == .running {
+                    serverRunning.fulfill()
+                }
+            }
+        )
+        wait(for: [serverRunning], timeout: 3)
+
+        let result = try tools.run(
+            tools.iperf3,
+            arguments: [
+                "-c", "127.0.0.1",
+                "-p", String(port),
+                "-u",
+                "-b", "10M",
+                "-t", "1",
+                "-J"
+            ]
+        )
+
+        XCTAssertEqual(result.status, 0, result.output)
+        XCTAssertTrue(result.output.localizedCaseInsensitiveContains("udp"), result.output)
+        XCTAssertTrue(result.output.localizedCaseInsensitiveContains("lost_packets"), result.output)
+    }
+
     func testSwiftClientAppliesDSCPAndReportsMacOSTCPInfo() throws {
         let tools = try TestTools()
         let port = try TestTools.freePort()
@@ -80,22 +126,30 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
         let tcpInfoReported = expectation(description: "macOS TCP info is reported")
         let finished = expectation(description: "Swift client finished")
+        var didReportTCPInfo = false
+        var didFinish = false
         let client = IperfRunner(with: configuration)
         addTeardownBlock {
             client.stop()
         }
         client.start(
             { result in
-                if result.streams.contains(where: { $0.sndCwnd > 0 && $0.rtt > 0 }) {
+                if !didReportTCPInfo,
+                   result.streams.contains(where: { $0.sndCwnd > 0 && $0.rtt > 0 }) {
+                    didReportTCPInfo = true
                     tcpInfoReported.fulfill()
                 }
             },
             { error in
                 XCTFail("Swift client failed: \(error.debugDescription)")
-                finished.fulfill()
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
             },
             { state in
-                if state == .finished {
+                if state == .finished && !didFinish {
+                    didFinish = true
                     finished.fulfill()
                 }
             }
