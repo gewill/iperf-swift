@@ -1,22 +1,3 @@
-diff -ru a/include/flowlabel.h b/include/flowlabel.h
---- a/include/flowlabel.h	2026-05-15 23:42:06
-+++ b/include/flowlabel.h	2026-05-15 23:42:06
-@@ -27,13 +27,13 @@
- #ifndef        __FLOW_LABEL_H
- #define        __FLOW_LABEL_H
- 
--
-+#ifdef __linux__
- #include <linux/types.h>
- #include <linux/version.h>
- 
- #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0)
- #include <linux/in6.h>
--#else
-+#endif
- #ifndef __ANDROID__
- /*
-    It is just a stripped copy of the Linux kernel header "linux/in6.h"
 diff -ru a/include/iperf.h b/include/iperf.h
 --- a/include/iperf.h	2026-05-15 23:42:06
 +++ b/include/iperf.h	2026-05-15 23:42:06

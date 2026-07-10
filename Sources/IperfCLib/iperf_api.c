@@ -2331,8 +2331,13 @@ iperf_create_send_timers(struct iperf_test * test)
 
 #if defined(HAVE_SSL)
 int test_is_authorized(struct iperf_test *test){
-    if ( !(test->server_rsa_private_key && test->server_authorized_users)) {
+    if (!test->server_rsa_private_key && !test->server_authorized_users) {
         return 0;
+    }
+
+    if (!(test->server_rsa_private_key && test->server_authorized_users)) {
+        i_errno = IEAUTHTEST;
+        return -1;
     }
 
     if (test->settings->authtoken){
@@ -2340,6 +2345,7 @@ int test_is_authorized(struct iperf_test *test){
         time_t ts;
         int rc = decode_auth_setting(test->debug, test->settings->authtoken, test->server_rsa_private_key, &username, &password, &ts, test->use_pkcs1_padding);
 	if (rc) {
+	    i_errno = IEAUTHTEST;
 	    return -1;
 	}
         int ret = check_authentication(username, password, ts, test->server_authorized_users, test->server_skew_threshold);
@@ -2351,6 +2357,7 @@ int test_is_authorized(struct iperf_test *test){
             free(password);
             return 0;
         } else {
+            i_errno = IEAUTHTEST;
             if (test->debug) {
                 iperf_printf(test, report_authentication_failed, ret, username, (uint64_t)ts);
             }
@@ -2359,6 +2366,7 @@ int test_is_authorized(struct iperf_test *test){
             return -1;
         }
     }
+    i_errno = IEAUTHTEST;
     return -1;
 }
 #endif //HAVE_SSL

@@ -33,7 +33,7 @@
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0)
 #include <linux/in6.h>
-#endif
+#else
 #ifndef __ANDROID__
 /*
    It is just a stripped copy of the Linux kernel header "linux/in6.h"
@@ -74,5 +74,7 @@ struct in6_flowlabel_req
 #endif
 #define IPV6_FLOWLABEL_MGR      32
 #define IPV6_FLOWINFO_SEND      33
+
+#endif
 
 #endif

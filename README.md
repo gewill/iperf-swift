@@ -69,6 +69,30 @@ class IperfRunnerController: ObservableObject, Identifiable {
 
 OpenSSL is required. You can use [openssl-spm](https://github.com/Lakr233/openssl-spm) for easy integration.
 
+## Testing
+
+The integration tests require a local `iperf3` executable with authentication support. On Apple Silicon, install it with Homebrew:
+
+```sh
+brew install iperf3 openssl@3
+```
+
+Run all tests:
+
+```sh
+swift test
+```
+
+The package defaults to Homebrew's Apple Silicon path. On another machine, set `OPENSSL_PREFIX` to the OpenSSL installation prefix.
+
+Run only the iPerf CLI interoperability tests:
+
+```sh
+swift test --filter IperfCLIIntegrationTests
+```
+
+These tests start the Swift server, use the local `iperf3` 3.21 client, generate temporary RSA keys and authorized-user data, and allocate random local ports. They cover successful authentication and rejection of incorrect credentials. The temporary files are removed after each test.
+
 ## Sync [iPerf](https://github.com/esnet/iperf)
 
 1. Run `sync.sh`
