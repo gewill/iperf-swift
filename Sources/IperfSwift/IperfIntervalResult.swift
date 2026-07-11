@@ -54,6 +54,7 @@ public struct IperfIntervalResult: Identifiable {
         totalLostPackets = 0
         totalOutoforderPackets = 0
         averageJitter = 0.0
+        averageRtt = 0.0
         duration = 0.0
         startTime = 0.0
         endTime = 0.0

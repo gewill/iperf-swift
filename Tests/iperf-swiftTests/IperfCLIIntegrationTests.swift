@@ -62,6 +62,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         configuration.address = "127.0.0.1"
         configuration.bindDevice = "lo0"
         configuration.port = port
+        configuration.prot = .udp
 
         let server = IperfRunner(with: configuration)
         addTeardownBlock {
@@ -228,6 +229,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         configuration.isAuth = true
         configuration.privateKey = credentials.privateKeyBase64
         configuration.authorizedUsers = credentials.authorizedUsers
+        configuration.prot = .udp
 
         let server = IperfRunner(with: configuration)
         addTeardownBlock {
@@ -238,7 +240,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         server.start(
             { _ in },
             { error in
-                XCTFail("Swift authenticated UDP server failed: (error.debugDescription)")
+                XCTFail("Swift authenticated UDP server failed: \(error.debugDescription)")
             },
             { state in
                 if state == .running {
