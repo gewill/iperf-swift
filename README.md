@@ -172,6 +172,22 @@ credentials, and allocates random local ports. It covers TCP and UDP
 interoperability, authentication, macOS interface binding, DSCP, and macOS TCP
 statistics. Linux-only GSO/GRO behavior requires a Linux runner.
 
+## Documentation
+
+API documentation is built with the official
+[`swift-docc-plugin`](https://github.com/swiftlang/swift-docc-plugin). Generate
+the `IperfSwift` documentation archive with:
+
+```sh
+swift package generate-documentation --target IperfSwift
+```
+
+Preview it locally with:
+
+```sh
+swift package --disable-sandbox preview-documentation --target IperfSwift
+```
+
 ## Synchronizing iperf3
 
 The bundled C sources are generated from upstream iperf3. To update them, edit
