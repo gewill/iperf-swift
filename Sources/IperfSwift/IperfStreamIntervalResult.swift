@@ -8,6 +8,7 @@
 import Foundation
 import IperfCLib
 
+/// Measurements for one stream during one reporting interval.
 public struct IperfStreamIntervalResult {
 //#if (defined(linux) || defined(__FreeBSD__) || defined(__NetBSD__)) && \
 //    defined(TCP_INFO)
@@ -26,13 +27,17 @@ public struct IperfStreamIntervalResult {
     var cnt_error: Int64 = 0
     var omitted: Int32 = 0
     
+    /// TCP retransmissions during this interval.
     public var intervalRetrans: Int = 0
+    /// TCP send window in bytes as reported by libiperf.
     public var snd_wnd: Int = 0
     /// Congestion window in bytes, populated from macOS `tcp_info` in iperf 3.21.
     public var sndCwnd: Int = 0
     /// Round-trip time in microseconds, when the platform exposes TCP info.
     public var rtt: Int = 0
+    /// Round-trip time variance in microseconds.
     public var rttvar: Int = 0
+    /// Path maximum transmission unit in bytes.
     public var pmtu: Int = 0
     
     var startTime: Double = 0

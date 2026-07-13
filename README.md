@@ -1,112 +1,201 @@
-# Swift wrapper for iPerf
+# IperfSwift
 
-An easy to use Swift wrapper for [iPerf](https://github.com/esnet/iperf).
+`IperfSwift` is a Swift Package that embeds the iperf3 3.21 C engine and exposes
+client and server execution through a Swift API. It supports TCP, UDP, SCTP
+where the platform provides it, authentication, DSCP, interface binding,
+interval results, and macOS TCP statistics.
 
-## Usage
+iperf3 is developed by ESnet/Lawrence Berkeley National Laboratory. Refer to the
+[official iperf3 manual](https://software.es.net/iperf/invoking.html) for protocol
+behavior and option semantics.
 
-An application using this package: [iPerf SwiftUI](https://github.com/igorskh/iperf-swiftui)
+## Installation
 
-Package implements iPerf server and client.
+In Xcode, choose **File > Add Package Dependencies** and enter:
 
-Usage example:
-```swift
-class IperfRunnerController: ObservableObject, Identifiable {
-    private var iperfRunner: IperfRunner?
-    
-    @Published var isDeleted = false
-    @Published var runnerState: IperfRunnerState = .ready
-    @Published var debugDescription: String = ""
-    @Published var displayError: Bool = false
-    @Published var results = [IperfIntervalResult]() {
-        didSet {
-            objectWillChange.send()
-        }
-    }
-    
-    func onResultReceived(result: IperfIntervalResult) {
-        if result.streams.count > 0 {
-            results.append(result)
-        }
-    }
-    
-    func onErrorReceived(error: IperfError) {
-        DispatchQueue.main.async {
-            self.displayError = error != .IENONE
-            self.debugDescription = error.debugDescription
-        }
-    }
-    
-    func onNewState(state: IperfRunnerState) {
-        if state != .unknown && state != runnerState {
-            DispatchQueue.main.async {
-                self.runnerState = state
-            }
-        }
-    }
-    
-    func start() {
-        self.formInput = formInput
-        
-        results = []
-        debugDescription = ""
-        
-        iperfRunner = IperfRunner(with: IperfConfiguration())
-        iperfRunner!.start(
-            onResultReceived,
-            onErrorReceived,
-            onNewState
-        )
-    }
-    
-    func stop() {
-        iperfRunner!.stop()
-    }
-}
-
+```text
+https://github.com/gewill/iperf-swift.git
 ```
 
-## OpenSSL
+Or add the package to `Package.swift`:
 
-OpenSSL is provided through [openssl-spm](https://github.com/Lakr233/openssl-spm). The package uses its XCFramework, so consuming apps do not inherit a Homebrew dylib path and can sign the OpenSSL binaries with the app.
+```swift
+dependencies: [
+    .package(
+        url: "https://github.com/gewill/iperf-swift.git",
+        from: "3.21.1"
+    )
+]
+```
+
+Then add `IperfSwift` to the target dependencies and import it:
+
+```swift
+import IperfSwift
+```
+
+The package uses the OpenSSL XCFramework from
+[`openssl-spm`](https://github.com/Lakr233/openssl-spm). Consuming apps therefore
+do not inherit machine-specific Homebrew library paths.
+
+## Client example
+
+The following configuration corresponds approximately to
+`iperf3 -c 192.0.2.1 -p 5201 -t 10 -i 1`:
+
+```swift
+import IperfSwift
+
+final class NetworkTest {
+    private var runner: IperfRunner?
+
+    func start() {
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "192.0.2.1"
+        configuration.port = 5201
+        configuration.prot = .tcp
+        configuration.reverse = .upload
+        configuration.duration = 10
+        configuration.reporterInterval = 1
+
+        let runner = IperfRunner(with: configuration)
+        self.runner = runner
+
+        runner.start(
+            { result in
+                print("\(result.throughput.Mbps) Mbit/s")
+            },
+            { error in
+                print("iperf3 failed: \(error.debugDescription)")
+            },
+            { state in
+                print("state: \(state)")
+            }
+        )
+    }
+
+    func stop() {
+        runner?.stop()
+    }
+}
+```
+
+To run a reverse test (`iperf3 --reverse`), use `.download`. For UDP, set
+`prot = .udp` and configure `rate` in bits per second.
+
+## Server example
+
+```swift
+var configuration = IperfConfiguration()
+configuration.role = .server
+configuration.address = "0.0.0.0"
+configuration.port = 5201
+
+let server = IperfRunner(with: configuration)
+server.start(
+    { result in print(result.throughput.Mbps) },
+    { error in print(error.debugDescription) },
+    { state in print(state) }
+)
+```
+
+Keep the runner alive for the duration of the test. Work runs asynchronously,
+and callbacks are not guaranteed to use a specific queue. Dispatch UI updates
+to `MainActor` or the main queue. Terminal callback handling should be
+idempotent because libiperf can emit more than one terminal state notification.
+
+## Configuration mapping
+
+The wrapper follows the official iperf3 options where the embedded API exposes
+them:
+
+| Swift property | iperf3 option | Notes |
+| --- | --- | --- |
+| `address` | `--client` / `--bind` | Client destination or server bind address |
+| `port` | `--port` | Defaults to `5201` |
+| `bindDevice` | `--bind-dev` | Supported on macOS by iperf3 3.21; privileges may be required elsewhere |
+| `numStreams` | `--parallel` | Applied to TCP client tests |
+| `reverse` | `--reverse` | `.download` enables reverse mode |
+| `rate` | `--bitrate` | UDP bits per second |
+| `duration` | `--time` | Client-side whole-second duration |
+| `numberOfBytes` | `--bytes` | Do not combine with another end condition |
+| `timeout` | `--connect-timeout` | Swift value is expressed in seconds |
+| `dscp` | `--dscp` | Numeric DSCP value in `0...63` |
+| `reporterInterval` | `--interval` | Drives both reporting and statistics intervals |
+| `omit` | `--omit` | Initial seconds excluded from measurements |
+
+`statsInterval` is currently reserved; set `reporterInterval` to control
+interval callbacks.
+
+## Authentication
+
+Authentication follows iperf3's official RSA scheme:
+
+- The client uses `username`, `password`, and a Base64-encoded PEM `publicKey`.
+- The server uses a Base64-encoded, unencrypted PEM `privateKey` and
+  `authorizedUsers` in iperf3's `username,sha256` format.
+- Keep `usePkcs1Padding` disabled to use OAEP, the iperf3 default since 3.17.
+  Enable legacy PKCS#1 v1.5 padding only when interoperability requires it.
+- Keep client and server clocks within `timeSkewThreshold` seconds.
+
+See the official manual's
+[authentication examples](https://software.es.net/iperf/invoking.html#examples)
+for key generation and password hashing.
+
+Do not commit private keys, passwords, or authorized-user data.
 
 ## Testing
 
-The integration tests require a local `iperf3` executable with authentication support. Install it with Homebrew:
+The integration tests require a local `iperf3` 3.21 executable with
+authentication support. On macOS it can be installed with Homebrew:
 
 ```sh
 brew install iperf3
 ```
 
-Run all tests:
+Run the complete Swift Package test suite:
 
 ```sh
 swift test
 ```
 
-Run only the Swift Wrapper unit tests:
+Run a focused suite:
 
 ```sh
 swift test --filter IperfSwiftUnitTests
-```
-
-Run only the iPerf CLI interoperability tests:
-
-```sh
 swift test --filter IperfCLIIntegrationTests
 ```
 
-These tests start local Swift or `iperf3` 3.21 peers, generate temporary RSA keys and authorized-user data, and allocate random local ports. They cover TCP and UDP interoperability, successful authentication, rejection of incorrect credentials, macOS `bind-dev`, DSCP 46 socket configuration, and macOS TCP connection statistics. The temporary files are removed after each test. Linux-only GSO/GRO kernel offload behavior requires a Linux CI runner and is not exercised by the macOS test suite.
+The integration suite starts local Swift or CLI peers, creates temporary RSA
+credentials, and allocates random local ports. It covers TCP and UDP
+interoperability, authentication, macOS interface binding, DSCP, and macOS TCP
+statistics. Linux-only GSO/GRO behavior requires a Linux runner.
 
-## Sync [iPerf](https://github.com/esnet/iperf)
+## Synchronizing iperf3
 
-1. Run `sync.sh`
+The bundled C sources are generated from upstream iperf3. To update them, edit
+the maintained files in `iperf_sync/` as needed and run:
 
-The script automatically handles upstream synchronization, applies necessary portability patches (e.g., `File.h` inclusion, `stdatomic` redirection), and restores project-specific functions like custom authentication logic.
+```sh
+./sync.sh
+git diff
+git diff --check
+```
 
-All customization data is stored in the `iperf_sync/` directory.
+`sync.sh` defaults to the official `3.21` tag, stages the update in a temporary
+directory, applies `iperf_sync/patches/modifications.patch`, restores
+`iperf_sync/custom_files/`, and then replaces `Sources/IperfCLib/`. Do not keep
+project-specific changes only in the generated C source because the next sync
+will overwrite them.
+
+## Versioning
+
+The Swift package and embedded engine have separate versions. For example,
+package release `3.21.1` embeds the official iperf3 `3.21` engine.
 
 ## License
 
-Project-specific code is released under the [MIT License](LICENSE).
-The bundled iperf code keeps the upstream license in [LICENSE-iperf](LICENSE-iperf).
-The OpenSSL dependency is documented in [LICENSE-OpenSSL.md](LICENSE-OpenSSL.md).
+Project-specific code is released under the [MIT License](LICENSE). The bundled
+iperf code keeps the upstream license in [LICENSE-iperf](LICENSE-iperf), and the
+OpenSSL dependency is documented in [LICENSE-OpenSSL.md](LICENSE-OpenSSL.md).

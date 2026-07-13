@@ -7,6 +7,9 @@
 
 import Foundation
 
+/// Error codes emitted by libiperf and the Swift wrapper.
+///
+/// Values below `400` mirror the embedded iperf3 engine's `i_errno` values.
 public enum IperfError: Int32, CaseIterable {
     case UNKNOWN = -1
     case IENONE = 0             // No error
@@ -100,6 +103,7 @@ public enum IperfError: Int32, CaseIterable {
     case INIT_ERROR = 400
     case INIT_ERROR_DEFAULTS = 401
     
+    /// A human-readable description of the error code.
     public var debugDescription: String {
         switch self {
         case .UNKNOWN:

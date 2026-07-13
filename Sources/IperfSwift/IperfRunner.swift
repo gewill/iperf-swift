@@ -8,6 +8,7 @@
 import Foundation
 import IperfCLib
 
+/// High-level lifecycle states emitted by ``IperfRunner``.
 public enum IperfRunnerState {
     case unknown
     case ready
@@ -18,6 +19,7 @@ public enum IperfRunnerState {
     case finished
 }
 
+/// Low-level states reported by the embedded libiperf engine.
 public enum IperfState: Int8 {
     case TEST_START = 1
     case TEST_RUNNING = 2
@@ -36,10 +38,18 @@ public enum IperfState: Int8 {
     case UNKNOWN = 0
 }
 
-public typealias reporterFunctionType = (_ status: IperfIntervalResult) -> Void
+/// Receives one interval result from libiperf.
+public typealias reporterFunctionType = (_ result: IperfIntervalResult) -> Void
+/// Receives a terminal libiperf or wrapper error.
 public typealias errorFunctionType = (_ error: IperfError) -> Void
-public typealias runnerStateFunctionType = (_ error: IperfRunnerState) -> Void
+/// Receives a high-level runner lifecycle change.
+public typealias runnerStateFunctionType = (_ state: IperfRunnerState) -> Void
 
+/// Runs the embedded iperf3 engine as a client or server.
+///
+/// A runner performs its work on a background queue. Callback delivery is not
+/// guaranteed on a specific queue, so callers must dispatch UI updates to the
+/// main actor or main queue. Use one runner for one active test at a time.
 public class IperfRunner {
     private var onReporterFunction: reporterFunctionType = {result in }
     private var onErrorFunction: errorFunctionType = {error in }
@@ -55,7 +65,10 @@ public class IperfRunner {
         }
     }
     
-    // MARK: Initialisers
+    // MARK: Initializers
+
+    /// Creates a runner with the configuration used by ``start(_:_:_:)``.
+    /// - Parameter configuration: The client or server options for the run.
     public init(with configuration: IperfConfiguration) {
         self.configuration = configuration
     }
@@ -264,6 +277,15 @@ public class IperfRunner {
     }
     
     // MARK: Public methods
+
+    /// Starts a run after replacing the runner's configuration.
+    ///
+    /// Use this overload when reusing a runner after a completed run.
+    /// - Parameters:
+    ///   - configuration: The client or server options for this run.
+    ///   - onReporter: Called when an interval result is available.
+    ///   - onError: Called when the run fails.
+    ///   - onRunnerState: Called when the high-level lifecycle state changes.
     public func start(
         with configuration: IperfConfiguration,
         _ onReporter: @escaping reporterFunctionType,
@@ -274,6 +296,11 @@ public class IperfRunner {
         self.start(onReporter, onError, onRunnerState)
     }
     
+    /// Starts a run with the configuration supplied at initialization.
+    /// - Parameters:
+    ///   - onReporter: Called when an interval result is available.
+    ///   - onError: Called when the run fails.
+    ///   - onRunnerState: Called when the high-level lifecycle state changes.
     public func start(
         _ onReporter: @escaping reporterFunctionType,
         _ onError: @escaping errorFunctionType,
@@ -299,7 +326,7 @@ public class IperfRunner {
 
         applyConfiguration()
         
-        // Cofingure callbacks and notifications
+        // Configure callbacks and notifications.
         testPointer.pointee.reporter_callback = reporterCallback
         observer = NotificationCenter.default.addObserver(
             forName: Notification.Name(IperfNotificationName.status.rawValue + String(testPointer.hashValue)),
@@ -311,6 +338,10 @@ public class IperfRunner {
         startIperfProcess()
     }
     
+    /// Requests cancellation of the active run.
+    ///
+    /// Calling this method when no test is active has no effect. State changes
+    /// are reported asynchronously through the runner-state callback.
     public func stop() {
         guard let pointer = currentTest else {
             return
