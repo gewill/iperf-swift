@@ -12,25 +12,30 @@ public struct IperfDirectionalIntervalResult {
     /// The data-flow direction represented by this aggregate.
     public let direction: IperfDirection
     /// Streams contributing to this direction.
-    public var streams: [IperfStreamIntervalResult]
+    public let streams: [IperfStreamIntervalResult]
     /// Bytes transferred across the direction's streams.
-    public var totalBytes: Int
+    public let totalBytes: Int
     /// UDP packets transferred across the direction's streams.
-    public var totalPackets: Int64
+    public let totalPackets: Int64
     /// UDP packets lost across the direction's streams.
-    public var totalLostPackets: Int64
+    public let totalLostPackets: Int64
     /// Out-of-order UDP packets across the direction's streams.
-    public var totalOutoforderPackets: Int64
+    public let totalOutoforderPackets: Int64
     /// Mean UDP jitter across the direction's streams, in seconds.
-    public var averageJitter: Double
+    ///
+    /// UDP jitter is measured at the receiving endpoint (RFC 3550), so the
+    /// direction this endpoint sends always reports zero. During a
+    /// bidirectional run, a client observes real-time jitter only in its
+    /// download aggregate and a server only in its upload aggregate.
+    public let averageJitter: Double
     /// Length of the reporting interval in seconds.
-    public var duration: TimeInterval
+    public let duration: TimeInterval
     /// The interval start time reported by libiperf.
-    public var startTime: TimeInterval
+    public let startTime: TimeInterval
     /// The interval end time reported by libiperf.
-    public var endTime: TimeInterval
+    public let endTime: TimeInterval
     /// Aggregate throughput for this direction.
-    public var throughput: IperfThroughput
+    public let throughput: IperfThroughput
 
     init(
         direction: IperfDirection,
@@ -78,6 +83,11 @@ public struct IperfIntervalResult: Identifiable {
     /// Out-of-order UDP packets across all streams during the interval.
     public var totalOutoforderPackets: Int64 = 0
     /// Mean UDP jitter across streams, in seconds.
+    ///
+    /// In bidirectional mode this average includes the locally sent streams,
+    /// whose jitter is always zero because UDP jitter is measured at the
+    /// receiving endpoint. Prefer the receiving direction's
+    /// ``IperfDirectionalIntervalResult/averageJitter``.
     public var averageJitter: Double = 0.0
     /// Reserved for an aggregate round-trip time value.
     public var averageRtt: Double = 0.0
@@ -103,7 +113,9 @@ public struct IperfIntervalResult: Identifiable {
     public var error: IperfError = .UNKNOWN
     /// The transport protocol used for the interval.
     public var prot: IperfProtocol = .tcp
-    /// The negotiated client data-flow mode.
+    /// The client data-flow mode of the run, populated by ``IperfRunner``.
+    ///
+    /// Manually created results keep the default, ``IperfTestMode/download``.
     public var mode: IperfTestMode = .download
     /// The raw libiperf reverse-mode flag (`0` for upload, `1` for download).
     public var reverse: Int32 = 0

@@ -76,10 +76,15 @@ public struct IperfConfiguration {
     ///
     /// Setting this property selects upload or download mode. In bidirectional
     /// mode, reading it returns ``IperfDirection/upload`` because libiperf's
-    /// reverse flag is disabled.
+    /// reverse flag is disabled. Assigning the value the property already
+    /// returns leaves ``mode`` unchanged, so a read-write round trip does not
+    /// cancel bidirectional mode.
     public var reverse: IperfDirection {
         get { mode == .download ? .download : .upload }
-        set { mode = newValue == .download ? .download : .upload }
+        set {
+            if newValue == reverse { return }
+            mode = newValue == .download ? .download : .upload
+        }
     }
     /// The server port to listen on or connect to. The iperf3 default is `5201`.
     public var port = 5201

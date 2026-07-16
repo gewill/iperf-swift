@@ -102,8 +102,12 @@ runner.start(
 
 Each stream also exposes its `direction`. Existing top-level aggregate fields,
 such as `throughput` and `totalBytes`, contain the combined values for both
-directions in bidirectional mode. The existing `reverse` property remains a
-compatibility accessor for selecting upload or download mode.
+directions in bidirectional mode. UDP jitter is measured at the receiving
+endpoint (RFC 3550), so a bidirectional client observes real-time jitter only
+in `download.averageJitter` while the sent direction reports zero; the
+top-level `averageJitter` averages that zero in. The existing `reverse`
+property remains a compatibility accessor for selecting upload or download
+mode.
 
 ## Server example
 

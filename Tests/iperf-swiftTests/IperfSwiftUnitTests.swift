@@ -26,6 +26,19 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertEqual(configuration.reverse, .upload)
     }
 
+    func testReverseRoundTripKeepsBidirectionalMode() {
+        var configuration = IperfConfiguration()
+        configuration.mode = .bidirectional
+
+        configuration.reverse = configuration.reverse
+
+        XCTAssertEqual(configuration.mode, .bidirectional)
+
+        configuration.reverse = .download
+
+        XCTAssertEqual(configuration.mode, .download)
+    }
+
     func testThroughputConversions() {
         let throughput = IperfThroughput(bytes: 1_000_000, seconds: 2)
 
