@@ -6,6 +6,7 @@ final class IperfSwiftUnitTests: XCTestCase {
         var configuration = IperfConfiguration()
 
         XCTAssertEqual(configuration.role, .client)
+        XCTAssertEqual(configuration.mode, .download)
         XCTAssertEqual(configuration.reverse, .download)
         XCTAssertEqual(configuration.prot, .tcp)
         XCTAssertFalse(configuration.isAuth)
@@ -14,9 +15,28 @@ final class IperfSwiftUnitTests: XCTestCase {
 
         configuration.bindDevice = "lo0"
         configuration.dscp = 46
+        configuration.reverse = .upload
 
         XCTAssertEqual(configuration.bindDevice, "lo0")
         XCTAssertEqual(configuration.dscp, 46)
+        XCTAssertEqual(configuration.mode, .upload)
+
+        configuration.mode = .bidirectional
+
+        XCTAssertEqual(configuration.reverse, .upload)
+    }
+
+    func testReverseRoundTripKeepsBidirectionalMode() {
+        var configuration = IperfConfiguration()
+        configuration.mode = .bidirectional
+
+        configuration.reverse = configuration.reverse
+
+        XCTAssertEqual(configuration.mode, .bidirectional)
+
+        configuration.reverse = .download
+
+        XCTAssertEqual(configuration.mode, .download)
     }
 
     func testThroughputConversions() {
@@ -56,6 +76,35 @@ final class IperfSwiftUnitTests: XCTestCase {
 
         XCTAssertEqual(result.totalBytes, 3_000)
         XCTAssertEqual(result.throughput.rawValue, 1_500)
+    }
+
+    func testBidirectionalIntervalAggregationKeepsDirectionsSeparate() {
+        var uploadStream = IperfStreamIntervalResult()
+        uploadStream.direction = .upload
+        uploadStream.bytesTransferred = 1_000
+        uploadStream.intervalDuration = 2
+        uploadStream.startTime = 10
+        uploadStream.endTime = 12
+
+        var downloadStream = IperfStreamIntervalResult()
+        downloadStream.direction = .download
+        downloadStream.bytesTransferred = 3_000
+        downloadStream.intervalDuration = 2
+        downloadStream.startTime = 10
+        downloadStream.endTime = 12
+
+        var result = IperfIntervalResult(prot: .tcp)
+        result.streams = [uploadStream, downloadStream]
+        result.evaluate()
+
+        XCTAssertEqual(result.upload.streams.count, 1)
+        XCTAssertEqual(result.upload.totalBytes, 1_000)
+        XCTAssertEqual(result.upload.throughput.rawValue, 500)
+        XCTAssertEqual(result.download.streams.count, 1)
+        XCTAssertEqual(result.download.totalBytes, 3_000)
+        XCTAssertEqual(result.download.throughput.rawValue, 1_500)
+        XCTAssertEqual(result.totalBytes, 4_000)
+        XCTAssertEqual(result.throughput.rawValue, 2_000)
     }
 
     func testUDPIntervalAggregationCalculatesPacketLossAndJitter() {

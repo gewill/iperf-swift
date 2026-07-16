@@ -10,6 +10,8 @@ import IperfCLib
 
 /// Measurements for one stream during one reporting interval.
 public struct IperfStreamIntervalResult {
+    /// The stream's data-flow direction from the client's point of view.
+    public var direction = IperfDirection.upload
 //#if (defined(linux) || defined(__FreeBSD__) || defined(__NetBSD__)) && \
 //    defined(TCP_INFO)
 //    struct tcp_info tcpInfo; /* getsockopt(TCP_INFO) for Linux, {Free,Net}BSD */
