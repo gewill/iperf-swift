@@ -38,6 +38,28 @@ the maintained changes applied by `sync.sh`.
   `LICENSE-OpenSSL.md`.
 - Avoid machine-specific paths, especially `/opt/homebrew`, in package code.
 
+## Behavior Verification
+
+Before implementing, changing, testing, or documenting a feature, establish
+what the correct behavior is — in this order:
+
+1. **iperf3 CLI first.** Run the locally installed `iperf3` with the relevant
+   flags and observe the real output, for example
+   `iperf3 -c 127.0.0.1 -u -V --bidir`. The wrapper must match the CLI's
+   observable semantics, not an assumption about them.
+2. **Vendored C source second.** Confirm the mechanism in `Sources/IperfCLib/`
+   — which side sets a flag, where a metric is computed, how parameters are
+   exchanged — rather than reasoning from the public API alone.
+3. **RFC third.** When a metric or protocol behavior has a formal definition,
+   check the RFC and reflect that definition in documentation and tests. For
+   example, UDP jitter is defined by RFC 3550 and is computed only at the
+   receiving endpoint, so sender-side streams always report zero jitter.
+
+Encode the verified behavior in tests: interoperability tests compare the
+wrapper against the CLI's observable behavior, and unit tests pin semantics
+derived from the source or the RFC. Do not treat a surprising observation as a
+bug — and do not "fix" it — before confirming it is not defined behavior.
+
 ## Synchronization
 
 Run `./sync.sh` to update the bundled iperf source. The script defaults to tag
