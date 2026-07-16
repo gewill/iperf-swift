@@ -2,8 +2,8 @@
 
 `IperfSwift` is a Swift Package that embeds the iperf3 3.21 C engine and exposes
 client and server execution through a Swift API. It supports TCP, UDP, SCTP
-where the platform provides it, authentication, DSCP, interface binding,
-interval results, and macOS TCP statistics.
+where the platform provides it, bidirectional tests, authentication, DSCP,
+interface binding, interval results, and macOS TCP statistics.
 
 iperf3 is developed by ESnet/Lawrence Berkeley National Laboratory. Refer to the
 [official iperf3 manual](https://software.es.net/iperf/invoking.html) for protocol
@@ -55,7 +55,7 @@ final class NetworkTest {
         configuration.address = "192.0.2.1"
         configuration.port = 5201
         configuration.prot = .tcp
-        configuration.reverse = .upload
+        configuration.mode = .upload
         configuration.duration = 10
         configuration.reporterInterval = 1
 
@@ -81,8 +81,29 @@ final class NetworkTest {
 }
 ```
 
-To run a reverse test (`iperf3 --reverse`), use `.download`. For UDP, set
-`prot = .udp` and configure `rate` in bits per second.
+Set `mode = .download` to run a reverse test (`iperf3 --reverse`), or use
+`.bidirectional` to send and receive simultaneously (`iperf3 --bidir`). For
+UDP, set `prot = .udp` and configure `rate` in bits per second.
+
+Bidirectional interval callbacks contain separate client-oriented aggregates:
+
+```swift
+configuration.mode = .bidirectional
+
+runner.start(
+    { result in
+        print("Upload: \(result.upload.throughput.Mbps) Mbit/s")
+        print("Download: \(result.download.throughput.Mbps) Mbit/s")
+    },
+    { error in print(error.debugDescription) },
+    { state in print(state) }
+)
+```
+
+Each stream also exposes its `direction`. Existing top-level aggregate fields,
+such as `throughput` and `totalBytes`, contain the combined values for both
+directions in bidirectional mode. The existing `reverse` property remains a
+compatibility accessor for selecting upload or download mode.
 
 ## Server example
 
@@ -116,7 +137,8 @@ them:
 | `port` | `--port` | Defaults to `5201` |
 | `bindDevice` | `--bind-dev` | Supported on macOS by iperf3 3.21; privileges may be required elsewhere |
 | `numStreams` | `--parallel` | Applied to TCP client tests |
-| `reverse` | `--reverse` | `.download` enables reverse mode |
+| `mode` | `--reverse` / `--bidir` | Selects upload, download, or simultaneous bidirectional mode |
+| `reverse` | `--reverse` | Compatibility accessor for upload/download mode |
 | `rate` | `--bitrate` | UDP bits per second |
 | `duration` | `--time` | Client-side whole-second duration |
 | `numberOfBytes` | `--bytes` | Do not combine with another end condition |
@@ -169,8 +191,9 @@ swift test --filter IperfCLIIntegrationTests
 
 The integration suite starts local Swift or CLI peers, creates temporary RSA
 credentials, and allocates random local ports. It covers TCP and UDP
-interoperability, authentication, macOS interface binding, DSCP, and macOS TCP
-statistics. Linux-only GSO/GRO behavior requires a Linux runner.
+interoperability, bidirectional mode, authentication, macOS interface binding,
+DSCP, and macOS TCP statistics. Linux-only GSO/GRO behavior requires a Linux
+runner.
 
 ## Documentation
 

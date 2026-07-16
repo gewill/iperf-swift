@@ -98,6 +98,13 @@ public class IperfRunner {
         result.debugDescription = "OK"
         result.state = IperfState(rawValue: runningTest.state) ?? .UNKNOWN
         result.reverse = runningTest.reverse
+        if runningTest.bidirectional != 0 {
+            result.mode = .bidirectional
+        } else if runningTest.reverse != 0 {
+            result.mode = .download
+        } else {
+            result.mode = .upload
+        }
         
         if result.state == .EXCHANGE_RESULTS {
             state = .finished
@@ -117,7 +124,12 @@ public class IperfRunner {
             let intervalResultsP: UnsafeMutablePointer<iperf_interval_results>? = extract_iperf_interval_results(OpaquePointer(stream))
             if let intervalResults = intervalResultsP?.pointee {
                 if intervalResults.omitted == 0 {
-                    result.streams.append(IperfStreamIntervalResult(intervalResults))
+                    var streamResult = IperfStreamIntervalResult(intervalResults)
+                    let localEndpointIsSender = stream.pointee.sender != 0
+                    streamResult.direction = configuration.role == .client
+                        ? (localEndpointIsSender ? .upload : .download)
+                        : (localEndpointIsSender ? .download : .upload)
+                    result.streams.append(streamResult)
                 }
             }
             if stream.pointee.streams.sle_next == nil {
@@ -176,7 +188,17 @@ public class IperfRunner {
         
         if configuration.role == .client {
             set_protocol(currentTest, configuration.prot.iperfConfigValue)
-            iperf_set_test_reverse(currentTest, configuration.reverse.rawValue)
+            switch configuration.mode {
+            case .upload:
+                iperf_set_test_bidirectional(currentTest, 0)
+                iperf_set_test_reverse(currentTest, 0)
+            case .download:
+                iperf_set_test_bidirectional(currentTest, 0)
+                iperf_set_test_reverse(currentTest, 1)
+            case .bidirectional:
+                iperf_set_test_reverse(currentTest, 0)
+                iperf_set_test_bidirectional(currentTest, 1)
+            }
             
             var blksize: Int32 = 0
             if configuration.prot == .tcp {

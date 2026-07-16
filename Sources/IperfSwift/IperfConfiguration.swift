@@ -43,6 +43,16 @@ public enum IperfDirection: Int32, Codable {
     case upload = 0
 }
 
+/// The data-flow mode for a client test.
+public enum IperfTestMode: String, Codable {
+    /// The client sends data to the server.
+    case upload
+    /// The server sends data to the client, equivalent to `iperf3 --reverse`.
+    case download
+    /// The client and server send data simultaneously, equivalent to `iperf3 --bidir`.
+    case bidirectional
+}
+
 /// Options used to configure one iperf3 server or client run.
 ///
 /// Values generally correspond to the options in the
@@ -60,8 +70,17 @@ public struct IperfConfiguration {
     public var numStreams = 2
     /// Whether the local endpoint runs as a client or server.
     public var role = IperfRole.client
-    /// The data-flow direction for a client run.
-    public var reverse = IperfDirection.download
+    /// The data-flow mode for a client run.
+    public var mode = IperfTestMode.download
+    /// Compatibility access to the unidirectional client mode.
+    ///
+    /// Setting this property selects upload or download mode. In bidirectional
+    /// mode, reading it returns ``IperfDirection/upload`` because libiperf's
+    /// reverse flag is disabled.
+    public var reverse: IperfDirection {
+        get { mode == .download ? .download : .upload }
+        set { mode = newValue == .download ? .download : .upload }
+    }
     /// The server port to listen on or connect to. The iperf3 default is `5201`.
     public var port = 5201
     /// The transport protocol used by the data streams.
