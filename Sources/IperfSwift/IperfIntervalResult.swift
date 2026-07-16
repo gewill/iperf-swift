@@ -44,7 +44,7 @@ public struct IperfDirectionalIntervalResult {
     ) {
         self.direction = direction
         self.streams = streams
-        let aggregate = evaluate(streams: streams, prot: prot)
+        let aggregate = computeIntervalAggregate(streams: streams, prot: prot)
         totalBytes = aggregate.totalBytes
         totalPackets = aggregate.totalPackets
         totalLostPackets = aggregate.totalLostPackets
@@ -138,8 +138,7 @@ public struct IperfIntervalResult: Identifiable {
     /// Recomputes aggregate values from ``streams``.
     ///
     /// The method resets existing aggregate values first, so repeated calls are safe.
-    /// - Important: The misspelled name is retained for source compatibility.
-    mutating public func evaulate() {
+    mutating public func evaluate() {
         upload = IperfDirectionalIntervalResult(
             direction: .upload,
             streams: streams.filter { $0.direction == .upload },
@@ -151,7 +150,7 @@ public struct IperfIntervalResult: Identifiable {
             prot: prot
         )
 
-        let aggregate = evaluate(streams: streams, prot: prot)
+        let aggregate = computeIntervalAggregate(streams: streams, prot: prot)
         totalBytes = aggregate.totalBytes
         totalPackets = aggregate.totalPackets
         totalLostPackets = aggregate.totalLostPackets
@@ -162,6 +161,14 @@ public struct IperfIntervalResult: Identifiable {
         startTime = aggregate.startTime
         endTime = aggregate.endTime
         throughput = aggregate.throughput
+    }
+
+    /// Recomputes aggregate values from ``streams``.
+    ///
+    /// - Important: The misspelled name is retained for source compatibility.
+    ///   Prefer ``evaluate()``.
+    mutating public func evaulate() {
+        evaluate()
     }
 }
 
@@ -177,7 +184,7 @@ private struct IperfIntervalAggregate {
     var throughput = IperfThroughput(bytesPerSecond: 0.0)
 }
 
-private func evaluate(
+private func computeIntervalAggregate(
     streams: [IperfStreamIntervalResult],
     prot: IperfProtocol
 ) -> IperfIntervalAggregate {

@@ -139,7 +139,7 @@ public class IperfRunner {
         }
         
         // Calculate sum/average over streams
-        result.evaulate()
+        result.evaluate()
         
         onReporterFunction(result)
     }

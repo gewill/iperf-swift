@@ -95,7 +95,7 @@ final class IperfSwiftUnitTests: XCTestCase {
 
         var result = IperfIntervalResult(prot: .tcp)
         result.streams = [uploadStream, downloadStream]
-        result.evaulate()
+        result.evaluate()
 
         XCTAssertEqual(result.upload.streams.count, 1)
         XCTAssertEqual(result.upload.totalBytes, 1_000)
