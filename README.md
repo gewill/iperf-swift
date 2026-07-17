@@ -1,9 +1,14 @@
 # IperfSwift
 
+[![CI](https://github.com/gewill/iperf-swift/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/gewill/iperf-swift/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/gewill/iperf-swift)](https://github.com/gewill/iperf-swift/releases)
+[![Swift 5.6+](https://img.shields.io/badge/Swift-5.6%2B-orange.svg)](https://swift.org)
+[![Platforms](https://img.shields.io/badge/platforms-iOS%2013%2B%20%7C%20macOS%2010.15%2B-blue.svg)](#requirements)
+[![SwiftPM](https://img.shields.io/badge/SwiftPM-compatible-brightgreen.svg)](Package.swift)
+[![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
+
 `IperfSwift` is a Swift Package that embeds the iperf3 3.21 C engine and exposes
-client and server execution through a Swift API. It supports TCP, UDP, SCTP
-where the platform provides it, authentication, DSCP, interface binding,
-interval results, and macOS TCP statistics.
+client and server execution through a Swift API.
 
 iperf3 is developed by ESnet/Lawrence Berkeley National Laboratory. Refer to the
 [official iperf3 manual](https://software.es.net/iperf/invoking.html) for protocol
@@ -12,6 +17,22 @@ behavior and option semantics.
 This repository is an independent continuation of
 [igorskh/iperf-swift](https://github.com/igorskh/iperf-swift), which is no longer
 maintained. Development continues here without upstream involvement.
+
+## Features
+
+- TCP, UDP, and SCTP (where the platform provides it) in client and server roles
+- Upload, download (`--reverse`), and bidirectional (`--bidir`) tests
+- iperf3 RSA authentication with OAEP and optional legacy PKCS#1 v1.5 padding
+- DSCP marking and network-interface binding
+- Per-interval callbacks with per-stream results
+- macOS TCP statistics
+- Self-contained package: the iperf3 engine is bundled and OpenSSL ships as an
+  XCFramework, so no machine-specific library paths leak into consuming apps
+
+## Requirements
+
+- Swift 5.6+ (Xcode 13.4+)
+- iOS 13+ or macOS 10.15+
 
 ## Installation
 
@@ -27,7 +48,7 @@ Or add the package to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/gewill/iperf-swift.git",
-        from: "3.21.1"
+        from: "3.21.3"
     )
 ]
 ```
@@ -59,7 +80,7 @@ final class NetworkTest {
         configuration.address = "192.0.2.1"
         configuration.port = 5201
         configuration.prot = .tcp
-        configuration.reverse = .upload
+        configuration.mode = .upload
         configuration.duration = 10
         configuration.reporterInterval = 1
 
@@ -85,8 +106,33 @@ final class NetworkTest {
 }
 ```
 
-To run a reverse test (`iperf3 --reverse`), use `.download`. For UDP, set
-`prot = .udp` and configure `rate` in bits per second.
+Set `mode = .download` to run a reverse test (`iperf3 --reverse`), or use
+`.bidirectional` to send and receive simultaneously (`iperf3 --bidir`). For
+UDP, set `prot = .udp` and configure `rate` in bits per second.
+
+Bidirectional interval callbacks contain separate client-oriented aggregates:
+
+```swift
+configuration.mode = .bidirectional
+
+runner.start(
+    { result in
+        print("Upload: \(result.upload.throughput.Mbps) Mbit/s")
+        print("Download: \(result.download.throughput.Mbps) Mbit/s")
+    },
+    { error in print(error.debugDescription) },
+    { state in print(state) }
+)
+```
+
+Each stream also exposes its `direction`. Existing top-level aggregate fields,
+such as `throughput` and `totalBytes`, contain the combined values for both
+directions in bidirectional mode. UDP jitter is measured at the receiving
+endpoint (RFC 3550), so a bidirectional client observes real-time jitter only
+in `download.averageJitter` while the sent direction reports zero; the
+top-level `averageJitter` averages that zero in. The existing `reverse`
+property remains a compatibility accessor for selecting upload or download
+mode.
 
 ## Server example
 
@@ -120,7 +166,8 @@ them:
 | `port` | `--port` | Defaults to `5201` |
 | `bindDevice` | `--bind-dev` | Supported on macOS by iperf3 3.21; privileges may be required elsewhere |
 | `numStreams` | `--parallel` | Applied to TCP client tests |
-| `reverse` | `--reverse` | `.download` enables reverse mode |
+| `mode` | `--reverse` / `--bidir` | Selects upload, download, or simultaneous bidirectional mode |
+| `reverse` | `--reverse` | Compatibility accessor for upload/download mode |
 | `rate` | `--bitrate` | UDP bits per second |
 | `duration` | `--time` | Client-side whole-second duration |
 | `numberOfBytes` | `--bytes` | Do not combine with another end condition |
@@ -173,8 +220,9 @@ swift test --filter IperfCLIIntegrationTests
 
 The integration suite starts local Swift or CLI peers, creates temporary RSA
 credentials, and allocates random local ports. It covers TCP and UDP
-interoperability, authentication, macOS interface binding, DSCP, and macOS TCP
-statistics. Linux-only GSO/GRO behavior requires a Linux runner.
+interoperability, bidirectional mode, authentication, macOS interface binding,
+DSCP, and macOS TCP statistics. Linux-only GSO/GRO behavior requires a Linux
+runner.
 
 ## Documentation
 
@@ -212,7 +260,29 @@ will overwrite them.
 ## Versioning
 
 The Swift package and embedded engine have separate versions. For example,
-package release `3.21.1` embeds the official iperf3 `3.21` engine.
+package release `3.21.3` embeds the official iperf3 `3.21` engine.
+
+## Roadmap
+
+Upcoming work is tracked in GitHub issues:
+
+- [#1](https://github.com/gewill/iperf-swift/issues/1) — core performance
+  parameters: `--length`, `--window`, TCP `--bitrate`, UDP `--parallel`,
+  `--no-delay`, `--set-mss`
+- [#2](https://github.com/gewill/iperf-swift/issues/2) — mid-priority options:
+  UDP 64-bit counters, TOS, server timeouts, `--one-off`,
+  `--get-server-output`, and more
+- [#3](https://github.com/gewill/iperf-swift/issues/3) — options needing C
+  shims: `--dont-fragment`, `-4`/`-6`
+
+## Credits
+
+- [igorskh/iperf-swift](https://github.com/igorskh/iperf-swift) — the original
+  project by Igor Kim, from which this repository originates
+- [esnet/iperf](https://github.com/esnet/iperf) — the embedded iperf3
+  measurement engine
+- [Lakr233/openssl-spm](https://github.com/Lakr233/openssl-spm) — the packaged
+  OpenSSL XCFramework
 
 ## License
 

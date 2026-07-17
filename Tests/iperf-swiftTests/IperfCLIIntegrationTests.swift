@@ -100,6 +100,62 @@ final class IperfCLIIntegrationTests: XCTestCase {
         XCTAssertTrue(result.output.localizedCaseInsensitiveContains("lost_packets"), result.output)
     }
 
+    func testSwiftServerAcceptsBidirectionalCLIClient() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.reporterInterval = 0.25
+
+        let serverRunning = expectation(description: "Swift server is running")
+        let reportedBothDirections = expectation(description: "Swift server reports both directions")
+        var didReportBothDirections = false
+        let server = IperfRunner(with: configuration)
+        addTeardownBlock {
+            server.stop()
+        }
+
+        server.start(
+            { result in
+                if !didReportBothDirections,
+                   result.mode == .bidirectional,
+                   result.upload.totalBytes > 0,
+                   result.download.totalBytes > 0 {
+                    didReportBothDirections = true
+                    reportedBothDirections.fulfill()
+                }
+            },
+            { error in
+                XCTFail("Swift bidirectional server failed: \(error.debugDescription)")
+            },
+            { state in
+                if state == .running {
+                    serverRunning.fulfill()
+                }
+            }
+        )
+        wait(for: [serverRunning], timeout: 3)
+
+        let result = try tools.run(
+            tools.iperf3,
+            arguments: [
+                "-c", "127.0.0.1",
+                "-p", String(port),
+                "--bidir",
+                "-P", "1",
+                "-t", "1",
+                "-i", "0.25",
+                "-J"
+            ]
+        )
+
+        XCTAssertEqual(result.status, 0, result.output)
+        wait(for: [reportedBothDirections], timeout: 3)
+    }
+
     func testSwiftClientAppliesDSCPAndReportsMacOSTCPInfo() throws {
         let tools = try TestTools()
         let port = try TestTools.freePort()
@@ -163,6 +219,89 @@ final class IperfCLIIntegrationTests: XCTestCase {
         XCTAssertTrue(states.contains(.initialising), states.debugDescription)
         XCTAssertTrue(states.contains(.running), states.debugDescription)
         XCTAssertTrue(states.contains(.finished), states.debugDescription)
+    }
+
+    func testSwiftClientRunsBidirectionalTCPTest() throws {
+        try assertSwiftClientRunsBidirectionalTest(prot: .tcp) { result in
+            result.mode == .bidirectional &&
+                result.upload.totalBytes > 0 &&
+                result.download.totalBytes > 0
+        }
+    }
+
+    func testSwiftClientRunsBidirectionalUDPTest() throws {
+        try assertSwiftClientRunsBidirectionalTest(prot: .udp) { result in
+            result.upload.totalBytes > 0 &&
+                result.upload.totalPackets > 0 &&
+                result.download.totalBytes > 0 &&
+                result.download.totalPackets > 0
+        }
+    }
+
+    private func assertSwiftClientRunsBidirectionalTest(
+        prot: IperfProtocol,
+        resultMatchesExpectation: @escaping (IperfIntervalResult) -> Bool
+    ) throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.prot = prot
+        configuration.numStreams = 1
+        configuration.rate = 2_000_000
+        configuration.duration = 1
+        configuration.reporterInterval = 0.25
+        configuration.mode = .bidirectional
+
+        let reportedBothDirections = expectation(description: "Both \(prot.rawValue) directions are reported")
+        let finished = expectation(description: "Swift bidirectional \(prot.rawValue) client finished")
+        var didReportBothDirections = false
+        var didFinish = false
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+
+        client.start(
+            { result in
+                if !didReportBothDirections,
+                   resultMatchesExpectation(result) {
+                    didReportBothDirections = true
+                    reportedBothDirections.fulfill()
+                }
+            },
+            { error in
+                XCTFail("Swift bidirectional \(prot.rawValue) client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [reportedBothDirections, finished], timeout: 5)
     }
 
     func testSwiftServerRejectsWrongAuthenticatedCLIClient() throws {
@@ -307,6 +446,7 @@ private struct Credentials {
 private final class TestTools {
     let directory: URL
     let iperf3: String
+    let openssl: String
 
     init() throws {
         guard let iperf3 = ["/opt/homebrew/bin/iperf3", "/usr/local/bin/iperf3"]
@@ -314,6 +454,15 @@ private final class TestTools {
             throw XCTSkip("iperf3 is not installed")
         }
         self.iperf3 = iperf3
+        guard let openssl = [
+            "/opt/homebrew/bin/openssl",
+            "/opt/homebrew/opt/openssl@3/bin/openssl",
+            "/usr/local/opt/openssl@3/bin/openssl",
+            "/usr/local/bin/openssl",
+        ].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            throw XCTSkip("OpenSSL is not installed")
+        }
+        self.openssl = openssl
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("iperf-swift-integration-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -327,10 +476,10 @@ private final class TestTools {
         let privateKeyURL = directory.appendingPathComponent("private.pem")
         let publicKeyURL = directory.appendingPathComponent("public.pem")
 
-        _ = try run("/opt/homebrew/bin/openssl", arguments: [
+        _ = try run(openssl, arguments: [
             "genrsa", "-traditional", "-out", privateKeyURL.path, "2048"
         ])
-        _ = try run("/opt/homebrew/bin/openssl", arguments: [
+        _ = try run(openssl, arguments: [
             "rsa", "-in", privateKeyURL.path, "-pubout", "-out", publicKeyURL.path
         ])
 
