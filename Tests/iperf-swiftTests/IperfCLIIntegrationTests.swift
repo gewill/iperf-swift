@@ -485,8 +485,13 @@ final class IperfCLIIntegrationTests: XCTestCase {
         wait(for: [finished], timeout: 8)
         XCTAssertTrue(sawTwoStreams, "expected an interval reporting two parallel UDP streams")
         XCTAssertGreaterThan(runningPackets, 0)
-        XCTAssertEqual(runningBytes, Int(runningPackets) * 800,
+        // Interval snapshots can race the sender threads by one datagram per
+        // stream, so allow that much slack instead of exact byte/packet
+        // equality. Divisibility still pins the datagram size to blockSize.
+        XCTAssertEqual(runningBytes % 800, 0,
                        "every UDP datagram should carry exactly blockSize bytes")
+        XCTAssertLessThanOrEqual(abs(Int(runningPackets) * 800 - runningBytes), 2 * 800,
+                                 "bytes \(runningBytes) and packets \(runningPackets) disagree")
     }
 
     func testSwiftServerRejectsWrongAuthenticatedCLIClient() throws {
