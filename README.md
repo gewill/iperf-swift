@@ -48,7 +48,7 @@ Or add the package to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/gewill/iperf-swift.git",
-        from: "3.22.3"
+        from: "3.21.3"
     )
 ]
 ```
@@ -260,7 +260,7 @@ will overwrite them.
 ## Versioning
 
 The Swift package and embedded engine have separate versions. For example,
-package release `3.22.3` embeds the official iperf3 `3.21` engine.
+package release `3.21.3` embeds the official iperf3 `3.21` engine.
 
 ## Roadmap
 
