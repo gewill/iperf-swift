@@ -66,7 +66,7 @@ public struct IperfConfiguration {
     /// For example, use `lo0` for the loopback interface on macOS. Binding may
     /// require additional privileges on some platforms.
     public var bindDevice: String?
-    /// The number of parallel TCP streams, equivalent to `--parallel`.
+    /// The number of parallel client streams, equivalent to `--parallel`.
     public var numStreams = 2
     /// Whether the local endpoint runs as a client or server.
     public var role = IperfRole.client
@@ -91,8 +91,27 @@ public struct IperfConfiguration {
     /// The transport protocol used by the data streams.
     public var prot = IperfProtocol.tcp
 
-    /// The target UDP bitrate in bits per second, equivalent to `--bitrate`.
-    public var rate: UInt64 = .init(1024 * 1024)
+    /// The target bitrate in bits per second, equivalent to `--bitrate`.
+    ///
+    /// Applies application-level pacing to any protocol. Leave unset to use
+    /// the iperf3 defaults: unlimited for TCP/SCTP and 1 Mbit/s for UDP.
+    public var rate: UInt64?
+    /// The read/write block size in bytes, equivalent to `--length`.
+    ///
+    /// For UDP this is the exact datagram payload size. Leave unset to use the
+    /// iperf3 defaults: 128 KB for TCP, a dynamic MSS-based size for UDP, and
+    /// 64 KB for SCTP.
+    public var blockSize: Int?
+    /// The socket buffer size in bytes, equivalent to `--window`.
+    public var socketBufferSize: Int?
+    /// Disables Nagle's algorithm on TCP streams, equivalent to `--no-delay`.
+    public var noDelay: Bool = false
+    /// The TCP maximum segment size, equivalent to `--set-mss`.
+    ///
+    /// Support depends on the platform and route; macOS rejects it on loopback
+    /// connections, and the run then fails with ``IperfError/IESETMSS`` exactly
+    /// like the official CLI.
+    public var mss: Int?
 
     /// The client test duration in seconds, equivalent to `--time`.
     ///
@@ -109,12 +128,11 @@ public struct IperfConfiguration {
 
     /// The interval in seconds between reporter callbacks, equivalent to `--interval`.
     ///
-    /// The wrapper uses this value for both libiperf's reporter and statistics intervals.
+    /// Statistics sampling also follows this value unless ``statsInterval`` is set.
     public var reporterInterval: TimeInterval?
-    /// Reserved for a separate libiperf statistics interval.
+    /// The interval in seconds between libiperf statistics samples.
     ///
-    /// The current wrapper configures statistics with ``reporterInterval``;
-    /// setting this property alone has no effect.
+    /// Leave unset to sample statistics at ``reporterInterval``.
     public var statsInterval: TimeInterval?
     /// The number of initial seconds omitted from measurements, equivalent to `--omit`.
     public var omit: Int = 0
