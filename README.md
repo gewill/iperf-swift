@@ -163,6 +163,7 @@ them:
 | Swift property | iperf3 option | Notes |
 | --- | --- | --- |
 | `address` | `--client` / `--bind` | Client destination or server bind address |
+| `addressFamily` | `-4` / `-6` | Forces IPv4 or IPv6; the default lets the resolver pick |
 | `port` | `--port` | Defaults to `5201` |
 | `bindDevice` | `--bind-dev` | Supported on macOS by iperf3 3.21; privileges may be required elsewhere |
 | `numStreams` | `--parallel` | Parallel client streams for TCP, UDP, and SCTP |
@@ -182,11 +183,12 @@ them:
 | `udpCounters64Bit` | `--udp-counters-64bit` | 64-bit packet counters for long or high-rate UDP tests |
 | `repeatingPayload` | `--repeating-payload` | Repeating payload pattern instead of random data |
 | `getServerOutput` | `--get-server-output` | Server results text is exposed through `IperfRunner.serverOutput` |
+| `dontFragment` | `--dont-fragment` | UDP Do-Not-Fragment flag; oversized datagrams then fail to send |
 | `oneOff` | `--one-off` | The server handles one client and then finishes |
 | `idleTimeout` | `--idle-timeout` | Restarts an idle server after the given number of seconds |
 | `rcvTimeout` | `--rcv-timeout` | Receive timeout in seconds; the CLI expresses it in milliseconds |
-| `reporterInterval` | `--interval` | Interval between reporter callbacks |
-| `statsInterval` | — | Statistics sampling interval; defaults to `reporterInterval` |
+| `reporterInterval` | `--interval` | Interval between reporter callbacks; statistics sample at the same interval |
+| `statsInterval` | — | Ignored; the engine retains one statistics sample per interval, so sampling always follows `reporterInterval` |
 | `omit` | `--omit` | Initial seconds excluded from measurements |
 
 ## Authentication
@@ -270,7 +272,8 @@ will overwrite them.
 ## Versioning
 
 The Swift package and embedded engine have separate versions. For example,
-package release `3.21.3` embeds the official iperf3 `3.21` engine.
+package release `3.21.3` embeds the official iperf3 `3.21` engine. See
+[CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## Roadmap
 

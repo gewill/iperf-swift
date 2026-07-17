@@ -84,17 +84,27 @@ public class IperfRunner {
     
     // MARK: Callbacks
     private let reporterCallback: @convention(c) (UnsafeMutablePointer<iperf_test>?) -> Void = { refTest in
-        // The engine frees server_output_text while displaying the final
-        // results inside iperf_reporter_callback, so copy it out first.
-        if let testPointer = refTest,
-           let text = testPointer.pointee.server_output_text {
-            let output = String(cString: text)
-            let testUID = String(testPointer.hashValue)
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(
-                    name: Notification.Name(IperfNotificationName.serverOutput.rawValue + testUID),
-                    object: output
-                )
+        // The engine frees both server output variants while displaying the
+        // final results inside iperf_reporter_callback, so copy them out
+        // first. A JSON-mode server delivers json_server_output instead of
+        // text, matching the CLI's "Server JSON output" report.
+        if let testPointer = refTest {
+            var output: String?
+            if let text = testPointer.pointee.server_output_text {
+                output = String(cString: text)
+            } else if let json = testPointer.pointee.json_server_output,
+                      let printed = cJSON_Print(json) {
+                output = String(cString: printed)
+                cJSON_free(printed)
+            }
+            if let output = output {
+                let testUID = String(testPointer.hashValue)
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: Notification.Name(IperfNotificationName.serverOutput.rawValue + testUID),
+                        object: output
+                    )
+                }
             }
         }
         iperf_reporter_callback(refTest)
@@ -180,12 +190,16 @@ public class IperfRunner {
         // Server/Client
         iperf_set_test_role(currentTest, configuration.role.rawValue)
         iperf_set_test_server_port(currentTest, Int32(configuration.port))
+        if configuration.addressFamily != .any {
+            iperf_set_test_domain(OpaquePointer(currentTest), configuration.addressFamily.iperfConfigValue)
+        }
         
         if let reporterInterval = configuration.reporterInterval {
+            // Statistics must sample at the reporter interval: the embedded
+            // engine keeps only the newest sample per stream, so decoupled
+            // intervals would drop traffic from reports or produce empty ones.
             iperf_set_test_reporter_interval(currentTest, Double(reporterInterval))
-        }
-        if let statsInterval = configuration.statsInterval ?? configuration.reporterInterval {
-            iperf_set_test_stats_interval(currentTest, Double(statsInterval))
+            iperf_set_test_stats_interval(currentTest, Double(reporterInterval))
         }
         if configuration.omit > 0 {
             iperf_set_test_omit(currentTest, Int32(configuration.omit))
@@ -261,6 +275,11 @@ public class IperfRunner {
 
             if let rate = configuration.rate {
                 iperf_set_test_rate(currentTest, rate)
+            } else if configuration.prot == .udp {
+                // The CLI applies its 1 Mbit/s UDP default during argument
+                // parsing, which the wrapper bypasses; without this the
+                // engine would run UDP unlimited.
+                iperf_set_test_rate(currentTest, UInt64(UDP_RATE))
             }
             if let socketBufferSize = configuration.socketBufferSize {
                 iperf_set_test_socket_bufsize(currentTest, Int32(clamping: socketBufferSize))
@@ -307,6 +326,9 @@ public class IperfRunner {
             }
             if configuration.getServerOutput {
                 iperf_set_test_get_server_output(currentTest, 1)
+            }
+            if configuration.dontFragment {
+                iperf_set_dont_fragment(currentTest, 1)
             }
             
             if configuration.isAuth {

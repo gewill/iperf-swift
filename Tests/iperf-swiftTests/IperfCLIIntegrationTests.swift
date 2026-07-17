@@ -731,6 +731,291 @@ final class IperfCLIIntegrationTests: XCTestCase {
         wait(for: [finished], timeout: 10)
     }
 
+    func testSwiftClientDefaultsUDPToOneMegabitTarget() throws {
+        // The CLI applies its 1 Mbit/s UDP default during argument parsing,
+        // which the wrapper bypasses, so the wrapper must restore it: an
+        // unset rate must not run UDP unlimited.
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.prot = .udp
+        configuration.mode = .upload
+        configuration.numStreams = 1
+        configuration.duration = 1
+        configuration.reporterInterval = 0.25
+
+        let finished = expectation(description: "Default-rate UDP client finished")
+        var didFinish = false
+        var runningBytes = 0
+        var runningSeconds: TimeInterval = 0
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { result in
+                if result.state == .TEST_RUNNING {
+                    runningBytes += result.totalBytes
+                    runningSeconds += result.duration
+                }
+            },
+            { error in
+                XCTFail("UDP client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 8)
+        XCTAssertGreaterThan(runningSeconds, 0)
+        let measuredBps = Double(runningBytes) * 8 / runningSeconds
+        // An unlimited loopback UDP stream reaches gigabits per second; the
+        // CLI default paces to about 1 Mbit/s.
+        XCTAssertGreaterThan(measuredBps, 250_000, "throughput \(measuredBps) bps")
+        XCTAssertLessThan(measuredBps, 4_000_000, "throughput \(measuredBps) bps")
+    }
+
+    func testSwiftClientRetrievesServerOutputFromJSONServer() throws {
+        // CLI baseline: against `iperf3 -s -J` the server output arrives as
+        // JSON (json_server_output), not text, and the CLI prints it as
+        // "Server JSON output". The wrapper must capture this variant too.
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1", "-J"]
+        cliServer.standardOutput = FileHandle.nullDevice
+        cliServer.standardError = FileHandle.nullDevice
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.prot = .tcp
+        configuration.mode = .upload
+        configuration.getServerOutput = true
+        configuration.duration = 1
+        configuration.reporterInterval = 0.25
+
+        let finished = expectation(description: "Client against JSON server finished")
+        var didFinish = false
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { _ in },
+            { error in
+                XCTFail("Swift client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 8)
+        let outputDelivered = expectation(
+            for: NSPredicate { _, _ in client.serverOutput != nil },
+            evaluatedWith: nil
+        )
+        wait(for: [outputDelivered], timeout: 3)
+        let text = try XCTUnwrap(client.serverOutput, "JSON server output was never delivered")
+        XCTAssertTrue(text.contains("\"start\""), text)
+    }
+
+    func testSwiftClientDontFragmentDropsOversizedLoopbackDatagrams() throws {
+        // CLI-verified baseline: a 20000-byte UDP payload exceeds the loopback
+        // MTU. Without DF it fragments and flows; with DF every send fails and
+        // the run completes with zero packets.
+        let tools = try TestTools()
+
+        func sentPackets(dontFragment: Bool) throws -> Int64 {
+            let port = try TestTools.freePort()
+            let cliServer = Process()
+            let serverOutput = Pipe()
+            cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+            cliServer.arguments = ["-s", "-p", String(port), "-1"]
+            cliServer.standardOutput = serverOutput
+            cliServer.standardError = serverOutput
+            try cliServer.run()
+            addTeardownBlock {
+                if cliServer.isRunning {
+                    cliServer.terminate()
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.3)
+
+            var configuration = IperfConfiguration()
+            configuration.role = .client
+            configuration.address = "127.0.0.1"
+            configuration.port = port
+            configuration.prot = .udp
+            configuration.mode = .upload
+            configuration.numStreams = 1
+            configuration.blockSize = 20_000
+            configuration.dontFragment = dontFragment
+            configuration.duration = 1
+            configuration.reporterInterval = 0.25
+
+            let finished = expectation(description: "UDP client finished, DF=\(dontFragment)")
+            var didFinish = false
+            var packets: Int64 = 0
+            let client = IperfRunner(with: configuration)
+            addTeardownBlock {
+                client.stop()
+            }
+            client.start(
+                { result in
+                    if result.state == .TEST_RUNNING {
+                        packets += result.totalPackets
+                    }
+                },
+                { error in
+                    XCTFail("UDP client failed: \(error.debugDescription)")
+                    if !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                },
+                { state in
+                    if state == .finished && !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                }
+            )
+            wait(for: [finished], timeout: 8)
+            return packets
+        }
+
+        XCTAssertGreaterThan(try sentPackets(dontFragment: false), 0,
+                             "oversized datagrams should fragment and flow without DF")
+        XCTAssertEqual(try sentPackets(dontFragment: true), 0,
+                       "oversized datagrams must be dropped when DF is set")
+    }
+
+    func testSwiftClientHonorsAddressFamily() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Forcing IPv4 for an IPv6-only literal must fail to resolve, exactly
+        // like `iperf3 -c ::1 -4`.
+        var v4Configuration = IperfConfiguration()
+        v4Configuration.role = .client
+        v4Configuration.address = "::1"
+        v4Configuration.port = port
+        v4Configuration.prot = .tcp
+        v4Configuration.mode = .upload
+        v4Configuration.addressFamily = .ipv4
+        v4Configuration.duration = 1
+        v4Configuration.reporterInterval = 0.25
+
+        let failed = expectation(description: "IPv4-forced client reported a connect error")
+        var didFail = false
+        let v4Client = IperfRunner(with: v4Configuration)
+        addTeardownBlock {
+            v4Client.stop()
+        }
+        v4Client.start(
+            { _ in },
+            { error in
+                if !didFail {
+                    didFail = true
+                    XCTAssertEqual(error, .IECONNECT)
+                    failed.fulfill()
+                }
+            },
+            { _ in }
+        )
+        wait(for: [failed], timeout: 8)
+
+        // The same endpoint works when IPv6 is requested.
+        var v6Configuration = v4Configuration
+        v6Configuration.addressFamily = .ipv6
+
+        let finished = expectation(description: "IPv6 client finished")
+        var didFinish = false
+        var runningBytes = 0
+        let v6Client = IperfRunner(with: v6Configuration)
+        addTeardownBlock {
+            v6Client.stop()
+        }
+        v6Client.start(
+            { result in
+                if result.state == .TEST_RUNNING {
+                    runningBytes += result.totalBytes
+                }
+            },
+            { error in
+                XCTFail("IPv6 client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+        wait(for: [finished], timeout: 8)
+        XCTAssertGreaterThan(runningBytes, 0)
+    }
+
     func testSwiftServerRejectsWrongAuthenticatedCLIClient() throws {
         let tools = try TestTools()
         let credentials = try tools.makeCredentials()
