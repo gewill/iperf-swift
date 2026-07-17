@@ -446,6 +446,7 @@ private struct Credentials {
 private final class TestTools {
     let directory: URL
     let iperf3: String
+    let openssl: String
 
     init() throws {
         guard let iperf3 = ["/opt/homebrew/bin/iperf3", "/usr/local/bin/iperf3"]
@@ -453,6 +454,15 @@ private final class TestTools {
             throw XCTSkip("iperf3 is not installed")
         }
         self.iperf3 = iperf3
+        guard let openssl = [
+            "/opt/homebrew/bin/openssl",
+            "/opt/homebrew/opt/openssl@3/bin/openssl",
+            "/usr/local/opt/openssl@3/bin/openssl",
+            "/usr/local/bin/openssl",
+        ].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            throw XCTSkip("OpenSSL is not installed")
+        }
+        self.openssl = openssl
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("iperf-swift-integration-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -466,10 +476,10 @@ private final class TestTools {
         let privateKeyURL = directory.appendingPathComponent("private.pem")
         let publicKeyURL = directory.appendingPathComponent("public.pem")
 
-        _ = try run("/opt/homebrew/bin/openssl", arguments: [
+        _ = try run(openssl, arguments: [
             "genrsa", "-traditional", "-out", privateKeyURL.path, "2048"
         ])
-        _ = try run("/opt/homebrew/bin/openssl", arguments: [
+        _ = try run(openssl, arguments: [
             "rsa", "-in", privateKeyURL.path, "-pubout", "-out", publicKeyURL.path
         ])
 
