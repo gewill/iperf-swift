@@ -57,6 +57,7 @@ public class IperfRunner {
     
     private var configuration: IperfConfiguration? = nil
     private var observer: NSObjectProtocol? = nil
+    private var serverOutputObserver: NSObjectProtocol? = nil
     private var currentTest: UnsafeMutablePointer<iperf_test>? = nil
     
     private var state: IperfRunnerState = .ready {
@@ -64,6 +65,14 @@ public class IperfRunner {
             onRunnerStateFunction(newValue)
         }
     }
+
+    /// The remote server's textual results from the most recent client run.
+    ///
+    /// Populated at the end of a run that enabled
+    /// ``IperfConfiguration/getServerOutput``; `nil` otherwise. Because the
+    /// text is exchanged right before completion, read it after the runner
+    /// reports ``IperfRunnerState/finished``.
+    public private(set) var serverOutput: String?
     
     // MARK: Initializers
 
@@ -75,6 +84,19 @@ public class IperfRunner {
     
     // MARK: Callbacks
     private let reporterCallback: @convention(c) (UnsafeMutablePointer<iperf_test>?) -> Void = { refTest in
+        // The engine frees server_output_text while displaying the final
+        // results inside iperf_reporter_callback, so copy it out first.
+        if let testPointer = refTest,
+           let text = testPointer.pointee.server_output_text {
+            let output = String(cString: text)
+            let testUID = String(testPointer.hashValue)
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: Notification.Name(IperfNotificationName.serverOutput.rawValue + testUID),
+                    object: output
+                )
+            }
+        }
         iperf_reporter_callback(refTest)
         DispatchQueue.main.async {
             if let testPointer = refTest {
@@ -173,12 +195,30 @@ public class IperfRunner {
         }
         iperf_set_verbose(currentTest, configuration.verbose ? 1 : 0)
         
+        if let rcvTimeout = configuration.rcvTimeout, rcvTimeout.isFinite, rcvTimeout > 0 {
+            let seconds = min(rcvTimeout, Double(UInt32.max))
+            var interval = iperf_time(
+                secs: UInt32(seconds),
+                usecs: UInt32((seconds - seconds.rounded(.down)) * 1_000_000)
+            )
+            iperf_set_test_rcv_timeout(OpaquePointer(currentTest), &interval)
+        }
+
         if configuration.role == .server {
             if let addr = addr {
                 iperf_set_test_bind_address(currentTest, addr)
             }
             if let bindDevice = configuration.bindDevice {
                 iperf_set_test_bind_dev(currentTest, bindDevice)
+            }
+            if configuration.oneOff {
+                iperf_set_test_one_off(currentTest, 1)
+            }
+            if let idleTimeout = configuration.idleTimeout, idleTimeout.isFinite, idleTimeout > 0 {
+                // Round up so sub-second values do not truncate to 0, which
+                // the engine treats as "no idle timeout".
+                let seconds = idleTimeout.rounded(.up)
+                iperf_set_test_idle_timeout(OpaquePointer(currentTest), Int32(min(seconds, Double(Int32.max))))
             }
             
             if configuration.isAuth {
@@ -251,6 +291,23 @@ public class IperfRunner {
             if let dscp = configuration.dscp {
                 iperf_set_test_dscp(currentTest, Int32(dscp))
             }
+            // Applied after dscp on purpose: both write the same tos field,
+            // and the full type-of-service byte wins when both are set.
+            if let tos = configuration.tos {
+                iperf_set_test_tos(currentTest, Int32(clamping: tos))
+            }
+            if let clientPort = configuration.clientPort {
+                iperf_set_test_bind_port(currentTest, Int32(clamping: clientPort))
+            }
+            if configuration.udpCounters64Bit {
+                iperf_set_test_udp_counters_64bit(currentTest, 1)
+            }
+            if configuration.repeatingPayload {
+                iperf_set_test_repeating_payload(currentTest, 1)
+            }
+            if configuration.getServerOutput {
+                iperf_set_test_get_server_output(currentTest, 1)
+            }
             
             if configuration.isAuth {
                 iperf_set_test_client_rsa_pubkey(currentTest, configuration.publicKey)
@@ -297,6 +354,10 @@ public class IperfRunner {
         if let observer = observer {
             NotificationCenter.default.removeObserver(observer)
             self.observer = nil
+        }
+        if let serverOutputObserver = serverOutputObserver {
+            NotificationCenter.default.removeObserver(serverOutputObserver)
+            self.serverOutputObserver = nil
         }
         
         if isExit && configuration != nil {
@@ -356,6 +417,7 @@ public class IperfRunner {
         onRunnerStateFunction = onRunnerState
         
         cleanState(isExit: false)
+        serverOutput = nil
         state = .initialising
         
         currentTest = iperf_new_test()
@@ -378,6 +440,15 @@ public class IperfRunner {
             queue: nil,
             using: reporterNotificationCallback
         )
+        serverOutputObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name(IperfNotificationName.serverOutput.rawValue + String(testPointer.hashValue)),
+            object: nil,
+            queue: nil
+        ) { [weak self] notification in
+            if let output = notification.object as? String {
+                self?.serverOutput = output
+            }
+        }
         
         startIperfProcess()
     }

@@ -125,6 +125,45 @@ public struct IperfConfiguration {
     public var timeout: TimeInterval?
     /// The client DSCP value in the range `0...63`, equivalent to `--dscp`.
     public var dscp: Int?
+    /// The full IP type-of-service byte in the range `0...255`, equivalent to `--tos`.
+    ///
+    /// Unlike ``dscp`` this also covers the ECN bits. When both are set,
+    /// this value wins because it is applied last.
+    public var tos: Int?
+    /// The local port the client binds to, equivalent to `--cport`.
+    ///
+    /// Leave unset to use an ephemeral port.
+    public var clientPort: Int?
+    /// Uses 64-bit packet counters in UDP test packets, equivalent to
+    /// `--udp-counters-64bit`.
+    ///
+    /// Prevents 32-bit counter wrap-around in long or high-rate UDP tests.
+    public var udpCounters64Bit: Bool = false
+    /// Fills payloads with a repeating pattern instead of random data,
+    /// equivalent to `--repeating-payload`.
+    ///
+    /// Useful as a control when the link performs compression or
+    /// deduplication, which inflates results for random payloads.
+    public var repeatingPayload: Bool = false
+    /// Requests the server-side results text after a client run, equivalent
+    /// to `--get-server-output`.
+    ///
+    /// The text becomes available through ``IperfRunner/serverOutput``.
+    public var getServerOutput: Bool = false
+
+    // MARK: Server behavior
+
+    /// Stops the server after handling one client connection, equivalent to
+    /// `--one-off`. The runner then reaches ``IperfRunnerState/finished``
+    /// without an explicit ``IperfRunner/stop()``.
+    public var oneOff: Bool = false
+    /// The number of seconds after which an idle server restarts, equivalent
+    /// to `--idle-timeout`.
+    public var idleTimeout: TimeInterval?
+    /// The timeout in seconds for receiving data in an active test,
+    /// equivalent to `--rcv-timeout` (which the CLI expresses in
+    /// milliseconds). The iperf3 default is 120 seconds.
+    public var rcvTimeout: TimeInterval?
 
     /// The interval in seconds between reporter callbacks, equivalent to `--interval`.
     ///

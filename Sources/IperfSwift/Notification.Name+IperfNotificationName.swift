@@ -9,6 +9,7 @@ import Foundation
 
 enum IperfNotificationName: String {
     case status = "reporter"
+    case serverOutput = "serverOutput"
 }
 
 extension Notification.Name {

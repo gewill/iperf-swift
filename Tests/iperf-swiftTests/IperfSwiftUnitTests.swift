@@ -49,6 +49,37 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertTrue(configuration.noDelay)
     }
 
+    func testConfigurationMidPriorityOptionDefaults() {
+        var configuration = IperfConfiguration()
+
+        XCTAssertNil(configuration.clientPort)
+        XCTAssertNil(configuration.tos)
+        XCTAssertFalse(configuration.udpCounters64Bit)
+        XCTAssertFalse(configuration.repeatingPayload)
+        XCTAssertFalse(configuration.getServerOutput)
+        XCTAssertFalse(configuration.oneOff)
+        XCTAssertNil(configuration.idleTimeout)
+        XCTAssertNil(configuration.rcvTimeout)
+
+        configuration.clientPort = 24_001
+        configuration.tos = 32
+        configuration.udpCounters64Bit = true
+        configuration.repeatingPayload = true
+        configuration.getServerOutput = true
+        configuration.oneOff = true
+        configuration.idleTimeout = 30
+        configuration.rcvTimeout = 10
+
+        XCTAssertEqual(configuration.clientPort, 24_001)
+        XCTAssertEqual(configuration.tos, 32)
+        XCTAssertTrue(configuration.udpCounters64Bit)
+        XCTAssertTrue(configuration.repeatingPayload)
+        XCTAssertTrue(configuration.getServerOutput)
+        XCTAssertTrue(configuration.oneOff)
+        XCTAssertEqual(configuration.idleTimeout, 30)
+        XCTAssertEqual(configuration.rcvTimeout, 10)
+    }
+
     func testReverseRoundTripKeepsBidirectionalMode() {
         var configuration = IperfConfiguration()
         configuration.mode = .bidirectional
