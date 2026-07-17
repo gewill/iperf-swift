@@ -202,7 +202,7 @@ public class IperfRunner {
                 iperf_set_test_bidirectional(currentTest, 1)
             }
             
-            iperf_set_test_num_streams(currentTest, Int32(configuration.numStreams))
+            iperf_set_test_num_streams(currentTest, Int32(clamping: configuration.numStreams))
 
             var blksize: Int32
             switch configuration.prot {
@@ -215,7 +215,7 @@ public class IperfRunner {
                 blksize = DEFAULT_SCTP_BLKSIZE
             }
             if let blockSize = configuration.blockSize {
-                blksize = Int32(blockSize)
+                blksize = Int32(clamping: blockSize)
             }
             iperf_set_test_blksize(currentTest, blksize)
 
@@ -223,13 +223,13 @@ public class IperfRunner {
                 iperf_set_test_rate(currentTest, rate)
             }
             if let socketBufferSize = configuration.socketBufferSize {
-                iperf_set_test_socket_bufsize(currentTest, Int32(socketBufferSize))
+                iperf_set_test_socket_bufsize(currentTest, Int32(clamping: socketBufferSize))
             }
             if configuration.noDelay {
                 iperf_set_test_no_delay(currentTest, 1)
             }
             if let mss = configuration.mss {
-                iperf_set_test_mss(currentTest, Int32(mss))
+                iperf_set_test_mss(currentTest, Int32(clamping: mss))
             }
             
             if let addr = addr {
@@ -244,8 +244,9 @@ public class IperfRunner {
             if let numberOfBytes = configuration.numberOfBytes {
                 iperf_set_test_bytes(currentTest, UInt64(numberOfBytes))
             }
-            if let timeout = configuration.timeout {
-                iperf_set_test_connect_timeout(currentTest, Int32(timeout * 1000))
+            if let timeout = configuration.timeout, timeout.isFinite, timeout > 0 {
+                let milliseconds = min(timeout * 1000, Double(Int32.max))
+                iperf_set_test_connect_timeout(currentTest, Int32(milliseconds))
             }
             if let dscp = configuration.dscp {
                 iperf_set_test_dscp(currentTest, Int32(dscp))
