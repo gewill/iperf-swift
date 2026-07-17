@@ -215,7 +215,10 @@ public class IperfRunner {
                 iperf_set_test_one_off(currentTest, 1)
             }
             if let idleTimeout = configuration.idleTimeout, idleTimeout.isFinite, idleTimeout > 0 {
-                iperf_set_test_idle_timeout(OpaquePointer(currentTest), Int32(min(idleTimeout, Double(Int32.max))))
+                // Round up so sub-second values do not truncate to 0, which
+                // the engine treats as "no idle timeout".
+                let seconds = idleTimeout.rounded(.up)
+                iperf_set_test_idle_timeout(OpaquePointer(currentTest), Int32(min(seconds, Double(Int32.max))))
             }
             
             if configuration.isAuth {

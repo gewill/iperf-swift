@@ -545,17 +545,14 @@ final class IperfCLIIntegrationTests: XCTestCase {
         )
 
         wait(for: [finished], timeout: 8)
-        // The server output is exchanged right at the end of the run, so give
-        // the final notification a moment to deliver it.
-        var output: String?
-        for _ in 0..<20 {
-            output = client.serverOutput
-            if output != nil {
-                break
-            }
-            Thread.sleep(forTimeInterval: 0.1)
-        }
-        let text = try XCTUnwrap(output, "server output was never delivered")
+        // The output notification can be queued behind the state change that
+        // fulfilled `finished`, so wait on the run loop instead of sleeping.
+        let outputDelivered = expectation(
+            for: NSPredicate { _, _ in client.serverOutput != nil },
+            evaluatedWith: nil
+        )
+        wait(for: [outputDelivered], timeout: 3)
+        let text = try XCTUnwrap(client.serverOutput, "server output was never delivered")
         XCTAssertTrue(text.contains("receiver"), text)
     }
 
