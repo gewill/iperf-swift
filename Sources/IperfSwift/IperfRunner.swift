@@ -180,6 +180,9 @@ public class IperfRunner {
         // Server/Client
         iperf_set_test_role(currentTest, configuration.role.rawValue)
         iperf_set_test_server_port(currentTest, Int32(configuration.port))
+        if configuration.addressFamily != .any {
+            iperf_set_test_domain(OpaquePointer(currentTest), configuration.addressFamily.iperfConfigValue)
+        }
         
         if let reporterInterval = configuration.reporterInterval {
             iperf_set_test_reporter_interval(currentTest, Double(reporterInterval))
@@ -307,6 +310,9 @@ public class IperfRunner {
             }
             if configuration.getServerOutput {
                 iperf_set_test_get_server_output(currentTest, 1)
+            }
+            if configuration.dontFragment {
+                iperf_set_dont_fragment(currentTest, 1)
             }
             
             if configuration.isAuth {

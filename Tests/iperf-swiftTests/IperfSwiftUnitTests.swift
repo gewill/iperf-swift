@@ -80,6 +80,19 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertEqual(configuration.rcvTimeout, 10)
     }
 
+    func testConfigurationAddressFamilyAndDontFragmentDefaults() {
+        var configuration = IperfConfiguration()
+
+        XCTAssertEqual(configuration.addressFamily, .any)
+        XCTAssertFalse(configuration.dontFragment)
+
+        configuration.addressFamily = .ipv6
+        configuration.dontFragment = true
+
+        XCTAssertEqual(configuration.addressFamily, .ipv6)
+        XCTAssertTrue(configuration.dontFragment)
+    }
+
     func testReverseRoundTripKeepsBidirectionalMode() {
         var configuration = IperfConfiguration()
         configuration.mode = .bidirectional

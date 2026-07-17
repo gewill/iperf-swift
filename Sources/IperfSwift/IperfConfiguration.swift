@@ -27,6 +27,28 @@ public enum IperfProtocol: String, Codable {
     }
 }
 
+/// The IP address family used to resolve and connect, equivalent to `-4`/`-6`.
+public enum IperfAddressFamily: String, Codable {
+    /// Let the resolver pick the family, which is iperf3's default.
+    case any
+    /// Force IPv4, equivalent to `-4`.
+    case ipv4
+    /// Force IPv6, equivalent to `-6`.
+    case ipv6
+
+    /// The socket domain expected by libiperf.
+    public var iperfConfigValue: Int32 {
+        switch self {
+        case .any:
+            return AF_UNSPEC
+        case .ipv4:
+            return AF_INET
+        case .ipv6:
+            return AF_INET6
+        }
+    }
+}
+
 /// The local endpoint's iperf3 role.
 public enum IperfRole: Int8, Codable {
     /// Listens for an iperf3 client, equivalent to `iperf3 --server`.
@@ -86,6 +108,9 @@ public struct IperfConfiguration {
             mode = newValue == .download ? .download : .upload
         }
     }
+    /// The IP address family used for name resolution and sockets,
+    /// equivalent to `-4`/`-6`.
+    public var addressFamily: IperfAddressFamily = .any
     /// The server port to listen on or connect to. The iperf3 default is `5201`.
     public var port = 5201
     /// The transport protocol used by the data streams.
@@ -150,6 +175,12 @@ public struct IperfConfiguration {
     ///
     /// The text becomes available through ``IperfRunner/serverOutput``.
     public var getServerOutput: Bool = false
+    /// Sets the IP Do-Not-Fragment flag on UDP packets, equivalent to
+    /// `--dont-fragment`.
+    ///
+    /// Datagrams larger than the path MTU then fail to send, matching the
+    /// CLI: the run completes with zero transferred packets.
+    public var dontFragment: Bool = false
 
     // MARK: Server behavior
 
