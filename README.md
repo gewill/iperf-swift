@@ -9,6 +9,10 @@ iperf3 is developed by ESnet/Lawrence Berkeley National Laboratory. Refer to the
 [official iperf3 manual](https://software.es.net/iperf/invoking.html) for protocol
 behavior and option semantics.
 
+This repository is an independent continuation of
+[igorskh/iperf-swift](https://github.com/igorskh/iperf-swift), which is no longer
+maintained. Development continues here without upstream involvement.
+
 ## Installation
 
 In Xcode, choose **File > Add Package Dependencies** and enter:
