@@ -48,7 +48,7 @@ Or add the package to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/gewill/iperf-swift.git",
-        from: "3.21.3"
+        from: "3.21.4"
     )
 ]
 ```
@@ -163,21 +163,33 @@ them:
 | Swift property | iperf3 option | Notes |
 | --- | --- | --- |
 | `address` | `--client` / `--bind` | Client destination or server bind address |
+| `addressFamily` | `-4` / `-6` | Forces IPv4 or IPv6; the default lets the resolver pick |
 | `port` | `--port` | Defaults to `5201` |
 | `bindDevice` | `--bind-dev` | Supported on macOS by iperf3 3.21; privileges may be required elsewhere |
-| `numStreams` | `--parallel` | Applied to TCP client tests |
+| `numStreams` | `--parallel` | Parallel client streams for TCP, UDP, and SCTP |
 | `mode` | `--reverse` / `--bidir` | Selects upload, download, or simultaneous bidirectional mode |
 | `reverse` | `--reverse` | Compatibility accessor for upload/download mode |
-| `rate` | `--bitrate` | UDP bits per second |
+| `rate` | `--bitrate` | Bits per second for any protocol; unset keeps the iperf3 defaults (unlimited TCP/SCTP, 1 Mbit/s UDP) |
+| `blockSize` | `--length` | Read/write block size in bytes; the exact UDP datagram payload size |
+| `socketBufferSize` | `--window` | Socket buffer size in bytes |
+| `noDelay` | `--no-delay` | Disables Nagle's algorithm on TCP streams |
+| `mss` | `--set-mss` | Platform dependent; macOS rejects it on loopback connections |
 | `duration` | `--time` | Client-side whole-second duration |
 | `numberOfBytes` | `--bytes` | Do not combine with another end condition |
-| `timeout` | `--connect-timeout` | Swift value is expressed in seconds |
+| `timeout` | `--connect-timeout` | Swift value is expressed in seconds; sub-second values are supported |
 | `dscp` | `--dscp` | Numeric DSCP value in `0...63` |
-| `reporterInterval` | `--interval` | Drives both reporting and statistics intervals |
+| `tos` | `--tos` | Full IP type-of-service byte in `0...255`; overrides `dscp` when both are set |
+| `clientPort` | `--cport` | Local client port; parallel streams bind consecutive ports starting there |
+| `udpCounters64Bit` | `--udp-counters-64bit` | 64-bit packet counters for long or high-rate UDP tests |
+| `repeatingPayload` | `--repeating-payload` | Repeating payload pattern instead of random data |
+| `getServerOutput` | `--get-server-output` | Server results text is exposed through `IperfRunner.serverOutput` |
+| `dontFragment` | `--dont-fragment` | UDP Do-Not-Fragment flag; oversized datagrams then fail to send |
+| `oneOff` | `--one-off` | The server handles one client and then finishes |
+| `idleTimeout` | `--idle-timeout` | Restarts an idle server after the given number of seconds |
+| `rcvTimeout` | `--rcv-timeout` | Receive timeout in seconds; the CLI expresses it in milliseconds |
+| `reporterInterval` | `--interval` | Interval between reporter callbacks; statistics sample at the same interval |
+| `statsInterval` | — | Ignored; the engine retains one statistics sample per interval, so sampling always follows `reporterInterval` |
 | `omit` | `--omit` | Initial seconds excluded from measurements |
-
-`statsInterval` is currently reserved; set `reporterInterval` to control
-interval callbacks.
 
 ## Authentication
 
@@ -260,7 +272,8 @@ will overwrite them.
 ## Versioning
 
 The Swift package and embedded engine have separate versions. For example,
-package release `3.21.3` embeds the official iperf3 `3.21` engine.
+package release `3.21.4` embeds the official iperf3 `3.21` engine. See
+[CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## Roadmap
 

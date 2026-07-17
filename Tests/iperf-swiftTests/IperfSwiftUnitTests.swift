@@ -26,6 +26,73 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertEqual(configuration.reverse, .upload)
     }
 
+    func testConfigurationPerformanceOptionDefaults() {
+        var configuration = IperfConfiguration()
+
+        XCTAssertNil(configuration.rate)
+        XCTAssertNil(configuration.blockSize)
+        XCTAssertNil(configuration.socketBufferSize)
+        XCTAssertNil(configuration.mss)
+        XCTAssertFalse(configuration.noDelay)
+        XCTAssertNil(configuration.statsInterval)
+
+        configuration.rate = 5_000_000
+        configuration.blockSize = 1_200
+        configuration.socketBufferSize = 262_144
+        configuration.mss = 1_400
+        configuration.noDelay = true
+
+        XCTAssertEqual(configuration.rate, 5_000_000)
+        XCTAssertEqual(configuration.blockSize, 1_200)
+        XCTAssertEqual(configuration.socketBufferSize, 262_144)
+        XCTAssertEqual(configuration.mss, 1_400)
+        XCTAssertTrue(configuration.noDelay)
+    }
+
+    func testConfigurationMidPriorityOptionDefaults() {
+        var configuration = IperfConfiguration()
+
+        XCTAssertNil(configuration.clientPort)
+        XCTAssertNil(configuration.tos)
+        XCTAssertFalse(configuration.udpCounters64Bit)
+        XCTAssertFalse(configuration.repeatingPayload)
+        XCTAssertFalse(configuration.getServerOutput)
+        XCTAssertFalse(configuration.oneOff)
+        XCTAssertNil(configuration.idleTimeout)
+        XCTAssertNil(configuration.rcvTimeout)
+
+        configuration.clientPort = 24_001
+        configuration.tos = 32
+        configuration.udpCounters64Bit = true
+        configuration.repeatingPayload = true
+        configuration.getServerOutput = true
+        configuration.oneOff = true
+        configuration.idleTimeout = 30
+        configuration.rcvTimeout = 10
+
+        XCTAssertEqual(configuration.clientPort, 24_001)
+        XCTAssertEqual(configuration.tos, 32)
+        XCTAssertTrue(configuration.udpCounters64Bit)
+        XCTAssertTrue(configuration.repeatingPayload)
+        XCTAssertTrue(configuration.getServerOutput)
+        XCTAssertTrue(configuration.oneOff)
+        XCTAssertEqual(configuration.idleTimeout, 30)
+        XCTAssertEqual(configuration.rcvTimeout, 10)
+    }
+
+    func testConfigurationAddressFamilyAndDontFragmentDefaults() {
+        var configuration = IperfConfiguration()
+
+        XCTAssertEqual(configuration.addressFamily, .any)
+        XCTAssertFalse(configuration.dontFragment)
+
+        configuration.addressFamily = .ipv6
+        configuration.dontFragment = true
+
+        XCTAssertEqual(configuration.addressFamily, .ipv6)
+        XCTAssertTrue(configuration.dontFragment)
+    }
+
     func testReverseRoundTripKeepsBidirectionalMode() {
         var configuration = IperfConfiguration()
         configuration.mode = .bidirectional

@@ -27,6 +27,28 @@ public enum IperfProtocol: String, Codable {
     }
 }
 
+/// The IP address family used to resolve and connect, equivalent to `-4`/`-6`.
+public enum IperfAddressFamily: String, Codable {
+    /// Let the resolver pick the family, which is iperf3's default.
+    case any
+    /// Force IPv4, equivalent to `-4`.
+    case ipv4
+    /// Force IPv6, equivalent to `-6`.
+    case ipv6
+
+    /// The socket domain expected by libiperf.
+    public var iperfConfigValue: Int32 {
+        switch self {
+        case .any:
+            return AF_UNSPEC
+        case .ipv4:
+            return AF_INET
+        case .ipv6:
+            return AF_INET6
+        }
+    }
+}
+
 /// The local endpoint's iperf3 role.
 public enum IperfRole: Int8, Codable {
     /// Listens for an iperf3 client, equivalent to `iperf3 --server`.
@@ -66,7 +88,7 @@ public struct IperfConfiguration {
     /// For example, use `lo0` for the loopback interface on macOS. Binding may
     /// require additional privileges on some platforms.
     public var bindDevice: String?
-    /// The number of parallel TCP streams, equivalent to `--parallel`.
+    /// The number of parallel client streams, equivalent to `--parallel`.
     public var numStreams = 2
     /// Whether the local endpoint runs as a client or server.
     public var role = IperfRole.client
@@ -86,13 +108,37 @@ public struct IperfConfiguration {
             mode = newValue == .download ? .download : .upload
         }
     }
+    /// The IP address family used for name resolution and sockets,
+    /// equivalent to `-4`/`-6`.
+    public var addressFamily: IperfAddressFamily = .any
     /// The server port to listen on or connect to. The iperf3 default is `5201`.
     public var port = 5201
     /// The transport protocol used by the data streams.
     public var prot = IperfProtocol.tcp
 
-    /// The target UDP bitrate in bits per second, equivalent to `--bitrate`.
-    public var rate: UInt64 = .init(1024 * 1024)
+    /// The target bitrate in bits per second, equivalent to `--bitrate`.
+    ///
+    /// Applies application-level pacing to any protocol. Leave unset for the
+    /// CLI defaults: unlimited for TCP/SCTP and 1 Mbit/s for UDP, which the
+    /// wrapper enforces explicitly because the engine's own default is
+    /// unlimited for every protocol.
+    public var rate: UInt64?
+    /// The read/write block size in bytes, equivalent to `--length`.
+    ///
+    /// For UDP this is the exact datagram payload size. Leave unset to use the
+    /// iperf3 defaults: 128 KB for TCP, a dynamic MSS-based size for UDP, and
+    /// 64 KB for SCTP.
+    public var blockSize: Int?
+    /// The socket buffer size in bytes, equivalent to `--window`.
+    public var socketBufferSize: Int?
+    /// Disables Nagle's algorithm on TCP streams, equivalent to `--no-delay`.
+    public var noDelay: Bool = false
+    /// The TCP maximum segment size, equivalent to `--set-mss`.
+    ///
+    /// Support depends on the platform and route; macOS rejects it on loopback
+    /// connections, and the run then fails with ``IperfError/IESETMSS`` exactly
+    /// like the official CLI.
+    public var mss: Int?
 
     /// The client test duration in seconds, equivalent to `--time`.
     ///
@@ -106,15 +152,63 @@ public struct IperfConfiguration {
     public var timeout: TimeInterval?
     /// The client DSCP value in the range `0...63`, equivalent to `--dscp`.
     public var dscp: Int?
+    /// The full IP type-of-service byte in the range `0...255`, equivalent to `--tos`.
+    ///
+    /// Unlike ``dscp`` this also covers the ECN bits. When both are set,
+    /// this value wins because it is applied last.
+    public var tos: Int?
+    /// The local port the client binds to, equivalent to `--cport`.
+    ///
+    /// Leave unset to use an ephemeral port.
+    public var clientPort: Int?
+    /// Uses 64-bit packet counters in UDP test packets, equivalent to
+    /// `--udp-counters-64bit`.
+    ///
+    /// Prevents 32-bit counter wrap-around in long or high-rate UDP tests.
+    public var udpCounters64Bit: Bool = false
+    /// Fills payloads with a repeating pattern instead of random data,
+    /// equivalent to `--repeating-payload`.
+    ///
+    /// Useful as a control when the link performs compression or
+    /// deduplication, which inflates results for random payloads.
+    public var repeatingPayload: Bool = false
+    /// Requests the server-side results text after a client run, equivalent
+    /// to `--get-server-output`.
+    ///
+    /// The text becomes available through ``IperfRunner/serverOutput``.
+    public var getServerOutput: Bool = false
+    /// Sets the IP Do-Not-Fragment flag on UDP packets, equivalent to
+    /// `--dont-fragment`.
+    ///
+    /// Datagrams larger than the path MTU then fail to send, matching the
+    /// CLI: the run completes with zero transferred packets.
+    public var dontFragment: Bool = false
+
+    // MARK: Server behavior
+
+    /// Stops the server after handling one client connection, equivalent to
+    /// `--one-off`. The runner then reaches ``IperfRunnerState/finished``
+    /// without an explicit ``IperfRunner/stop()``.
+    public var oneOff: Bool = false
+    /// The number of seconds after which an idle server restarts, equivalent
+    /// to `--idle-timeout`.
+    public var idleTimeout: TimeInterval?
+    /// The timeout in seconds for receiving data in an active test,
+    /// equivalent to `--rcv-timeout` (which the CLI expresses in
+    /// milliseconds). The iperf3 default is 120 seconds.
+    public var rcvTimeout: TimeInterval?
 
     /// The interval in seconds between reporter callbacks, equivalent to `--interval`.
     ///
-    /// The wrapper uses this value for both libiperf's reporter and statistics intervals.
+    /// The wrapper uses this value for both libiperf's reporter and statistics
+    /// intervals.
     public var reporterInterval: TimeInterval?
-    /// Reserved for a separate libiperf statistics interval.
+    /// Unused: statistics always sample at ``reporterInterval``.
     ///
-    /// The current wrapper configures statistics with ``reporterInterval``;
-    /// setting this property alone has no effect.
+    /// The embedded engine retains only the newest statistics sample per
+    /// stream, so a decoupled statistics interval would drop traffic from
+    /// interval results or produce empty reports. The wrapper therefore
+    /// keeps both intervals in sync and ignores this property.
     public var statsInterval: TimeInterval?
     /// The number of initial seconds omitted from measurements, equivalent to `--omit`.
     public var omit: Int = 0
