@@ -272,7 +272,8 @@ will overwrite them.
 ## Versioning
 
 The Swift package and embedded engine have separate versions. For example,
-package release `3.21.3` embeds the official iperf3 `3.21` engine.
+package release `3.21.3` embeds the official iperf3 `3.21` engine. See
+[CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## Roadmap
 
