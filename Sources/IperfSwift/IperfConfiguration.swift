@@ -118,8 +118,10 @@ public struct IperfConfiguration {
 
     /// The target bitrate in bits per second, equivalent to `--bitrate`.
     ///
-    /// Applies application-level pacing to any protocol. Leave unset to use
-    /// the iperf3 defaults: unlimited for TCP/SCTP and 1 Mbit/s for UDP.
+    /// Applies application-level pacing to any protocol. Leave unset for the
+    /// CLI defaults: unlimited for TCP/SCTP and 1 Mbit/s for UDP, which the
+    /// wrapper enforces explicitly because the engine's own default is
+    /// unlimited for every protocol.
     public var rate: UInt64?
     /// The read/write block size in bytes, equivalent to `--length`.
     ///
@@ -198,11 +200,15 @@ public struct IperfConfiguration {
 
     /// The interval in seconds between reporter callbacks, equivalent to `--interval`.
     ///
-    /// Statistics sampling also follows this value unless ``statsInterval`` is set.
+    /// The wrapper uses this value for both libiperf's reporter and statistics
+    /// intervals.
     public var reporterInterval: TimeInterval?
-    /// The interval in seconds between libiperf statistics samples.
+    /// Unused: statistics always sample at ``reporterInterval``.
     ///
-    /// Leave unset to sample statistics at ``reporterInterval``.
+    /// The embedded engine retains only the newest statistics sample per
+    /// stream, so a decoupled statistics interval would drop traffic from
+    /// interval results or produce empty reports. The wrapper therefore
+    /// keeps both intervals in sync and ignores this property.
     public var statsInterval: TimeInterval?
     /// The number of initial seconds omitted from measurements, equivalent to `--omit`.
     public var omit: Int = 0
