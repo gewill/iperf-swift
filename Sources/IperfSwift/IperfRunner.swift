@@ -161,7 +161,9 @@ public class IperfRunner {
         
         if let reporterInterval = configuration.reporterInterval {
             iperf_set_test_reporter_interval(currentTest, Double(reporterInterval))
-            iperf_set_test_stats_interval(currentTest, Double(reporterInterval))
+        }
+        if let statsInterval = configuration.statsInterval ?? configuration.reporterInterval {
+            iperf_set_test_stats_interval(currentTest, Double(statsInterval))
         }
         if configuration.omit > 0 {
             iperf_set_test_omit(currentTest, Int32(configuration.omit))
@@ -200,16 +202,35 @@ public class IperfRunner {
                 iperf_set_test_bidirectional(currentTest, 1)
             }
             
-            var blksize: Int32 = 0
-            if configuration.prot == .tcp {
+            iperf_set_test_num_streams(currentTest, Int32(configuration.numStreams))
+
+            var blksize: Int32
+            switch configuration.prot {
+            case .tcp:
                 blksize = DEFAULT_TCP_BLKSIZE
-                iperf_set_test_num_streams(currentTest, Int32(configuration.numStreams))
-            } else if configuration.prot == .udp {
-                iperf_set_test_rate(currentTest, UInt64(configuration.rate))
-            } else if configuration.prot == .sctp {
+            case .udp:
+                // Zero selects libiperf's dynamic MSS-based datagram size.
+                blksize = 0
+            case .sctp:
                 blksize = DEFAULT_SCTP_BLKSIZE
             }
+            if let blockSize = configuration.blockSize {
+                blksize = Int32(blockSize)
+            }
             iperf_set_test_blksize(currentTest, blksize)
+
+            if let rate = configuration.rate {
+                iperf_set_test_rate(currentTest, rate)
+            }
+            if let socketBufferSize = configuration.socketBufferSize {
+                iperf_set_test_socket_bufsize(currentTest, Int32(socketBufferSize))
+            }
+            if configuration.noDelay {
+                iperf_set_test_no_delay(currentTest, 1)
+            }
+            if let mss = configuration.mss {
+                iperf_set_test_mss(currentTest, Int32(mss))
+            }
             
             if let addr = addr {
                 iperf_set_test_server_hostname(currentTest, addr)
@@ -224,7 +245,7 @@ public class IperfRunner {
                 iperf_set_test_bytes(currentTest, UInt64(numberOfBytes))
             }
             if let timeout = configuration.timeout {
-                iperf_set_test_connect_timeout(currentTest, Int32(timeout) * 1000)
+                iperf_set_test_connect_timeout(currentTest, Int32(timeout * 1000))
             }
             if let dscp = configuration.dscp {
                 iperf_set_test_dscp(currentTest, Int32(dscp))

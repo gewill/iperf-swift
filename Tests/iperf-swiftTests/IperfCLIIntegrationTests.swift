@@ -304,6 +304,191 @@ final class IperfCLIIntegrationTests: XCTestCase {
         wait(for: [reportedBothDirections, finished], timeout: 5)
     }
 
+    func testSwiftClientAppliesTCPPacingAndSocketOptions() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.prot = .tcp
+        configuration.mode = .upload
+        configuration.numStreams = 1
+        configuration.rate = 4_000_000
+        configuration.socketBufferSize = 262_144
+        configuration.noDelay = true
+        configuration.duration = 2
+        configuration.reporterInterval = 0.25
+
+        let finished = expectation(description: "Paced Swift TCP client finished")
+        var didFinish = false
+        var runningBytes = 0
+        var runningSeconds: TimeInterval = 0
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { result in
+                if result.state == .TEST_RUNNING {
+                    runningBytes += result.totalBytes
+                    runningSeconds += result.duration
+                }
+            },
+            { error in
+                XCTFail("Paced Swift TCP client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 8)
+        XCTAssertGreaterThan(runningSeconds, 0)
+        let measuredBps = Double(runningBytes) * 8 / runningSeconds
+        // An unpaced loopback TCP stream exceeds 1 Gbit/s, so a measurement in
+        // the low megabit range proves application pacing is active.
+        XCTAssertGreaterThan(measuredBps, 1_000_000, "throughput \(measuredBps) bps")
+        XCTAssertLessThan(measuredBps, 16_000_000, "throughput \(measuredBps) bps")
+    }
+
+    func testSwiftClientReportsMSSErrorMatchingCLI() throws {
+        // macOS rejects TCP_MAXSEG on loopback connections; the official CLI
+        // fails with "unable to set TCP/SCTP MSS". The wrapper must surface
+        // the same libiperf error, which proves the option reaches the engine.
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.prot = .tcp
+        configuration.mode = .upload
+        configuration.mss = 1_400
+        configuration.duration = 1
+
+        let failed = expectation(description: "Swift client reported the MSS error")
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { _ in },
+            { error in
+                XCTAssertEqual(error, .IESETMSS)
+                failed.fulfill()
+            },
+            { _ in }
+        )
+
+        wait(for: [failed], timeout: 8)
+    }
+
+    func testSwiftClientAppliesUDPBlockSizeAndParallelStreams() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.prot = .udp
+        configuration.mode = .upload
+        configuration.numStreams = 2
+        configuration.blockSize = 800
+        configuration.rate = 1_000_000
+        configuration.duration = 1
+        configuration.reporterInterval = 0.25
+
+        let finished = expectation(description: "Swift UDP multi-stream client finished")
+        var didFinish = false
+        var sawTwoStreams = false
+        var runningBytes = 0
+        var runningPackets: Int64 = 0
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { result in
+                if result.state == .TEST_RUNNING {
+                    if result.streams.count == 2 {
+                        sawTwoStreams = true
+                    }
+                    runningBytes += result.totalBytes
+                    runningPackets += result.totalPackets
+                }
+            },
+            { error in
+                XCTFail("Swift UDP multi-stream client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 8)
+        XCTAssertTrue(sawTwoStreams, "expected an interval reporting two parallel UDP streams")
+        XCTAssertGreaterThan(runningPackets, 0)
+        XCTAssertEqual(runningBytes, Int(runningPackets) * 800,
+                       "every UDP datagram should carry exactly blockSize bytes")
+    }
+
     func testSwiftServerRejectsWrongAuthenticatedCLIClient() throws {
         let tools = try TestTools()
         let credentials = try tools.makeCredentials()

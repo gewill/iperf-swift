@@ -165,19 +165,21 @@ them:
 | `address` | `--client` / `--bind` | Client destination or server bind address |
 | `port` | `--port` | Defaults to `5201` |
 | `bindDevice` | `--bind-dev` | Supported on macOS by iperf3 3.21; privileges may be required elsewhere |
-| `numStreams` | `--parallel` | Applied to TCP client tests |
+| `numStreams` | `--parallel` | Parallel client streams for TCP, UDP, and SCTP |
 | `mode` | `--reverse` / `--bidir` | Selects upload, download, or simultaneous bidirectional mode |
 | `reverse` | `--reverse` | Compatibility accessor for upload/download mode |
-| `rate` | `--bitrate` | UDP bits per second |
+| `rate` | `--bitrate` | Bits per second for any protocol; unset keeps the iperf3 defaults (unlimited TCP/SCTP, 1 Mbit/s UDP) |
+| `blockSize` | `--length` | Read/write block size in bytes; the exact UDP datagram payload size |
+| `socketBufferSize` | `--window` | Socket buffer size in bytes |
+| `noDelay` | `--no-delay` | Disables Nagle's algorithm on TCP streams |
+| `mss` | `--set-mss` | Platform dependent; macOS rejects it on loopback connections |
 | `duration` | `--time` | Client-side whole-second duration |
 | `numberOfBytes` | `--bytes` | Do not combine with another end condition |
-| `timeout` | `--connect-timeout` | Swift value is expressed in seconds |
+| `timeout` | `--connect-timeout` | Swift value is expressed in seconds; sub-second values are supported |
 | `dscp` | `--dscp` | Numeric DSCP value in `0...63` |
-| `reporterInterval` | `--interval` | Drives both reporting and statistics intervals |
+| `reporterInterval` | `--interval` | Interval between reporter callbacks |
+| `statsInterval` | — | Statistics sampling interval; defaults to `reporterInterval` |
 | `omit` | `--omit` | Initial seconds excluded from measurements |
-
-`statsInterval` is currently reserved; set `reporterInterval` to control
-interval callbacks.
 
 ## Authentication
 

@@ -26,6 +26,29 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertEqual(configuration.reverse, .upload)
     }
 
+    func testConfigurationPerformanceOptionDefaults() {
+        var configuration = IperfConfiguration()
+
+        XCTAssertNil(configuration.rate)
+        XCTAssertNil(configuration.blockSize)
+        XCTAssertNil(configuration.socketBufferSize)
+        XCTAssertNil(configuration.mss)
+        XCTAssertFalse(configuration.noDelay)
+        XCTAssertNil(configuration.statsInterval)
+
+        configuration.rate = 5_000_000
+        configuration.blockSize = 1_200
+        configuration.socketBufferSize = 262_144
+        configuration.mss = 1_400
+        configuration.noDelay = true
+
+        XCTAssertEqual(configuration.rate, 5_000_000)
+        XCTAssertEqual(configuration.blockSize, 1_200)
+        XCTAssertEqual(configuration.socketBufferSize, 262_144)
+        XCTAssertEqual(configuration.mss, 1_400)
+        XCTAssertTrue(configuration.noDelay)
+    }
+
     func testReverseRoundTripKeepsBidirectionalMode() {
         var configuration = IperfConfiguration()
         configuration.mode = .bidirectional
