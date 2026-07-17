@@ -177,6 +177,14 @@ them:
 | `numberOfBytes` | `--bytes` | Do not combine with another end condition |
 | `timeout` | `--connect-timeout` | Swift value is expressed in seconds; sub-second values are supported |
 | `dscp` | `--dscp` | Numeric DSCP value in `0...63` |
+| `tos` | `--tos` | Full IP type-of-service byte in `0...255`; overrides `dscp` when both are set |
+| `clientPort` | `--cport` | Local client port; parallel streams bind consecutive ports starting there |
+| `udpCounters64Bit` | `--udp-counters-64bit` | 64-bit packet counters for long or high-rate UDP tests |
+| `repeatingPayload` | `--repeating-payload` | Repeating payload pattern instead of random data |
+| `getServerOutput` | `--get-server-output` | Server results text is exposed through `IperfRunner.serverOutput` |
+| `oneOff` | `--one-off` | The server handles one client and then finishes |
+| `idleTimeout` | `--idle-timeout` | Restarts an idle server after the given number of seconds |
+| `rcvTimeout` | `--rcv-timeout` | Receive timeout in seconds; the CLI expresses it in milliseconds |
 | `reporterInterval` | `--interval` | Interval between reporter callbacks |
 | `statsInterval` | — | Statistics sampling interval; defaults to `reporterInterval` |
 | `omit` | `--omit` | Initial seconds excluded from measurements |
