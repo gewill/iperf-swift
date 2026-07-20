@@ -342,6 +342,122 @@ final class IperfSwiftUnitTests: XCTestCase {
         }
     }
 
+    func testProtocolApplicabilityRejectsWrongProtocolOptions() {
+        typealias Mutation = (inout IperfConfiguration) -> Void
+        let testCases: [(String, IperfProtocol, Mutation, IperfError)] = [
+            ("noDelay", .udp, { $0.noDelay = true }, .IETCPONLY),
+            ("mss", .udp, { $0.mss = 1_400 }, .IETCPONLY),
+            ("udpCounters64Bit", .tcp, { $0.udpCounters64Bit = true }, .IEUDPONLY),
+            ("dontFragment", .tcp, { $0.dontFragment = true }, .IEUDPONLY),
+        ]
+
+        for (name, prot, mutate, expectedError) in testCases {
+            var configuration = IperfConfiguration()
+            configuration.prot = prot
+            mutate(&configuration)
+
+            XCTAssertEqual(configuration.protocolApplicabilityError(), expectedError, name)
+        }
+    }
+
+    func testProtocolApplicabilityRejectsDontFragmentWithForcedIPv6() {
+        var configuration = IperfConfiguration()
+        configuration.prot = .udp
+        configuration.addressFamily = .ipv6
+        configuration.dontFragment = true
+
+        XCTAssertEqual(configuration.protocolApplicabilityError(), .IEIPV4ONLY)
+    }
+
+    func testProtocolApplicabilityAllowsMatchingAndDualProtocolOptions() {
+        var tcp = IperfConfiguration()
+        tcp.noDelay = true
+        tcp.mss = 1_400
+        tcp.blockSize = 1_200
+        XCTAssertNil(tcp.protocolApplicabilityError())
+
+        var udpIPv4 = IperfConfiguration()
+        udpIPv4.prot = .udp
+        udpIPv4.addressFamily = .ipv4
+        udpIPv4.udpCounters64Bit = true
+        udpIPv4.dontFragment = true
+        udpIPv4.blockSize = 1_200
+        XCTAssertNil(udpIPv4.protocolApplicabilityError())
+
+        var udpAutomaticFamily = udpIPv4
+        udpAutomaticFamily.addressFamily = .any
+        XCTAssertNil(udpAutomaticFamily.protocolApplicabilityError())
+
+        var udpWithDisabledTCPOptions = IperfConfiguration()
+        udpWithDisabledTCPOptions.prot = .udp
+        udpWithDisabledTCPOptions.noDelay = false
+        udpWithDisabledTCPOptions.mss = nil
+        XCTAssertNil(udpWithDisabledTCPOptions.protocolApplicabilityError())
+
+        var tcpWithDisabledUDPOptions = IperfConfiguration()
+        tcpWithDisabledUDPOptions.udpCounters64Bit = false
+        tcpWithDisabledUDPOptions.dontFragment = false
+        XCTAssertNil(tcpWithDisabledUDPOptions.protocolApplicabilityError())
+    }
+
+    func testApplicabilityValidationPrecedence() {
+        var invalidPort = IperfConfiguration()
+        invalidPort.port = 0
+        invalidPort.prot = .udp
+        invalidPort.noDelay = true
+
+        var wrongRole = IperfConfiguration()
+        wrongRole.role = .server
+        wrongRole.prot = .udp
+        wrongRole.noDelay = true
+
+        var wrongMode = IperfConfiguration()
+        wrongMode.mode = .upload
+        wrongMode.rcvTimeout = 1
+        wrongMode.prot = .udp
+        wrongMode.noDelay = true
+
+        let testCases: [(IperfConfiguration, IperfError)] = [
+            (invalidPort, .IEBADPORT),
+            (wrongRole, .IECLIENTONLY),
+            (wrongMode, .IERVRSONLYRCVTIMEOUT),
+        ]
+
+        for (index, testCase) in testCases.enumerated() {
+            assertRunnerFails(
+                testCase.0,
+                with: testCase.1,
+                description: "applicability precedence \(index)"
+            )
+        }
+    }
+
+    func testProtocolApplicabilityErrorsReachRunnerErrorState() {
+        typealias Mutation = (inout IperfConfiguration) -> Void
+        let testCases: [(String, Mutation, IperfError)] = [
+            ("TCP-only", {
+                $0.prot = .udp
+                $0.noDelay = true
+            }, .IETCPONLY),
+            ("UDP-only", { $0.dontFragment = true }, .IEUDPONLY),
+            ("IPv4-only", {
+                $0.prot = .udp
+                $0.addressFamily = .ipv6
+                $0.dontFragment = true
+            }, .IEIPV4ONLY),
+        ]
+
+        for (name, mutate, expectedError) in testCases {
+            var configuration = IperfConfiguration()
+            mutate(&configuration)
+            assertRunnerFails(
+                configuration,
+                with: expectedError,
+                description: "\(name) option fails before starting"
+            )
+        }
+    }
+
     func testReceiveTimeoutApplicabilityMatchesClientMode() {
         var upload = IperfConfiguration()
         upload.mode = .upload
@@ -492,6 +608,12 @@ final class IperfSwiftUnitTests: XCTestCase {
         )
         XCTAssertEqual(IperfError(rawValue: 142), .IEAUTHTEST)
         XCTAssertEqual(IperfError.IEAUTHTEST.debugDescription, "Test authorization failed")
+        XCTAssertEqual(IperfError(rawValue: 402), .IETCPONLY)
+        XCTAssertEqual(IperfError.IETCPONLY.debugDescription, "This option is TCP only")
+        XCTAssertEqual(IperfError(rawValue: 403), .IEUDPONLY)
+        XCTAssertEqual(IperfError.IEUDPONLY.debugDescription, "This option is UDP only")
+        XCTAssertEqual(IperfError(rawValue: 404), .IEIPV4ONLY)
+        XCTAssertEqual(IperfError.IEIPV4ONLY.debugDescription, "This option is IPv4 only")
 
         let success = IperfIntervalResult(error: .IENONE)
         let failure = IperfIntervalResult(error: .IEAUTHTEST)
@@ -558,5 +680,29 @@ final class IperfSwiftUnitTests: XCTestCase {
         var configuration = IperfConfiguration()
         configuration.address = "invalid.invalid"
         return configuration
+    }
+
+    private func assertRunnerFails(
+        _ configuration: IperfConfiguration,
+        with expectedError: IperfError,
+        description: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let failed = expectation(description: description)
+        let runner = IperfRunner(with: configuration)
+        var receivedError: IperfError?
+        var states: [IperfRunnerState] = []
+
+        runner.start({ _ in }, { error in
+            receivedError = error
+            failed.fulfill()
+        }, { state in
+            states.append(state)
+        })
+
+        wait(for: [failed], timeout: 2)
+        XCTAssertEqual(receivedError, expectedError, file: file, line: line)
+        XCTAssertEqual(states.last, .error, file: file, line: line)
     }
 }

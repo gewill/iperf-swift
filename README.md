@@ -173,15 +173,17 @@ actually honor:
 3. **Invalid but only knowable at runtime → an explicit, typed error.** Platform-
    or route-dependent limits (interface binding, MSS on loopback) surface as
    `IperfError` values and drive the runner to `.error`.
-4. **Role applicability and transport selection fail fast.** Explicitly setting
-   an option for the wrong endpoint role is rejected before the run with
-   `IESERVERONLY` / `IECLIENTONLY`. Selecting a transport the engine cannot
-   honor becomes an error, never a misleading success over a different
-   protocol.
+4. **Role and protocol applicability fail fast.** Explicitly setting an option
+   for the wrong endpoint role is rejected with `IESERVERONLY` /
+   `IECLIENTONLY`. Enabled TCP-only and UDP-only options fail with
+   `IETCPONLY` / `IEUDPONLY`; an IPv4-only option forced to IPv6 fails with
+   `IEIPV4ONLY`.
 
-Protocol-specific applicability that the iperf3 CLI does not reject during
-argument parsing remains engine-defined and is tracked separately in
-[#31](https://github.com/gewill/iperf-swift/issues/31).
+The iperf3 CLI accepts protocol-inapplicable flags and silently ignores them.
+The wrapper intentionally applies a stricter policy because the selected
+transport is already known before a run starts. When `addressFamily` is
+`.any`, the resolved family remains runtime-dependent; `dontFragment` takes
+effect only when the resulting UDP socket is IPv4.
 
 ## Configuration mapping
 
@@ -201,20 +203,20 @@ them:
 | `mode` | `--reverse` / `--bidir` | Selects upload, download, or simultaneous bidirectional mode |
 | `reverse` | `--reverse` | Compatibility accessor for upload/download mode |
 | `rate` | `--bitrate` | Bits per second for either protocol; unset keeps the iperf3 defaults (unlimited TCP, 1 Mbit/s UDP) |
-| `blockSize` | `--length` | Read/write block size in bytes; the exact UDP datagram payload size |
+| `blockSize` | `--length` | Applies to both transports: read/write block size in bytes, and the exact UDP datagram payload size |
 | `socketBufferSize` | `--window` | Socket buffer size in bytes |
-| `noDelay` | `--no-delay` | Disables Nagle's algorithm on TCP streams |
-| `mss` | `--set-mss` | Platform dependent; macOS rejects it on loopback connections |
+| `noDelay` | `--no-delay` | TCP only; enabling it for UDP fails with `IETCPONLY` |
+| `mss` | `--set-mss` | TCP only; UDP fails with `IETCPONLY`. Platform dependent; macOS rejects it on loopback connections |
 | `duration` | `--time` | Client-side whole-second duration |
 | `numberOfBytes` | `--bytes` | Do not combine with another end condition |
 | `timeout` | `--connect-timeout` | Swift value is expressed in seconds; sub-second values are supported |
 | `dscp` | `--dscp` | Numeric DSCP value in `0...63` |
 | `tos` | `--tos` | Full IP type-of-service byte in `0...255`; overrides `dscp` when both are set |
 | `clientPort` | `--cport` | Local client port; parallel streams bind consecutive ports starting there |
-| `udpCounters64Bit` | `--udp-counters-64bit` | 64-bit packet counters for long or high-rate UDP tests |
+| `udpCounters64Bit` | `--udp-counters-64bit` | UDP only; enabling it for TCP fails with `IEUDPONLY` |
 | `repeatingPayload` | `--repeating-payload` | Repeating payload pattern instead of random data |
 | `getServerOutput` | `--get-server-output` | Server results text is exposed through `IperfRunner.serverOutput` |
-| `dontFragment` | `--dont-fragment` | UDP Do-Not-Fragment flag; oversized datagrams then fail to send |
+| `dontFragment` | `--dont-fragment` | IPv4/UDP only; TCP and forced IPv6 fail with `IEUDPONLY` / `IEIPV4ONLY`. With automatic family selection, it applies only when resolution chooses IPv4 |
 | `oneOff` | `--one-off` | The server handles one client and then finishes |
 | `idleTimeout` | `--idle-timeout` | Restarts an idle server after the given number of seconds |
 | `rcvTimeout` | `--rcv-timeout` | Receive timeout in seconds (`0.1...86,400`); the CLI expresses it in milliseconds |
