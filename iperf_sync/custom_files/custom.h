@@ -17,6 +17,9 @@ void iperf_set_test_rcv_timeout(struct iperf_test* ipt, struct iperf_time* to);
 
 /* Defined in custom.c. */
 void iperf_set_test_domain(struct iperf_test* ipt, int domain);
+/* Validate the in-memory Base64 PEM inputs used by the wrapper setters. */
+int iperf_validate_client_rsa_pubkey(const char* base64);
+int iperf_validate_server_rsa_privkey(const char* base64);
 
 
 #endif /* Header_h */

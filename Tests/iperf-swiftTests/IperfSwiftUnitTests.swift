@@ -286,6 +286,64 @@ final class IperfSwiftUnitTests: XCTestCase {
         )
     }
 
+    func testAuthenticationValidationFailsBeforeNetworking() {
+        typealias Mutation = (inout IperfConfiguration) -> Void
+        let testCases: [(String, IperfRole, Mutation, IperfError)] = [
+            ("disabled client credential", .client, { $0.username = "user" }, .IESETCLIENTAUTH),
+            ("disabled client padding", .client, { $0.usePkcs1Padding = true }, .IESETCLIENTAUTH),
+            ("incomplete client credentials", .client, {
+                $0.isAuth = true
+                $0.username = "user"
+            }, .IESETCLIENTAUTH),
+            ("invalid client public key", .client, {
+                $0.isAuth = true
+                $0.username = "user"
+                $0.password = "password"
+                $0.publicKey = "not-base64-pem"
+            }, .IESETCLIENTAUTH),
+            ("disabled server credential", .server, { $0.authorizedUsers = "user,hash" }, .IESETSERVERAUTH),
+            ("disabled server padding", .server, { $0.usePkcs1Padding = true }, .IESETSERVERAUTH),
+            ("disabled explicit server skew", .server, { $0.timeSkewThreshold = 10 }, .IESETSERVERAUTH),
+            ("incomplete server credentials", .server, {
+                $0.isAuth = true
+                $0.authorizedUsers = "user,hash"
+            }, .IESETSERVERAUTH),
+            ("nonpositive server skew", .server, {
+                $0.isAuth = true
+                $0.privateKey = "not-base64-pem"
+                $0.authorizedUsers = "user,hash"
+                $0.timeSkewThreshold = 0
+            }, .IESETSERVERAUTH),
+            ("invalid server private key", .server, {
+                $0.isAuth = true
+                $0.privateKey = "not-base64-pem"
+                $0.authorizedUsers = "user,hash"
+            }, .IESETSERVERAUTH),
+        ]
+
+        for (name, role, mutate, expectedError) in testCases {
+            var configuration = IperfConfiguration()
+            configuration.role = role
+            configuration.address = "invalid.invalid"
+            mutate(&configuration)
+
+            assertRunnerFails(configuration, with: expectedError, description: name)
+        }
+    }
+
+    func testWrongRoleAuthenticationErrorsPrecedeCompletenessErrors() {
+        var client = IperfConfiguration()
+        client.isAuth = true
+        client.privateKey = "not-base64-pem"
+        assertRunnerFails(client, with: .IESERVERONLY, description: "server key on client")
+
+        var server = IperfConfiguration()
+        server.role = .server
+        server.isAuth = true
+        server.username = "user"
+        assertRunnerFails(server, with: .IECLIENTONLY, description: "client username on server")
+    }
+
     func testNonFiniteDurationDoesNotTrap() {
         var configurations: [IperfConfiguration] = []
 

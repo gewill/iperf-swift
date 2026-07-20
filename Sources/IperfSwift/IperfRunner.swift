@@ -288,6 +288,34 @@ public class IperfRunner {
         return nil
     }
 
+    static func authenticationError(for configuration: IperfConfiguration) -> IperfError? {
+        let error: IperfError = configuration.role == .client
+            ? .IESETCLIENTAUTH
+            : .IESETSERVERAUTH
+
+        guard configuration.isAuth else {
+            return configuration.hasAuthenticationOptionForSelectedRole() ? error : nil
+        }
+
+        switch configuration.role {
+        case .client:
+            guard !configuration.username.isEmpty,
+                  !configuration.password.isEmpty,
+                  !configuration.publicKey.isEmpty,
+                  iperf_validate_client_rsa_pubkey(configuration.publicKey) == 0 else {
+                return error
+            }
+        case .server:
+            guard !configuration.privateKey.isEmpty,
+                  !configuration.authorizedUsers.isEmpty,
+                  configuration.timeSkewThreshold > 0,
+                  iperf_validate_server_rsa_privkey(configuration.privateKey) == 0 else {
+                return error
+            }
+        }
+        return nil
+    }
+
     private func configurationError() -> IperfError? {
         guard let configuration = configuration else {
             return nil
@@ -331,6 +359,9 @@ public class IperfRunner {
 
         if let roleError = configuration.roleApplicabilityError() {
             return roleError
+        }
+        if let authenticationError = Self.authenticationError(for: configuration) {
+            return authenticationError
         }
         return configuration.protocolApplicabilityError()
     }

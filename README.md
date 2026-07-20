@@ -191,12 +191,11 @@ them. “Client” and “Server” below refer to the local Swift endpoint. Unl
 row narrows it, a client test supports upload, download, and bidirectional modes
 over TCP or UDP and either address family.
 
-Preflight currently runs implemented intrinsic value checks, then role/mode,
-protocol, and forced-address-family applicability checks. Platform, DNS, route,
-interface, key-format, and socket constraints remain runtime decisions. Most
-cross-field and value gaps listed below will fit between intrinsic values and
-role checks when implemented. Authentication is the exception: [#38](https://github.com/gewill/iperf-swift/issues/38)
-keeps wrong-role credential errors ahead of same-role credential completeness.
+Preflight currently runs implemented intrinsic and cross-field value checks,
+then role/mode applicability. Authentication credential completeness and RSA
+key decoding run next so wrong-role errors remain higher priority, followed by
+protocol and forced-address-family applicability. Platform, DNS, route,
+interface, and socket constraints remain runtime decisions.
 
 ### Endpoint and shared options
 
@@ -248,19 +247,20 @@ keeps wrong-role credential errors ahead of same-role credential completeness.
 ### Authentication options
 
 Authentication fields are wrapper values rather than file-path-only CLI inputs.
-They are applied only when `isAuth` is enabled; complete dependency validation
-is tracked in [#38](https://github.com/gewill/iperf-swift/issues/38).
+Authentication-only fields fail preflight while `isAuth` is disabled. When it
+is enabled, each role requires its complete credential group; wrong-role errors
+remain higher priority than same-role credential completeness.
 
 | Swift property | iperf3 option / source | Applies when | Constraints / current behavior |
 | --- | --- | --- | --- |
-| `isAuth` | Wrapper gate | Client / Server | Defaults to `false`; only the selected role's credentials are applied when enabled |
-| `usePkcs1Padding` | `--use-pkcs1-padding` | Authenticated Client / Server | Wrapper extension used for both client encryption and server decryption; ignored while authentication is disabled |
-| `username` | `--username` | Authenticated Client | Server use fails with `IECLIENTONLY` |
-| `password` | `IPERF3_PASSWORD` / prompt replacement | Authenticated Client | Supplied directly by the host app; Server use fails with `IECLIENTONLY` |
-| `publicKey` | `--rsa-public-key-path` content | Authenticated Client | Base64-encoded PEM content, not a file path; Server use fails with `IECLIENTONLY` |
-| `privateKey` | `--rsa-private-key-path` content | Authenticated Server | Base64-encoded unencrypted PEM content; Client use fails with `IESERVERONLY` |
-| `authorizedUsers` | `--authorized-users-path` extension | Authenticated Server | Accepts `username,sha256` content or a file path; Client use fails with `IESERVERONLY` |
-| `timeSkewThreshold` | `--time-skew-threshold` | Authenticated Server | Defaults to `10` seconds; an explicit Client assignment fails with `IESERVERONLY`; positive-value validation is tracked in [#38](https://github.com/gewill/iperf-swift/issues/38) |
+| `isAuth` | Wrapper gate | Client / Server | Defaults to `false`; enabling it requires the complete credential group for the selected role |
+| `usePkcs1Padding` | `--use-pkcs1-padding` | Authenticated Client / Server | Wrapper extension used for both client encryption and server decryption; enabling it while authentication is disabled fails with the selected role's authentication error |
+| `username` | `--username` | Authenticated Client | Must be nonempty; Server use fails with `IECLIENTONLY` |
+| `password` | `IPERF3_PASSWORD` / prompt replacement | Authenticated Client | Must be nonempty and is supplied directly by the host app; Server use fails with `IECLIENTONLY` |
+| `publicKey` | `--rsa-public-key-path` content | Authenticated Client | Must be a decodable Base64-encoded PEM public key, not a file path; invalid or incomplete Client credentials fail with `IESETCLIENTAUTH`, while Server use fails with `IECLIENTONLY` |
+| `privateKey` | `--rsa-private-key-path` content | Authenticated Server | Must be a decodable Base64-encoded unencrypted PEM private key; invalid or incomplete Server credentials fail with `IESETSERVERAUTH`, while Client use fails with `IESERVERONLY` |
+| `authorizedUsers` | `--authorized-users-path` extension | Authenticated Server | Must be nonempty and accepts `username,sha256` content or a file path; Client use fails with `IESERVERONLY` |
+| `timeSkewThreshold` | `--time-skew-threshold` | Authenticated Server | Defaults to `10` seconds and must be positive; an explicit Client assignment fails with `IESERVERONLY` |
 
 ### Cross-field rules
 
@@ -268,7 +268,7 @@ is tracked in [#38](https://github.com/gewill/iperf-swift/issues/38).
 | --- | --- | --- |
 | `duration` + nonzero `numberOfBytes` | Fails before networking with `IEENDCONDITIONS`; an explicitly set zero duration still counts as a duration condition | Implemented |
 | `dscp` + `tos` | `tos` is applied last and wins | Implemented |
-| Authentication field + `isAuth == false` | Correct-role fields are currently ignored | Preflight dependencies in [#38](https://github.com/gewill/iperf-swift/issues/38) |
+| Authentication field + `isAuth == false` | Fails before networking with `IESETCLIENTAUTH` or `IESETSERVERAUTH` for the selected local role | Implemented |
 | Explicit same-default role option | Assigning `numStreams`, `mode`, `prot`, `omit`, or `timeSkewThreshold` records caller intent, so wrong-role use still fails | Implemented |
 | `dontFragment` + `addressFamily == .any` | Allowed; the flag takes effect only if resolution produces an IPv4 UDP socket | Runtime by design |
 | `clientPort` + parallel/bidirectional streams | Highest port is `clientPort + numStreams - 1` for unidirectional tests and `clientPort + 2 × numStreams - 1` for bidirectional tests | Implemented; the highest port may equal `65,535` |
@@ -277,9 +277,8 @@ is tracked in [#38](https://github.com/gewill/iperf-swift/issues/38).
 
 Follow-up work is deliberately split by behavior and risk:
 
-1. [#38 — preflight authentication dependencies](https://github.com/gewill/iperf-swift/issues/38)
-2. [#39 — validate remaining client integer ranges](https://github.com/gewill/iperf-swift/issues/39)
-3. [#40 — validate `TimeInterval` values](https://github.com/gewill/iperf-swift/issues/40)
+1. [#39 — validate remaining client integer ranges](https://github.com/gewill/iperf-swift/issues/39)
+2. [#40 — validate `TimeInterval` values](https://github.com/gewill/iperf-swift/issues/40)
 
 ### Unsupported options
 
