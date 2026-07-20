@@ -7,7 +7,7 @@ Versioning follows the embedded iperf3 engine: the major and minor components
 track the engine version (currently 3.21), and the patch component is the
 package release number.
 
-## [Unreleased]
+## [3.21.5] - 2026-07-20
 
 ### Added
 
@@ -165,7 +165,7 @@ package release number.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.4...HEAD
+[3.21.5]: https://github.com/gewill/iperf-swift/compare/v3.21.4...v3.21.5
 [3.21.4]: https://github.com/gewill/iperf-swift/compare/v3.21.3...v3.21.4
 [3.21.3]: https://github.com/gewill/iperf-swift/compare/v3.21.2...v3.21.3
 [3.21.2]: https://github.com/gewill/iperf-swift/compare/v3.21.1...v3.21.2
