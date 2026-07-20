@@ -12,11 +12,6 @@ import IperfCLib
 public struct IperfStreamIntervalResult {
     /// The stream's data-flow direction from the client's point of view.
     public var direction = IperfDirection.upload
-//#if (defined(linux) || defined(__FreeBSD__) || defined(__NetBSD__)) && \
-//    defined(TCP_INFO)
-//    struct tcp_info tcpInfo; /* getsockopt(TCP_INFO) for Linux, {Free,Net}BSD */
-//    TAILQ_ENTRY(iperf_interval_results) irlistentries;
-//    void     *custom_data;
     var bytesTransferred: Int = 0
     var intervalDuration: Double = 0
     var intervalPacketCount: Int64 = 0
