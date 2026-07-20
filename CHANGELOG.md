@@ -7,6 +7,24 @@ Versioning follows the embedded iperf3 engine: the major and minor components
 track the engine version (currently 3.21), and the patch component is the
 package release number.
 
+## [Unreleased]
+
+### Fixed
+
+- Selecting the SCTP protocol (`IperfConfiguration.prot = .sctp`) on a build
+  without SCTP support — the default on Apple platforms — now fails with
+  `IperfError.IENOSCTP` and reaches the error state, instead of silently
+  running the test over TCP. This matches the official iperf3 CLI, which
+  refuses SCTP when it is not compiled in.
+
+### Added
+
+- Expanded the test suite: client-side RSA authentication (OAEP and PKCS#1
+  padding, plus rejection of wrong credentials), `stop()` during an active
+  run, runner reuse and deallocation, `--bytes` termination, connect-timeout
+  against an unreachable host, and `Codable` round-trips for the public option
+  enums.
+
 ## [3.21.5] - 2026-07-20
 
 ### Added
@@ -165,6 +183,7 @@ package release number.
 
 - Embedded engine updated to iperf3 3.14.
 
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.5...HEAD
 [3.21.5]: https://github.com/gewill/iperf-swift/compare/v3.21.4...v3.21.5
 [3.21.4]: https://github.com/gewill/iperf-swift/compare/v3.21.3...v3.21.4
 [3.21.3]: https://github.com/gewill/iperf-swift/compare/v3.21.2...v3.21.3
