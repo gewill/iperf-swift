@@ -11,7 +11,7 @@ package release number.
 
 ### Removed
 
-- Removed the `IperfProtocol.sctp` case. Apple platform builds of iperf3 are not
+- Removed the `IperfProtocol.sctp` case ([#29]). Apple platform builds of iperf3 are not
   compiled with SCTP, so the transport could never succeed; selecting it is now
   a compile-time error instead of a runtime `IperfError.IENOSCTP`. This
   supersedes the earlier change that made `.sctp` fail at runtime. The
@@ -206,3 +206,4 @@ package release number.
 [#13]: https://github.com/gewill/iperf-swift/issues/13
 [#16]: https://github.com/gewill/iperf-swift/issues/16
 [#20]: https://github.com/gewill/iperf-swift/issues/20
+[#29]: https://github.com/gewill/iperf-swift/pull/29
