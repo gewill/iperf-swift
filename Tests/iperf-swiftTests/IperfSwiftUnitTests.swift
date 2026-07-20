@@ -9,9 +9,17 @@ final class IperfSwiftUnitTests: XCTestCase {
         portConfiguration.port = .max
         configurations.append(portConfiguration)
 
+        var negativePortConfiguration = invalidClientConfiguration()
+        negativePortConfiguration.port = .min
+        configurations.append(negativePortConfiguration)
+
         var omitConfiguration = invalidClientConfiguration()
         omitConfiguration.omit = .max
         configurations.append(omitConfiguration)
+
+        var negativeDscpConfiguration = invalidClientConfiguration()
+        negativeDscpConfiguration.dscp = .min
+        configurations.append(negativeDscpConfiguration)
 
         var infiniteDurationConfiguration = invalidClientConfiguration()
         infiniteDurationConfiguration.duration = .infinity
