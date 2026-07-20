@@ -158,9 +158,9 @@ idempotent because libiperf can emit more than one terminal state notification.
 ## Design philosophy
 
 The wrapper is a Swift library, not a re-export of the iperf3 CLI. Options are
-surfaced according to a few guiding rules, so that — for the transport protocol
-in particular — a configuration that compiles and starts is one the engine can
-actually honor:
+surfaced according to a few guiding rules. The configuration tables below
+record both the checks enforced today and known gaps that still have follow-up
+work, so planned validation is not mistaken for shipped behavior:
 
 1. **No value on Apple platforms → not exposed.** CLI-only conveniences (daemon
    mode, JSON-to-stdout, file-based data source) are intentionally omitted.
@@ -173,11 +173,10 @@ actually honor:
 3. **Invalid but only knowable at runtime → an explicit, typed error.** Platform-
    or route-dependent limits (interface binding, MSS on loopback) surface as
    `IperfError` values and drive the runner to `.error`.
-4. **Role and protocol applicability fail fast.** Explicitly setting an option
-   for the wrong endpoint role is rejected with `IESERVERONLY` /
-   `IECLIENTONLY`. Enabled TCP-only and UDP-only options fail with
-   `IETCPONLY` / `IEUDPONLY`; an IPv4-only option forced to IPv6 fails with
-   `IEIPV4ONLY`.
+4. **Implemented applicability checks fail fast.** Explicitly tracked options
+   used with the wrong endpoint role are rejected with `IESERVERONLY` /
+   `IECLIENTONLY`. Enabled TCP-only and UDP-only options fail with `IETCPONLY` /
+   `IEUDPONLY`; an IPv4-only option forced to IPv6 fails with `IEIPV4ONLY`.
 
 The iperf3 CLI accepts protocol-inapplicable flags and silently ignores them.
 The wrapper intentionally applies a stricter policy because the selected
@@ -187,44 +186,103 @@ effect only when the resulting UDP socket is IPv4.
 
 ## Configuration mapping
 
-### Supported options
-
 The wrapper follows the official iperf3 options where the embedded API exposes
-them:
+them. “Client” and “Server” below refer to the local Swift endpoint. Unless a
+row narrows it, a client test supports upload, download, and bidirectional modes
+over TCP or UDP and either address family.
 
-| Swift property | iperf3 option | Notes |
+Preflight currently runs implemented intrinsic value checks, then role/mode,
+protocol, and forced-address-family applicability checks. Platform, DNS, route,
+interface, key-format, and socket constraints remain runtime decisions. Most
+cross-field and value gaps listed below will fit between intrinsic values and
+role checks when implemented. Authentication is the exception: [#38](https://github.com/gewill/iperf-swift/issues/38)
+keeps wrong-role credential errors ahead of same-role credential completeness.
+
+### Endpoint and shared options
+
+| Swift property | iperf3 option | Applies when | Constraints / current behavior |
+| --- | --- | --- | --- |
+| `role` | `--client` / `--server` | Endpoint selection | Defaults to Client |
+| `address` | `--client` / `--bind` | Client / Server | Client destination or server bind address; `nil` or an empty string leaves it unset |
+| `addressFamily` | `-4` / `-6` | Client / Server | Defaults to `.any`; DNS and the resolved socket family remain runtime decisions |
+| `port` | `--port` | Client / Server | Defaults to `5201`; values outside `1...65535` fail with `IEBADPORT` |
+| `bindDevice` | `--bind-dev` | Client / Server | Interface existence, platform support, and permissions are checked at runtime |
+| `rcvTimeout` | `--rcv-timeout` | Server; Client download / bidirectional | `0.1...86,400` seconds; invalid values fail with `IERCVTIMEOUT`, while Client upload fails with `IERVRSONLYRCVTIMEOUT` |
+| `reporterInterval` | `--interval` | Client / Server | Controls both reporter and statistics sampling; its remaining value policy is tracked in [#40](https://github.com/gewill/iperf-swift/issues/40) |
+| `statsInterval` | — | Ignored | Retained for compatibility; statistics always sample at `reporterInterval` |
+| `logfile` | `--logfile` | Client / Server | File-open failures are reported by the engine at runtime |
+| `verbose` | `--verbose` | Client / Server | Enables verbose libiperf text logging |
+
+### Client test options
+
+| Swift property | iperf3 option | Applies when | Constraints / current behavior |
+| --- | --- | --- | --- |
+| `numStreams` | `--parallel` | Client · TCP / UDP | Defaults to `2`; an explicit Server assignment fails with `IECLIENTONLY`; remaining value checks are tracked in [#39](https://github.com/gewill/iperf-swift/issues/39) |
+| `mode` | `--reverse` / `--bidir` | Client · TCP / UDP | Defaults to download; selects upload, download, or simultaneous bidirectional flow |
+| `reverse` | `--reverse` | Client · TCP / UDP | Compatibility accessor for `mode`; a read/write round trip does not cancel bidirectional mode |
+| `prot` | `--tcp` / `--udp` | Client | Defaults to TCP; an explicit Server assignment fails with `IECLIENTONLY` |
+| `rate` | `--bitrate` | Client · TCP / UDP | Unset keeps the CLI defaults: unlimited TCP and 1 Mbit/s UDP |
+| `blockSize` | `--length` | Client · TCP / UDP | TCP read/write block and exact UDP datagram payload; protocol-specific range and zero/default validation are tracked in [#35](https://github.com/gewill/iperf-swift/issues/35) |
+| `socketBufferSize` | `--window` | Client · TCP / UDP | Socket send/receive buffer size; remaining value checks are tracked in [#39](https://github.com/gewill/iperf-swift/issues/39) |
+| `noDelay` | `--no-delay` | Client · TCP | Enabling it for UDP fails with `IETCPONLY` |
+| `mss` | `--set-mss` | Client · TCP | UDP fails with `IETCPONLY`; intrinsic range validation is tracked in [#39](https://github.com/gewill/iperf-swift/issues/39), while valid platform/route failures remain `IESETMSS` at runtime |
+| `duration` | `--time` | Client · TCP / UDP | Truncated toward zero to whole seconds in `0...86,400`; invalid finite values fail with `IEDURATION`; nonfinite values match the CLI's zero parsing |
+| `numberOfBytes` | `--bytes` | Client · TCP / UDP | A nonzero byte limit is an end condition; conflict validation with `duration` is tracked in [#37](https://github.com/gewill/iperf-swift/issues/37) |
+| `timeout` | `--connect-timeout` | Client | Swift unit is seconds and sub-second values are supported; remaining finite/range behavior is tracked in [#40](https://github.com/gewill/iperf-swift/issues/40) |
+| `dscp` | `--dscp` | Client · TCP / UDP · IPv4 / IPv6 | Numeric `0...63`; invalid values fail with `IEBADTOS` |
+| `tos` | `--tos` | Client · TCP / UDP · IPv4 / IPv6 | Applied after `dscp` and therefore wins; the intended `0...255` range is not yet preflight-validated ([#39](https://github.com/gewill/iperf-swift/issues/39)) |
+| `clientPort` | `--cport` | Client · TCP / UDP | Parallel streams bind consecutive ports; it is currently ignored on Server, with role/range/overflow validation tracked in [#36](https://github.com/gewill/iperf-swift/issues/36) |
+| `udpCounters64Bit` | `--udp-counters-64bit` | Client · UDP | Enabling it for TCP fails with `IEUDPONLY` |
+| `repeatingPayload` | `--repeating-payload` | Client · TCP / UDP | Uses a repeating payload pattern instead of randomized bytes |
+| `getServerOutput` | `--get-server-output` | Client · TCP / UDP | Makes the remote text result available through `IperfRunner.serverOutput` |
+| `dontFragment` | `--dont-fragment` | Client · UDP · IPv4 | TCP fails with `IEUDPONLY`; forced IPv6 fails with `IEIPV4ONLY`; `.any` applies it only when resolution selects IPv4 |
+| `omit` | `--omit` | Client · TCP / UDP | Initial `0...600` seconds excluded from measurements; invalid values fail with `IEOMIT` |
+
+### Server behavior
+
+| Swift property | iperf3 option | Applies when | Constraints / current behavior |
+| --- | --- | --- | --- |
+| `oneOff` | `--one-off` | Server | Enabling it for Client fails with `IESERVERONLY`; the server finishes after one client |
+| `idleTimeout` | `--idle-timeout` | Server | Client fails with `IESERVERONLY`; remaining finite/range behavior is tracked in [#40](https://github.com/gewill/iperf-swift/issues/40) |
+
+### Authentication options
+
+Authentication fields are wrapper values rather than file-path-only CLI inputs.
+They are applied only when `isAuth` is enabled; complete dependency validation
+is tracked in [#38](https://github.com/gewill/iperf-swift/issues/38).
+
+| Swift property | iperf3 option / source | Applies when | Constraints / current behavior |
+| --- | --- | --- | --- |
+| `isAuth` | Wrapper gate | Client / Server | Defaults to `false`; only the selected role's credentials are applied when enabled |
+| `usePkcs1Padding` | `--use-pkcs1-padding` | Authenticated Client / Server | Wrapper extension used for both client encryption and server decryption; ignored while authentication is disabled |
+| `username` | `--username` | Authenticated Client | Server use fails with `IECLIENTONLY` |
+| `password` | `IPERF3_PASSWORD` / prompt replacement | Authenticated Client | Supplied directly by the host app; Server use fails with `IECLIENTONLY` |
+| `publicKey` | `--rsa-public-key-path` content | Authenticated Client | Base64-encoded PEM content, not a file path; Server use fails with `IECLIENTONLY` |
+| `privateKey` | `--rsa-private-key-path` content | Authenticated Server | Base64-encoded unencrypted PEM content; Client use fails with `IESERVERONLY` |
+| `authorizedUsers` | `--authorized-users-path` extension | Authenticated Server | Accepts `username,sha256` content or a file path; Client use fails with `IESERVERONLY` |
+| `timeSkewThreshold` | `--time-skew-threshold` | Authenticated Server | Defaults to `10` seconds; an explicit Client assignment fails with `IESERVERONLY`; positive-value validation is tracked in [#38](https://github.com/gewill/iperf-swift/issues/38) |
+
+### Cross-field rules
+
+| Combination | Current behavior | Follow-up |
 | --- | --- | --- |
-| `address` | `--client` / `--bind` | Client destination or server bind address |
-| `addressFamily` | `-4` / `-6` | Forces IPv4 or IPv6; the default lets the resolver pick |
-| `port` | `--port` | Defaults to `5201` |
-| `prot` | `--tcp` / `--udp` | Transport protocol; defaults to TCP |
-| `bindDevice` | `--bind-dev` | Supported on macOS by iperf3 3.21; privileges may be required elsewhere |
-| `numStreams` | `--parallel` | Parallel client streams for TCP and UDP |
-| `mode` | `--reverse` / `--bidir` | Selects upload, download, or simultaneous bidirectional mode |
-| `reverse` | `--reverse` | Compatibility accessor for upload/download mode |
-| `rate` | `--bitrate` | Bits per second for either protocol; unset keeps the iperf3 defaults (unlimited TCP, 1 Mbit/s UDP) |
-| `blockSize` | `--length` | Applies to both transports: read/write block size in bytes, and the exact UDP datagram payload size |
-| `socketBufferSize` | `--window` | Socket buffer size in bytes |
-| `noDelay` | `--no-delay` | TCP only; enabling it for UDP fails with `IETCPONLY` |
-| `mss` | `--set-mss` | TCP only; UDP fails with `IETCPONLY`. Platform dependent; macOS rejects it on loopback connections |
-| `duration` | `--time` | Client-side whole-second duration |
-| `numberOfBytes` | `--bytes` | Do not combine with another end condition |
-| `timeout` | `--connect-timeout` | Swift value is expressed in seconds; sub-second values are supported |
-| `dscp` | `--dscp` | Numeric DSCP value in `0...63` |
-| `tos` | `--tos` | Full IP type-of-service byte in `0...255`; overrides `dscp` when both are set |
-| `clientPort` | `--cport` | Local client port; parallel streams bind consecutive ports starting there |
-| `udpCounters64Bit` | `--udp-counters-64bit` | UDP only; enabling it for TCP fails with `IEUDPONLY` |
-| `repeatingPayload` | `--repeating-payload` | Repeating payload pattern instead of random data |
-| `getServerOutput` | `--get-server-output` | Server results text is exposed through `IperfRunner.serverOutput` |
-| `dontFragment` | `--dont-fragment` | IPv4/UDP only; TCP and forced IPv6 fail with `IEUDPONLY` / `IEIPV4ONLY`. With automatic family selection, it applies only when resolution chooses IPv4 |
-| `oneOff` | `--one-off` | The server handles one client and then finishes |
-| `idleTimeout` | `--idle-timeout` | Restarts an idle server after the given number of seconds |
-| `rcvTimeout` | `--rcv-timeout` | Receive timeout in seconds (`0.1...86,400`); the CLI expresses it in milliseconds |
-| `reporterInterval` | `--interval` | Interval between reporter callbacks; statistics sample at the same interval |
-| `statsInterval` | — | Ignored; the engine retains one statistics sample per interval, so sampling always follows `reporterInterval` |
-| `omit` | `--omit` | Initial seconds excluded from measurements |
-| `logfile` | `--logfile` | Path for the engine's own text log output |
-| `verbose` | `--verbose` | Enables verbose libiperf logging |
+| `duration` + nonzero `numberOfBytes` | Both currently reach libiperf; whichever condition is met first ends the test | Reject with `IEENDCONDITIONS` in [#37](https://github.com/gewill/iperf-swift/issues/37) |
+| `dscp` + `tos` | `tos` is applied last and wins | Implemented |
+| Authentication field + `isAuth == false` | Correct-role fields are currently ignored | Preflight dependencies in [#38](https://github.com/gewill/iperf-swift/issues/38) |
+| Explicit same-default role option | Assigning `numStreams`, `mode`, `prot`, `omit`, or `timeSkewThreshold` records caller intent, so wrong-role use still fails | Implemented |
+| `dontFragment` + `addressFamily == .any` | Allowed; the flag takes effect only if resolution produces an IPv4 UDP socket | Runtime by design |
+| `clientPort` + parallel/bidirectional streams | Data streams use consecutive local ports; overflow is currently not preflight-checked | Range validation in [#36](https://github.com/gewill/iperf-swift/issues/36) |
+
+### Known validation gaps
+
+Follow-up work is deliberately split by behavior and risk:
+
+1. [#35 — validate `blockSize` per transport](https://github.com/gewill/iperf-swift/issues/35)
+2. [#36 — validate and restrict `clientPort`](https://github.com/gewill/iperf-swift/issues/36)
+3. [#37 — reject conflicting test end conditions](https://github.com/gewill/iperf-swift/issues/37)
+4. [#38 — preflight authentication dependencies](https://github.com/gewill/iperf-swift/issues/38)
+5. [#39 — validate remaining client integer ranges](https://github.com/gewill/iperf-swift/issues/39)
+6. [#40 — validate `TimeInterval` values](https://github.com/gewill/iperf-swift/issues/40)
 
 ### Unsupported options
 
