@@ -231,7 +231,7 @@ keeps wrong-role credential errors ahead of same-role credential completeness.
 | `timeout` | `--connect-timeout` | Client | Swift unit is seconds and sub-second values are supported; remaining finite/range behavior is tracked in [#40](https://github.com/gewill/iperf-swift/issues/40) |
 | `dscp` | `--dscp` | Client · TCP / UDP · IPv4 / IPv6 | Numeric `0...63`; invalid values fail with `IEBADTOS` |
 | `tos` | `--tos` | Client · TCP / UDP · IPv4 / IPv6 | Applied after `dscp` and therefore wins; the intended `0...255` range is not yet preflight-validated ([#39](https://github.com/gewill/iperf-swift/issues/39)) |
-| `clientPort` | `--cport` | Client · TCP / UDP | Parallel streams bind consecutive ports; it is currently ignored on Server, with role/range/overflow validation tracked in [#36](https://github.com/gewill/iperf-swift/issues/36) |
+| `clientPort` | `--cport` | Client · TCP / UDP | `1...65,535`; Server use fails with `IECLIENTONLY`; parallel streams use consecutive ports and bidirectional mode reserves two ranges, with overflow failing as `IEBADPORT` |
 | `udpCounters64Bit` | `--udp-counters-64bit` | Client · UDP | Enabling it for TCP fails with `IEUDPONLY` |
 | `repeatingPayload` | `--repeating-payload` | Client · TCP / UDP | Uses a repeating payload pattern instead of randomized bytes |
 | `getServerOutput` | `--get-server-output` | Client · TCP / UDP | Makes the remote text result available through `IperfRunner.serverOutput` |
@@ -271,17 +271,16 @@ is tracked in [#38](https://github.com/gewill/iperf-swift/issues/38).
 | Authentication field + `isAuth == false` | Correct-role fields are currently ignored | Preflight dependencies in [#38](https://github.com/gewill/iperf-swift/issues/38) |
 | Explicit same-default role option | Assigning `numStreams`, `mode`, `prot`, `omit`, or `timeSkewThreshold` records caller intent, so wrong-role use still fails | Implemented |
 | `dontFragment` + `addressFamily == .any` | Allowed; the flag takes effect only if resolution produces an IPv4 UDP socket | Runtime by design |
-| `clientPort` + parallel/bidirectional streams | Data streams use consecutive local ports; overflow is currently not preflight-checked | Range validation in [#36](https://github.com/gewill/iperf-swift/issues/36) |
+| `clientPort` + parallel/bidirectional streams | Highest port is `clientPort + numStreams - 1` for unidirectional tests and `clientPort + 2 × numStreams - 1` for bidirectional tests | Implemented; the highest port may equal `65,535` |
 
 ### Known validation gaps
 
 Follow-up work is deliberately split by behavior and risk:
 
-1. [#36 — validate and restrict `clientPort`](https://github.com/gewill/iperf-swift/issues/36)
-2. [#37 — reject conflicting test end conditions](https://github.com/gewill/iperf-swift/issues/37)
-3. [#38 — preflight authentication dependencies](https://github.com/gewill/iperf-swift/issues/38)
-4. [#39 — validate remaining client integer ranges](https://github.com/gewill/iperf-swift/issues/39)
-5. [#40 — validate `TimeInterval` values](https://github.com/gewill/iperf-swift/issues/40)
+1. [#37 — reject conflicting test end conditions](https://github.com/gewill/iperf-swift/issues/37)
+2. [#38 — preflight authentication dependencies](https://github.com/gewill/iperf-swift/issues/38)
+3. [#39 — validate remaining client integer ranges](https://github.com/gewill/iperf-swift/issues/39)
+4. [#40 — validate `TimeInterval` values](https://github.com/gewill/iperf-swift/issues/40)
 
 ### Unsupported options
 
