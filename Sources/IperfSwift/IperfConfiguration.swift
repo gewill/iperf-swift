@@ -167,6 +167,9 @@ public struct IperfConfiguration {
     /// equivalent to `--bytes`. Zero does not select a byte end condition.
     public var numberOfBytes: UInt64?
     /// The client connection timeout in seconds, equivalent to `--connect-timeout`.
+    ///
+    /// Zero keeps the engine default. Positive values are truncated to whole
+    /// milliseconds and must fit in a signed 32-bit millisecond value.
     public var timeout: TimeInterval?
     /// The client DSCP value in the range `0...63`, equivalent to `--dscp`.
     public var dscp: Int?
@@ -215,6 +218,8 @@ public struct IperfConfiguration {
     public var oneOff: Bool = false
     /// The number of seconds after which an idle server restarts, equivalent
     /// to `--idle-timeout`.
+    ///
+    /// Positive values are rounded up to whole seconds in `1...86,400`.
     public var idleTimeout: TimeInterval?
     /// The timeout in seconds for receiving data in an active test,
     /// equivalent to `--rcv-timeout` (which the CLI expresses in
@@ -225,7 +230,8 @@ public struct IperfConfiguration {
     /// The interval in seconds between reporter callbacks, equivalent to `--interval`.
     ///
     /// The wrapper uses this value for both libiperf's reporter and statistics
-    /// intervals.
+    /// intervals. Zero disables periodic callbacks; nonzero values must be in
+    /// `0.000001...60`, matching the embedded timer's microsecond precision.
     public var reporterInterval: TimeInterval?
     /// Unused: statistics always sample at ``reporterInterval``.
     ///

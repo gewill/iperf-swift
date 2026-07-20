@@ -406,6 +406,93 @@ final class IperfSwiftUnitTests: XCTestCase {
         assertRunnerFails(invalidTOS, with: .IEBADTOS, description: "invalid TOS before IPv4-only")
     }
 
+    func testTimeIntervalOptionBoundaries() {
+        typealias Mutation = (inout IperfConfiguration) -> Void
+        let maximumConnectTimeout = Double(Int32.max) / 1_000
+        let testCases: [(String, Mutation, IperfError?)] = [
+            ("defaults", { _ in }, nil),
+            ("idle fractional minimum", { $0.idleTimeout = 0.000_001 }, nil),
+            ("idle maximum", { $0.idleTimeout = 86_400 }, nil),
+            ("idle zero", { $0.idleTimeout = 0 }, .IEIDLETIMEOUT),
+            ("idle negative", { $0.idleTimeout = -1 }, .IEIDLETIMEOUT),
+            ("idle above maximum after rounding", { $0.idleTimeout = 86_400.000_001 }, .IEIDLETIMEOUT),
+            ("idle NaN", { $0.idleTimeout = .nan }, .IEIDLETIMEOUT),
+            ("idle infinity", { $0.idleTimeout = .infinity }, .IEIDLETIMEOUT),
+            ("reporter disabled", { $0.reporterInterval = 0 }, nil),
+            ("reporter microsecond minimum", { $0.reporterInterval = 0.000_001 }, nil),
+            ("reporter sub-CLI minimum", { $0.reporterInterval = 0.01 }, nil),
+            ("reporter maximum", { $0.reporterInterval = 60 }, nil),
+            ("reporter below timer precision", { $0.reporterInterval = 0.000_000_9 }, .IEINTERVAL),
+            ("reporter negative", { $0.reporterInterval = -1 }, .IEINTERVAL),
+            ("reporter above maximum", { $0.reporterInterval = 60.000_001 }, .IEINTERVAL),
+            ("reporter NaN", { $0.reporterInterval = .nan }, .IEINTERVAL),
+            ("reporter infinity", { $0.reporterInterval = .infinity }, .IEINTERVAL),
+            ("connect default", { $0.timeout = 0 }, nil),
+            ("connect millisecond minimum", { $0.timeout = 0.001 }, nil),
+            ("connect maximum", { $0.timeout = maximumConnectTimeout }, nil),
+            ("connect below millisecond precision", { $0.timeout = 0.000_999 }, .IECONNECTTIMEOUT),
+            ("connect negative", { $0.timeout = -1 }, .IECONNECTTIMEOUT),
+            ("connect above maximum", { $0.timeout = maximumConnectTimeout + 0.000_001 }, .IECONNECTTIMEOUT),
+            ("connect NaN", { $0.timeout = .nan }, .IECONNECTTIMEOUT),
+            ("connect infinity", { $0.timeout = .infinity }, .IECONNECTTIMEOUT),
+            ("connect multiplication overflow", { $0.timeout = .greatestFiniteMagnitude }, .IECONNECTTIMEOUT),
+        ]
+
+        for (name, mutate, expectedError) in testCases {
+            var configuration = IperfConfiguration()
+            mutate(&configuration)
+            XCTAssertEqual(IperfRunner.timeIntervalError(for: configuration), expectedError, name)
+        }
+    }
+
+    func testTimeIntervalConversionsPreserveDocumentedRounding() {
+        XCTAssertEqual(IperfRunner.idleTimeoutSeconds(0.000_001), 1)
+        XCTAssertEqual(IperfRunner.idleTimeoutSeconds(1), 1)
+        XCTAssertEqual(IperfRunner.idleTimeoutSeconds(1.000_001), 2)
+        XCTAssertEqual(IperfRunner.idleTimeoutSeconds(86_399.1), 86_400)
+
+        XCTAssertEqual(IperfRunner.connectTimeoutMilliseconds(0.001), 1)
+        XCTAssertEqual(IperfRunner.connectTimeoutMilliseconds(0.001_9), 1)
+        XCTAssertEqual(IperfRunner.connectTimeoutMilliseconds(1.999_9), 1_999)
+        XCTAssertEqual(
+            IperfRunner.connectTimeoutMilliseconds(Double(Int32.max) / 1_000),
+            Int32.max
+        )
+    }
+
+    func testInvalidTimeIntervalsPrecedeApplicabilityAndNetworking() {
+        var invalidIdle = IperfConfiguration()
+        invalidIdle.idleTimeout = 0
+        assertRunnerFails(invalidIdle, with: .IEIDLETIMEOUT, description: "idle range before server-only")
+
+        var validIdleWrongRole = IperfConfiguration()
+        validIdleWrongRole.idleTimeout = 0.1
+        assertRunnerFails(validIdleWrongRole, with: .IESERVERONLY, description: "valid idle reaches role check")
+
+        var invalidConnect = IperfConfiguration()
+        invalidConnect.role = .server
+        invalidConnect.timeout = -1
+        assertRunnerFails(
+            invalidConnect,
+            with: .IECONNECTTIMEOUT,
+            description: "connect range before client-only"
+        )
+
+        var validConnectWrongRole = IperfConfiguration()
+        validConnectWrongRole.role = .server
+        validConnectWrongRole.timeout = 0.001
+        assertRunnerFails(
+            validConnectWrongRole,
+            with: .IECLIENTONLY,
+            description: "valid connect reaches role check"
+        )
+
+        var invalidReporter = IperfConfiguration()
+        invalidReporter.address = "invalid.invalid"
+        invalidReporter.reporterInterval = .nan
+        assertRunnerFails(invalidReporter, with: .IEINTERVAL, description: "reporter before networking")
+    }
+
     func testNonFiniteDurationDoesNotTrap() {
         var configurations: [IperfConfiguration] = []
 
@@ -893,6 +980,11 @@ final class IperfSwiftUnitTests: XCTestCase {
     }
 
     func testErrorMappingAndResultErrorState() {
+        XCTAssertEqual(IperfError(rawValue: 30), .IEIDLETIMEOUT)
+        XCTAssertEqual(
+            IperfError.IEIDLETIMEOUT.debugDescription,
+            "Idle timeout parameter is not positive or larger than allowed limit"
+        )
         XCTAssertEqual(IperfError(rawValue: 31), .IERCVTIMEOUT)
         XCTAssertEqual(
             IperfError.IERCVTIMEOUT.debugDescription,
@@ -911,6 +1003,11 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertEqual(IperfError.IEUDPONLY.debugDescription, "This option is UDP only")
         XCTAssertEqual(IperfError(rawValue: 404), .IEIPV4ONLY)
         XCTAssertEqual(IperfError.IEIPV4ONLY.debugDescription, "This option is IPv4 only")
+        XCTAssertEqual(IperfError(rawValue: 405), .IECONNECTTIMEOUT)
+        XCTAssertEqual(
+            IperfError.IECONNECTTIMEOUT.debugDescription,
+            "Client connection timeout is invalid or out of range"
+        )
 
         let success = IperfIntervalResult(error: .IENONE)
         let failure = IperfIntervalResult(error: .IEAUTHTEST)

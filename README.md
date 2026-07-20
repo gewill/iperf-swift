@@ -207,7 +207,7 @@ interface, and socket constraints remain runtime decisions.
 | `port` | `--port` | Client / Server | Defaults to `5201`; values outside `1...65535` fail with `IEBADPORT` |
 | `bindDevice` | `--bind-dev` | Client / Server | Interface existence, platform support, and permissions are checked at runtime |
 | `rcvTimeout` | `--rcv-timeout` | Server; Client download / bidirectional | `0.1...86,400` seconds; invalid values fail with `IERCVTIMEOUT`, while Client upload fails with `IERVRSONLYRCVTIMEOUT` |
-| `reporterInterval` | `--interval` | Client / Server | Controls both reporter and statistics sampling; its remaining value policy is tracked in [#40](https://github.com/gewill/iperf-swift/issues/40) |
+| `reporterInterval` | `--interval` | Client / Server | Seconds; zero disables periodic callbacks, otherwise accepts `0.000001...60`; invalid values fail with `IEINTERVAL` before timer creation; unlike the CLI's `0.1` minimum, the wrapper preserves safe microsecond-resolution intervals |
 | `statsInterval` | — | Ignored | Retained for compatibility; statistics always sample at `reporterInterval` |
 | `logfile` | `--logfile` | Client / Server | File-open failures are reported by the engine at runtime |
 | `verbose` | `--verbose` | Client / Server | Enables verbose libiperf text logging |
@@ -227,7 +227,7 @@ interface, and socket constraints remain runtime decisions.
 | `mss` | `--set-mss` | Client · TCP | `0...32,767`; zero keeps the engine default, intrinsic range failures return `IEMSS` before protocol applicability, UDP otherwise fails with `IETCPONLY`, and valid platform/route failures remain `IESETMSS` at runtime |
 | `duration` | `--time` | Client · TCP / UDP | Truncated toward zero to whole seconds in `0...86,400`; invalid finite values fail with `IEDURATION`; nonfinite values match the CLI's zero parsing |
 | `numberOfBytes` | `--bytes` | Client · TCP / UDP | A nonzero byte limit is an end condition; combining it with any explicitly set `duration` fails with `IEENDCONDITIONS`, while zero selects no byte end condition |
-| `timeout` | `--connect-timeout` | Client | Swift unit is seconds and sub-second values are supported; remaining finite/range behavior is tracked in [#40](https://github.com/gewill/iperf-swift/issues/40) |
+| `timeout` | `--connect-timeout` | Client | Swift unit is seconds; `nil` or zero keeps the engine default, otherwise accepts `0.001...2,147,483.647` and truncates fractional milliseconds; invalid/nonfinite values fail preflight with wrapper error `IECONNECTTIMEOUT` |
 | `dscp` | `--dscp` | Client · TCP / UDP · IPv4 / IPv6 | Numeric `0...63`; invalid values fail with `IEBADTOS` |
 | `tos` | `--tos` | Client · TCP / UDP · IPv4 / IPv6 | Requires `0...255`, otherwise fails with `IEBADTOS`; applied after `dscp` and therefore wins |
 | `clientPort` | `--cport` | Client · TCP / UDP | `1...65,535`; Server use fails with `IECLIENTONLY`; parallel streams use consecutive ports and bidirectional mode reserves two ranges, with overflow failing as `IEBADPORT` |
@@ -242,12 +242,17 @@ The CLI 3.21 parser accepts nonpositive `--parallel` and negative `--window` /
 wrapper intentionally rejects those values during preflight so they cannot be
 silently narrowed or reach libiperf.
 
+The CLI also accepts nonfinite `--interval` input because its floating-point
+comparisons do not reject `NaN`, and it does not range-check the integer
+`--connect-timeout`. The wrapper rejects both cases before creating timers or
+sockets; `timeout` uses seconds rather than the CLI's milliseconds.
+
 ### Server behavior
 
 | Swift property | iperf3 option | Applies when | Constraints / current behavior |
 | --- | --- | --- | --- |
 | `oneOff` | `--one-off` | Server | Enabling it for Client fails with `IESERVERONLY`; the server finishes after one client |
-| `idleTimeout` | `--idle-timeout` | Server | Client fails with `IESERVERONLY`; remaining finite/range behavior is tracked in [#40](https://github.com/gewill/iperf-swift/issues/40) |
+| `idleTimeout` | `--idle-timeout` | Server | Positive seconds that round up into `1...86,400`; invalid/nonfinite values fail with `IEIDLETIMEOUT` before role validation or timer work, while valid Client use fails with `IESERVERONLY` |
 
 ### Authentication options
 
@@ -277,12 +282,6 @@ remain higher priority than same-role credential completeness.
 | Explicit same-default role option | Assigning `numStreams`, `mode`, `prot`, `omit`, or `timeSkewThreshold` records caller intent, so wrong-role use still fails | Implemented |
 | `dontFragment` + `addressFamily == .any` | Allowed; the flag takes effect only if resolution produces an IPv4 UDP socket | Runtime by design |
 | `clientPort` + parallel/bidirectional streams | Highest port is `clientPort + numStreams - 1` for unidirectional tests and `clientPort + 2 × numStreams - 1` for bidirectional tests | Implemented; the highest port may equal `65,535` |
-
-### Known validation gaps
-
-Follow-up work is deliberately split by behavior and risk:
-
-1. [#40 — validate `TimeInterval` values](https://github.com/gewill/iperf-swift/issues/40)
 
 ### Unsupported options
 

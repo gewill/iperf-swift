@@ -337,6 +337,44 @@ public class IperfRunner {
         return nil
     }
 
+    static func idleTimeoutSeconds(_ idleTimeout: TimeInterval) -> Int32? {
+        guard idleTimeout.isFinite, idleTimeout > 0 else {
+            return nil
+        }
+        let seconds = idleTimeout.rounded(.up)
+        guard seconds <= Double(MAX_TIME) else {
+            return nil
+        }
+        return Int32(seconds)
+    }
+
+    static func connectTimeoutMilliseconds(_ timeout: TimeInterval) -> Int32? {
+        let maximum = Double(Int32.max) / 1_000
+        guard timeout.isFinite, (0.001...maximum).contains(timeout) else {
+            return nil
+        }
+        let milliseconds = (timeout * 1_000).rounded(.towardZero)
+        return Int32(milliseconds)
+    }
+
+    static func timeIntervalError(for configuration: IperfConfiguration) -> IperfError? {
+        if let idleTimeout = configuration.idleTimeout,
+           Self.idleTimeoutSeconds(idleTimeout) == nil {
+            return .IEIDLETIMEOUT
+        }
+        if let reporterInterval = configuration.reporterInterval,
+           reporterInterval != 0,
+           (!reporterInterval.isFinite || !(0.000_001...60).contains(reporterInterval)) {
+            return .IEINTERVAL
+        }
+        if let timeout = configuration.timeout,
+           timeout != 0,
+           Self.connectTimeoutMilliseconds(timeout) == nil {
+            return .IECONNECTTIMEOUT
+        }
+        return nil
+    }
+
     private func configurationError() -> IperfError? {
         guard let configuration = configuration else {
             return nil
@@ -354,6 +392,9 @@ public class IperfRunner {
                   (minimum...Double(MAX_TIME)).contains(rcvTimeout) else {
                 return .IERCVTIMEOUT
             }
+        }
+        if let timeIntervalError = Self.timeIntervalError(for: configuration) {
+            return timeIntervalError
         }
         if let clientIntegerError = Self.clientIntegerError(for: configuration) {
             return clientIntegerError
@@ -446,11 +487,9 @@ public class IperfRunner {
             if configuration.oneOff {
                 iperf_set_test_one_off(currentTest, 1)
             }
-            if let idleTimeout = configuration.idleTimeout, idleTimeout.isFinite, idleTimeout > 0 {
-                // Round up so sub-second values do not truncate to 0, which
-                // the engine treats as "no idle timeout".
-                let seconds = idleTimeout.rounded(.up)
-                iperf_set_test_idle_timeout(OpaquePointer(currentTest), Int32(min(seconds, Double(Int32.max))))
+            if let idleTimeout = configuration.idleTimeout,
+               let seconds = Self.idleTimeoutSeconds(idleTimeout) {
+                iperf_set_test_idle_timeout(OpaquePointer(currentTest), seconds)
             }
             
             if configuration.isAuth {
@@ -525,9 +564,9 @@ public class IperfRunner {
             if let numberOfBytes = configuration.numberOfBytes {
                 iperf_set_test_bytes(currentTest, UInt64(numberOfBytes))
             }
-            if let timeout = configuration.timeout, timeout.isFinite, timeout > 0 {
-                let milliseconds = min(timeout * 1000, Double(Int32.max))
-                iperf_set_test_connect_timeout(currentTest, Int32(milliseconds))
+            if let timeout = configuration.timeout,
+               let milliseconds = Self.connectTimeoutMilliseconds(timeout) {
+                iperf_set_test_connect_timeout(currentTest, milliseconds)
             }
             if let dscp = configuration.dscp {
                 iperf_set_test_dscp(currentTest, Int32(clamping: dscp))
