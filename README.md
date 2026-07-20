@@ -20,7 +20,7 @@ maintained. Development continues here without upstream involvement.
 
 ## Features
 
-- TCP, UDP, and SCTP (where the platform provides it) in client and server roles
+- TCP and UDP in client and server roles
 - Upload, download (`--reverse`), and bidirectional (`--bidir`) tests
 - iperf3 RSA authentication with OAEP and optional legacy PKCS#1 v1.5 padding
 - DSCP marking and network-interface binding
@@ -165,12 +165,12 @@ them:
 | `address` | `--client` / `--bind` | Client destination or server bind address |
 | `addressFamily` | `-4` / `-6` | Forces IPv4 or IPv6; the default lets the resolver pick |
 | `port` | `--port` | Defaults to `5201` |
-| `prot` | `--tcp` / `--udp` / `--sctp` | Transport protocol; defaults to TCP. Selecting `.sctp` where the platform lacks SCTP support (such as Apple platforms) fails with `IperfError.IENOSCTP` |
+| `prot` | `--tcp` / `--udp` | Transport protocol; defaults to TCP |
 | `bindDevice` | `--bind-dev` | Supported on macOS by iperf3 3.21; privileges may be required elsewhere |
-| `numStreams` | `--parallel` | Parallel client streams for TCP, UDP, and SCTP |
+| `numStreams` | `--parallel` | Parallel client streams for TCP and UDP |
 | `mode` | `--reverse` / `--bidir` | Selects upload, download, or simultaneous bidirectional mode |
 | `reverse` | `--reverse` | Compatibility accessor for upload/download mode |
-| `rate` | `--bitrate` | Bits per second for any protocol; unset keeps the iperf3 defaults (unlimited TCP/SCTP, 1 Mbit/s UDP) |
+| `rate` | `--bitrate` | Bits per second for either protocol; unset keeps the iperf3 defaults (unlimited TCP, 1 Mbit/s UDP) |
 | `blockSize` | `--length` | Read/write block size in bytes; the exact UDP datagram payload size |
 | `socketBufferSize` | `--window` | Socket buffer size in bytes |
 | `noDelay` | `--no-delay` | Disables Nagle's algorithm on TCP streams |
