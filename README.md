@@ -158,8 +158,9 @@ idempotent because libiperf can emit more than one terminal state notification.
 ## Design philosophy
 
 The wrapper is a Swift library, not a re-export of the iperf3 CLI. Options are
-surfaced according to a simple rule of thumb, so a configuration that compiles
-and starts is one the engine can actually honor:
+surfaced according to a few guiding rules, so that — for the transport protocol
+in particular — a configuration that compiles and starts is one the engine can
+actually honor:
 
 1. **No value on Apple platforms → not exposed.** CLI-only conveniences (daemon
    mode, JSON-to-stdout, file-based data source) are intentionally omitted.
