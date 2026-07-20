@@ -277,16 +277,15 @@ package release `3.21.4` embeds the official iperf3 `3.21` engine. See
 
 ## Roadmap
 
-Upcoming work is tracked in GitHub issues:
+Coverage of the libiperf parameters exposed by the embedded API is complete
+(the parameter work shipped through `3.21.4`). Remaining direction is tracked
+in the GitHub issue tracker. Two enhancements are currently deferred until a
+downstream consumer is ready to adopt them:
 
-- [#1](https://github.com/gewill/iperf-swift/issues/1) — core performance
-  parameters: `--length`, `--window`, TCP `--bitrate`, UDP `--parallel`,
-  `--no-delay`, `--set-mss`
-- [#2](https://github.com/gewill/iperf-swift/issues/2) — mid-priority options:
-  UDP 64-bit counters, TOS, server timeouts, `--one-off`,
-  `--get-server-output`, and more
-- [#3](https://github.com/gewill/iperf-swift/issues/3) — options needing C
-  shims: `--dont-fragment`, `-4`/`-6`
+- [#14](https://github.com/gewill/iperf-swift/issues/14) — an async/await
+  (`AsyncThrowingStream`) API for interval results
+- [#15](https://github.com/gewill/iperf-swift/issues/15) — Swift concurrency
+  readiness (`Sendable` annotations and strict-concurrency support)
 
 ## Credits
 
