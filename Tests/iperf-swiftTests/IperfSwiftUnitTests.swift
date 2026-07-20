@@ -2,6 +2,43 @@ import XCTest
 @testable import IperfSwift
 
 final class IperfSwiftUnitTests: XCTestCase {
+    func testOutOfRangeConfigurationDoesNotTrap() {
+        var configurations: [IperfConfiguration] = []
+
+        var portConfiguration = invalidClientConfiguration()
+        portConfiguration.port = .max
+        configurations.append(portConfiguration)
+
+        var omitConfiguration = invalidClientConfiguration()
+        omitConfiguration.omit = .max
+        configurations.append(omitConfiguration)
+
+        var infiniteDurationConfiguration = invalidClientConfiguration()
+        infiniteDurationConfiguration.duration = .infinity
+        configurations.append(infiniteDurationConfiguration)
+
+        var nanDurationConfiguration = invalidClientConfiguration()
+        nanDurationConfiguration.duration = .nan
+        configurations.append(nanDurationConfiguration)
+
+        var oversizedDurationConfiguration = invalidClientConfiguration()
+        oversizedDurationConfiguration.duration = .greatestFiniteMagnitude
+        configurations.append(oversizedDurationConfiguration)
+
+        var dscpConfiguration = invalidClientConfiguration()
+        dscpConfiguration.dscp = .max
+        configurations.append(dscpConfiguration)
+
+        for (index, configuration) in configurations.enumerated() {
+            let failed = expectation(description: "invalid configuration \(index) fails normally")
+            let runner = IperfRunner(with: configuration)
+
+            runner.start({ _ in }, { _ in failed.fulfill() }, { _ in })
+
+            wait(for: [failed], timeout: 2)
+        }
+    }
+
     func testConfigurationDefaultsAndCustomNetworkSettings() {
         var configuration = IperfConfiguration()
 
@@ -210,5 +247,12 @@ final class IperfSwiftUnitTests: XCTestCase {
         let failure = IperfIntervalResult(error: .IEAUTHTEST)
         XCTAssertFalse(success.hasError)
         XCTAssertTrue(failure.hasError)
+    }
+
+    private func invalidClientConfiguration() -> IperfConfiguration {
+        var configuration = IperfConfiguration()
+        configuration.address = "127.0.0.1"
+        configuration.port = 0
+        return configuration
     }
 }

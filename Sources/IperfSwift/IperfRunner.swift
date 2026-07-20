@@ -189,7 +189,7 @@ public class IperfRunner {
         
         // Server/Client
         iperf_set_test_role(currentTest, configuration.role.rawValue)
-        iperf_set_test_server_port(currentTest, Int32(configuration.port))
+        iperf_set_test_server_port(currentTest, Int32(clamping: configuration.port))
         if configuration.addressFamily != .any {
             iperf_set_test_domain(OpaquePointer(currentTest), configuration.addressFamily.iperfConfigValue)
         }
@@ -202,7 +202,7 @@ public class IperfRunner {
             iperf_set_test_stats_interval(currentTest, Double(reporterInterval))
         }
         if configuration.omit > 0 {
-            iperf_set_test_omit(currentTest, Int32(configuration.omit))
+            iperf_set_test_omit(currentTest, Int32(clamping: configuration.omit))
         }
         if let logfile = configuration.logfile {
             iperf_set_test_logfile(currentTest, logfile)
@@ -297,8 +297,9 @@ public class IperfRunner {
             if let bindDevice = configuration.bindDevice {
                 iperf_set_test_bind_dev(currentTest, bindDevice)
             }
-            if let duration = configuration.duration {
-                iperf_set_test_duration(currentTest, Int32(duration))
+            if let duration = configuration.duration, duration.isFinite, duration > 0 {
+                let seconds = min(duration, Double(Int32.max))
+                iperf_set_test_duration(currentTest, Int32(seconds))
             }
             if let numberOfBytes = configuration.numberOfBytes {
                 iperf_set_test_bytes(currentTest, UInt64(numberOfBytes))
@@ -308,7 +309,7 @@ public class IperfRunner {
                 iperf_set_test_connect_timeout(currentTest, Int32(milliseconds))
             }
             if let dscp = configuration.dscp {
-                iperf_set_test_dscp(currentTest, Int32(dscp))
+                iperf_set_test_dscp(currentTest, Int32(clamping: dscp))
             }
             // Applied after dscp on purpose: both write the same tos field,
             // and the full type-of-service byte wins when both are set.
