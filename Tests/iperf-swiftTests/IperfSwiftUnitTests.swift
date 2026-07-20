@@ -64,6 +64,32 @@ final class IperfSwiftUnitTests: XCTestCase {
         dscpConfiguration.dscp = .max
         testCases.append((dscpConfiguration, .IEBADTOS))
 
+        var shortReceivingTimeoutConfiguration = IperfConfiguration()
+        shortReceivingTimeoutConfiguration.rcvTimeout = 0.05
+        testCases.append((shortReceivingTimeoutConfiguration, .IERCVTIMEOUT))
+
+        var shortSendingTimeoutConfiguration = IperfConfiguration()
+        shortSendingTimeoutConfiguration.mode = .upload
+        shortSendingTimeoutConfiguration.rcvTimeout = 0.05
+        testCases.append((shortSendingTimeoutConfiguration, .IERCVTIMEOUT))
+
+        var shortServerTimeoutConfiguration = IperfConfiguration()
+        shortServerTimeoutConfiguration.role = .server
+        shortServerTimeoutConfiguration.rcvTimeout = 0.05
+        testCases.append((shortServerTimeoutConfiguration, .IERCVTIMEOUT))
+
+        var oversizedReceiveTimeoutConfiguration = IperfConfiguration()
+        oversizedReceiveTimeoutConfiguration.rcvTimeout = 86_400.001
+        testCases.append((oversizedReceiveTimeoutConfiguration, .IERCVTIMEOUT))
+
+        var infiniteReceiveTimeoutConfiguration = IperfConfiguration()
+        infiniteReceiveTimeoutConfiguration.rcvTimeout = .infinity
+        testCases.append((infiniteReceiveTimeoutConfiguration, .IERCVTIMEOUT))
+
+        var nanReceiveTimeoutConfiguration = IperfConfiguration()
+        nanReceiveTimeoutConfiguration.rcvTimeout = .nan
+        testCases.append((nanReceiveTimeoutConfiguration, .IERCVTIMEOUT))
+
         for (index, testCase) in testCases.enumerated() {
             let failed = expectation(description: "invalid configuration \(index) fails normally")
             let runner = IperfRunner(with: testCase.configuration)
@@ -218,6 +244,145 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertEqual(configuration.mode, .download)
     }
 
+    func testRoleApplicabilityRejectsWrongRoleOptions() {
+        typealias Mutation = (inout IperfConfiguration) -> Void
+        let testCases: [(String, IperfRole, Mutation, IperfError)] = [
+            ("oneOff", .client, { $0.oneOff = true }, .IESERVERONLY),
+            ("idleTimeout", .client, { $0.idleTimeout = 1 }, .IESERVERONLY),
+            ("privateKey", .client, { $0.privateKey = "key" }, .IESERVERONLY),
+            ("authorizedUsers", .client, { $0.authorizedUsers = "user,hash" }, .IESERVERONLY),
+            ("timeSkewThreshold", .client, { $0.timeSkewThreshold = 10 }, .IESERVERONLY),
+            ("numStreams", .server, { $0.numStreams = 1 }, .IECLIENTONLY),
+            ("mode", .server, { $0.mode = .upload }, .IECLIENTONLY),
+            ("reverse", .server, { $0.reverse = .download }, .IECLIENTONLY),
+            ("prot", .server, { $0.prot = .udp }, .IECLIENTONLY),
+            ("rate", .server, { $0.rate = 1 }, .IECLIENTONLY),
+            ("duration", .server, { $0.duration = 1 }, .IECLIENTONLY),
+            ("numberOfBytes", .server, { $0.numberOfBytes = 1 }, .IECLIENTONLY),
+            ("blockSize", .server, { $0.blockSize = 1 }, .IECLIENTONLY),
+            ("socketBufferSize", .server, { $0.socketBufferSize = 1 }, .IECLIENTONLY),
+            ("mss", .server, { $0.mss = 1 }, .IECLIENTONLY),
+            ("tos", .server, { $0.tos = 1 }, .IECLIENTONLY),
+            ("dscp", .server, { $0.dscp = 1 }, .IECLIENTONLY),
+            ("timeout", .server, { $0.timeout = 1 }, .IECLIENTONLY),
+            ("noDelay", .server, { $0.noDelay = true }, .IECLIENTONLY),
+            ("repeatingPayload", .server, { $0.repeatingPayload = true }, .IECLIENTONLY),
+            ("getServerOutput", .server, { $0.getServerOutput = true }, .IECLIENTONLY),
+            ("udpCounters64Bit", .server, { $0.udpCounters64Bit = true }, .IECLIENTONLY),
+            ("dontFragment", .server, { $0.dontFragment = true }, .IECLIENTONLY),
+            ("omit", .server, { $0.omit = 1 }, .IECLIENTONLY),
+            ("username", .server, { $0.username = "user" }, .IECLIENTONLY),
+            ("publicKey", .server, { $0.publicKey = "key" }, .IECLIENTONLY),
+            ("password", .server, { $0.password = "password" }, .IECLIENTONLY),
+        ]
+
+        for (name, role, mutate, expectedError) in testCases {
+            var configuration = IperfConfiguration()
+            configuration.role = role
+            mutate(&configuration)
+
+            XCTAssertEqual(configuration.roleApplicabilityError(), expectedError, name)
+        }
+    }
+
+    func testRoleApplicabilityTracksSameDefaultAssignmentsAndCopies() {
+        typealias Mutation = (inout IperfConfiguration) -> Void
+        let serverMutations: [(String, Mutation)] = [
+            ("numStreams", { $0.numStreams = 2 }),
+            ("mode", { $0.mode = .download }),
+            ("reverse", { $0.reverse = .download }),
+            ("prot", { $0.prot = .tcp }),
+            ("omit", { $0.omit = 0 }),
+        ]
+
+        for (name, mutate) in serverMutations {
+            var configuration = IperfConfiguration()
+            configuration.role = .server
+            mutate(&configuration)
+            let copy = configuration
+
+            XCTAssertEqual(copy.roleApplicabilityError(), .IECLIENTONLY, name)
+        }
+
+        var client = IperfConfiguration()
+        client.timeSkewThreshold = 10
+        let clientCopy = client
+        XCTAssertEqual(clientCopy.roleApplicabilityError(), .IESERVERONLY)
+    }
+
+    func testRoleApplicabilityAllowsDefaultsAndDualRoleOptions() {
+        typealias Mutation = (inout IperfConfiguration) -> Void
+        let mutations: [(String, Mutation)] = [
+            ("address", { $0.address = "::1" }),
+            ("addressFamily", { $0.addressFamily = .ipv6 }),
+            ("bindDevice", { $0.bindDevice = "lo0" }),
+            ("port", { $0.port = 5_202 }),
+            ("reporterInterval", { $0.reporterInterval = 0.5 }),
+            ("logfile", { $0.logfile = "/tmp/iperf.log" }),
+            ("verbose", { $0.verbose = true }),
+            ("clientPort", { $0.clientPort = 5_203 }),
+            ("isAuth", { $0.isAuth = true }),
+            ("usePkcs1Padding", { $0.usePkcs1Padding = true }),
+            ("statsInterval", { $0.statsInterval = 0.5 }),
+        ]
+
+        XCTAssertNil(IperfConfiguration().roleApplicabilityError())
+        var defaultServer = IperfConfiguration()
+        defaultServer.role = .server
+        XCTAssertNil(defaultServer.roleApplicabilityError())
+
+        for role in [IperfRole.client, .server] {
+            for (name, mutate) in mutations {
+                var configuration = IperfConfiguration()
+                configuration.role = role
+                mutate(&configuration)
+
+                XCTAssertNil(configuration.roleApplicabilityError(), "\(role) \(name)")
+            }
+        }
+    }
+
+    func testReceiveTimeoutApplicabilityMatchesClientMode() {
+        var upload = IperfConfiguration()
+        upload.mode = .upload
+        upload.rcvTimeout = 1
+        XCTAssertEqual(upload.roleApplicabilityError(), .IERVRSONLYRCVTIMEOUT)
+
+        var download = IperfConfiguration()
+        download.mode = .download
+        download.rcvTimeout = 1
+        XCTAssertNil(download.roleApplicabilityError())
+
+        var bidirectional = IperfConfiguration()
+        bidirectional.mode = .bidirectional
+        bidirectional.rcvTimeout = 1
+        XCTAssertNil(bidirectional.roleApplicabilityError())
+
+        var server = IperfConfiguration()
+        server.role = .server
+        server.rcvTimeout = 1
+        XCTAssertNil(server.roleApplicabilityError())
+    }
+
+    func testReceiveTimeoutRangeBoundariesPrecedeModeValidation() {
+        for timeout in [0.1, 86_400] {
+            var configuration = IperfConfiguration()
+            configuration.mode = .upload
+            configuration.rcvTimeout = timeout
+
+            let failed = expectation(description: "valid receive timeout \(timeout) reaches mode validation")
+            let runner = IperfRunner(with: configuration)
+            var receivedError: IperfError?
+            runner.start({ _ in }, { error in
+                receivedError = error
+                failed.fulfill()
+            }, { _ in })
+
+            wait(for: [failed], timeout: 2)
+            XCTAssertEqual(receivedError, .IERVRSONLYRCVTIMEOUT)
+        }
+    }
+
     func testThroughputConversions() {
         let throughput = IperfThroughput(bytes: 1_000_000, seconds: 2)
 
@@ -315,6 +480,16 @@ final class IperfSwiftUnitTests: XCTestCase {
     }
 
     func testErrorMappingAndResultErrorState() {
+        XCTAssertEqual(IperfError(rawValue: 31), .IERCVTIMEOUT)
+        XCTAssertEqual(
+            IperfError.IERCVTIMEOUT.debugDescription,
+            "Receive timeout value is incorrect or not in range"
+        )
+        XCTAssertEqual(IperfError(rawValue: 32), .IERVRSONLYRCVTIMEOUT)
+        XCTAssertEqual(
+            IperfError.IERVRSONLYRCVTIMEOUT.debugDescription,
+            "Client receive timeout is valid only in receiving mode"
+        )
         XCTAssertEqual(IperfError(rawValue: 142), .IEAUTHTEST)
         XCTAssertEqual(IperfError.IEAUTHTEST.debugDescription, "Test authorization failed")
 

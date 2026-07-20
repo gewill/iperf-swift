@@ -24,6 +24,11 @@ package release number.
 - Documented the wrapper's option-exposure philosophy in the README and split
   the configuration mapping into supported and intentionally unsupported
   options.
+- Explicitly configured options that do not apply to the selected endpoint role
+  now fail before the run with `IESERVERONLY` / `IECLIENTONLY`, matching the
+  iperf3 CLI ([#30]). Invalid receive-timeout values now report the newly
+  exposed `IERCVTIMEOUT`; a valid timeout on a sending client reports the newly
+  exposed `IERVRSONLYRCVTIMEOUT` error.
 
 ## [3.21.5] - 2026-07-20
 
