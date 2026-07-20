@@ -208,7 +208,8 @@ public struct IperfConfiguration {
     public var idleTimeout: TimeInterval?
     /// The timeout in seconds for receiving data in an active test,
     /// equivalent to `--rcv-timeout` (which the CLI expresses in
-    /// milliseconds). The iperf3 default is 120 seconds.
+    /// milliseconds). Valid values are `0.1...86_400`; the iperf3 default is
+    /// 120 seconds.
     public var rcvTimeout: TimeInterval?
 
     /// The interval in seconds between reporter callbacks, equivalent to `--interval`.

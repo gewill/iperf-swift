@@ -233,6 +233,13 @@ public class IperfRunner {
         guard (0...Int(MAX_OMIT_TIME)).contains(configuration.omit) else {
             return .IEOMIT
         }
+        if let rcvTimeout = configuration.rcvTimeout {
+            let minimum = Double(MIN_NO_MSG_RCVD_TIMEOUT) / 1_000
+            guard rcvTimeout.isFinite,
+                  (minimum...Double(MAX_TIME)).contains(rcvTimeout) else {
+                return .IERCVTIMEOUT
+            }
+        }
 
         if configuration.role == .client {
             if let duration = configuration.duration,

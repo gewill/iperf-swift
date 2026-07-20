@@ -217,7 +217,7 @@ them:
 | `dontFragment` | `--dont-fragment` | UDP Do-Not-Fragment flag; oversized datagrams then fail to send |
 | `oneOff` | `--one-off` | The server handles one client and then finishes |
 | `idleTimeout` | `--idle-timeout` | Restarts an idle server after the given number of seconds |
-| `rcvTimeout` | `--rcv-timeout` | Receive timeout in seconds; the CLI expresses it in milliseconds |
+| `rcvTimeout` | `--rcv-timeout` | Receive timeout in seconds (`0.1...86,400`); the CLI expresses it in milliseconds |
 | `reporterInterval` | `--interval` | Interval between reporter callbacks; statistics sample at the same interval |
 | `statsInterval` | — | Ignored; the engine retains one statistics sample per interval, so sampling always follows `reporterInterval` |
 | `omit` | `--omit` | Initial seconds excluded from measurements |

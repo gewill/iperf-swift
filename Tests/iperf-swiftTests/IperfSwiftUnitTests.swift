@@ -64,6 +64,32 @@ final class IperfSwiftUnitTests: XCTestCase {
         dscpConfiguration.dscp = .max
         testCases.append((dscpConfiguration, .IEBADTOS))
 
+        var shortReceivingTimeoutConfiguration = IperfConfiguration()
+        shortReceivingTimeoutConfiguration.rcvTimeout = 0.05
+        testCases.append((shortReceivingTimeoutConfiguration, .IERCVTIMEOUT))
+
+        var shortSendingTimeoutConfiguration = IperfConfiguration()
+        shortSendingTimeoutConfiguration.mode = .upload
+        shortSendingTimeoutConfiguration.rcvTimeout = 0.05
+        testCases.append((shortSendingTimeoutConfiguration, .IERCVTIMEOUT))
+
+        var shortServerTimeoutConfiguration = IperfConfiguration()
+        shortServerTimeoutConfiguration.role = .server
+        shortServerTimeoutConfiguration.rcvTimeout = 0.05
+        testCases.append((shortServerTimeoutConfiguration, .IERCVTIMEOUT))
+
+        var oversizedReceiveTimeoutConfiguration = IperfConfiguration()
+        oversizedReceiveTimeoutConfiguration.rcvTimeout = 86_400.001
+        testCases.append((oversizedReceiveTimeoutConfiguration, .IERCVTIMEOUT))
+
+        var infiniteReceiveTimeoutConfiguration = IperfConfiguration()
+        infiniteReceiveTimeoutConfiguration.rcvTimeout = .infinity
+        testCases.append((infiniteReceiveTimeoutConfiguration, .IERCVTIMEOUT))
+
+        var nanReceiveTimeoutConfiguration = IperfConfiguration()
+        nanReceiveTimeoutConfiguration.rcvTimeout = .nan
+        testCases.append((nanReceiveTimeoutConfiguration, .IERCVTIMEOUT))
+
         for (index, testCase) in testCases.enumerated() {
             let failed = expectation(description: "invalid configuration \(index) fails normally")
             let runner = IperfRunner(with: testCase.configuration)
@@ -338,6 +364,25 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertNil(server.roleApplicabilityError())
     }
 
+    func testReceiveTimeoutRangeBoundariesPrecedeModeValidation() {
+        for timeout in [0.1, 86_400] {
+            var configuration = IperfConfiguration()
+            configuration.mode = .upload
+            configuration.rcvTimeout = timeout
+
+            let failed = expectation(description: "valid receive timeout \(timeout) reaches mode validation")
+            let runner = IperfRunner(with: configuration)
+            var receivedError: IperfError?
+            runner.start({ _ in }, { error in
+                receivedError = error
+                failed.fulfill()
+            }, { _ in })
+
+            wait(for: [failed], timeout: 2)
+            XCTAssertEqual(receivedError, .IERVRSONLYRCVTIMEOUT)
+        }
+    }
+
     func testThroughputConversions() {
         let throughput = IperfThroughput(bytes: 1_000_000, seconds: 2)
 
@@ -435,6 +480,11 @@ final class IperfSwiftUnitTests: XCTestCase {
     }
 
     func testErrorMappingAndResultErrorState() {
+        XCTAssertEqual(IperfError(rawValue: 31), .IERCVTIMEOUT)
+        XCTAssertEqual(
+            IperfError.IERCVTIMEOUT.debugDescription,
+            "Receive timeout value is incorrect or not in range"
+        )
         XCTAssertEqual(IperfError(rawValue: 32), .IERVRSONLYRCVTIMEOUT)
         XCTAssertEqual(
             IperfError.IERVRSONLYRCVTIMEOUT.debugDescription,

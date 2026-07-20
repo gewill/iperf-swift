@@ -26,8 +26,9 @@ package release number.
   options.
 - Explicitly configured options that do not apply to the selected endpoint role
   now fail before the run with `IESERVERONLY` / `IECLIENTONLY`, matching the
-  iperf3 CLI ([#30]). A receive timeout on a sending client now reports the
-  newly exposed `IERVRSONLYRCVTIMEOUT` error.
+  iperf3 CLI ([#30]). Invalid receive-timeout values now report the newly
+  exposed `IERCVTIMEOUT`; a valid timeout on a sending client reports the newly
+  exposed `IERVRSONLYRCVTIMEOUT` error.
 
 ## [3.21.5] - 2026-07-20
 

@@ -26,6 +26,16 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 "some option you are trying to set is client only"
             ),
             (
+                "receive-timeout range",
+                ["-c", "127.0.0.1", "--rcv-timeout", "50"],
+                { configuration in
+                    configuration.mode = .upload
+                    configuration.rcvTimeout = 0.05
+                },
+                .IERCVTIMEOUT,
+                "receive timeout value is incorrect or not in range"
+            ),
+            (
                 "receive-timeout mode",
                 ["-c", "127.0.0.1", "--rcv-timeout", "1000"],
                 { configuration in

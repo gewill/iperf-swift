@@ -46,6 +46,7 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
     case IEBADPORT = 26        // Bad port number
     case IETOTALRATE = 27       // Total required bandwidth is larger than server's limit
     case IETOTALINTERVAL = 28   // Invalid time interval for calculating average data rate
+    case IERCVTIMEOUT = 31      // Illegal message receive timeout
     case IERVRSONLYRCVTIMEOUT = 32 // Client receive timeout is valid only in receiving mode
     /* Test errors */
     case IENEWTEST = 100        // Unable to create a new test (check perror)
@@ -172,6 +173,8 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
             return "Total required bandwidth is larger than server's limit"
         case .IETOTALINTERVAL:
             return "Invalid time interval for calculating average data rate"
+        case .IERCVTIMEOUT:
+            return "Receive timeout value is incorrect or not in range"
         case .IERVRSONLYRCVTIMEOUT:
             return "Client receive timeout is valid only in receiving mode"
         /* Test errors */
