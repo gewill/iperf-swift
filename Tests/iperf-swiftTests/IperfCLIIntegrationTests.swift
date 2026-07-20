@@ -1858,6 +1858,258 @@ final class IperfCLIIntegrationTests: XCTestCase {
         XCTAssertNotEqual(receivedError, .IENONE)
         XCTAssertEqual(states.last, .error)
     }
+
+    func testSwiftClientRunsDownloadMode() throws {
+        // Upload and bidirectional modes have interop coverage, but a pure
+        // reverse/download client (server sends, client receives) does not.
+        // The client is the receiver, so its streams must report the download
+        // direction and the download aggregate must accumulate bytes.
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.mode = .download
+        configuration.numStreams = 1
+        configuration.duration = 1
+        configuration.reporterInterval = 0.25
+
+        let reportedDownload = expectation(description: "download direction is reported")
+        let finished = expectation(description: "download client finished")
+        var didReportDownload = false
+        var didFinish = false
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { result in
+                if !didReportDownload,
+                   result.state == .TEST_RUNNING,
+                   result.mode == .download,
+                   result.download.totalBytes > 0,
+                   !result.streams.isEmpty,
+                   result.streams.allSatisfy({ $0.direction == .download }) {
+                    didReportDownload = true
+                    reportedDownload.fulfill()
+                }
+            },
+            { error in
+                XCTFail("download client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [reportedDownload, finished], timeout: 8)
+    }
+
+    func testSwiftClientWritesLogfile() throws {
+        // The logfile option redirects the engine's output to a file. libiperf
+        // opens it on start and closes it when the test is freed, which the
+        // wrapper does before reporting .finished, so the file is complete by
+        // the time the run settles.
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        let logfileURL = tools.directory.appendingPathComponent("client-\(port).log")
+
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.mode = .upload
+        configuration.numStreams = 1
+        configuration.duration = 1
+        configuration.reporterInterval = 0.25
+        configuration.logfile = logfileURL.path
+
+        let finished = expectation(description: "logging client finished")
+        var didFinish = false
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { _ in },
+            { error in
+                XCTFail("logging client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 8)
+        let contents = try XCTUnwrap(
+            try? String(contentsOf: logfileURL, encoding: .utf8),
+            "logfile was never written"
+        )
+        XCTAssertFalse(contents.isEmpty, "logfile should capture engine output")
+        XCTAssertTrue(contents.contains("127.0.0.1"),
+                      "logfile should contain the client's connection output: \(contents)")
+    }
+
+    func testStoppingRunningServerReachesFinished() throws {
+        // stop() on an active server takes a server-specific path that shuts
+        // down and closes the listener socket. Assert it reaches .finished
+        // without an error, distinct from the one-off server that ends on its
+        // own. No CLI is required — the server is pure Swift.
+        let port = try TestTools.freePort()
+
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+
+        let running = expectation(description: "server reaches running state")
+        let finished = expectation(description: "server finishes after stop()")
+        var didStop = false
+        var didFinish = false
+        var sawStopping = false
+        let server = IperfRunner(with: configuration)
+        addTeardownBlock {
+            server.stop()
+        }
+        server.start(
+            { _ in },
+            { error in
+                XCTFail("stopped server must not report an error: \(error.debugDescription)")
+            },
+            { state in
+                if state == .running && !didStop {
+                    didStop = true
+                    running.fulfill()
+                }
+                if state == .stopping {
+                    sawStopping = true
+                }
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [running], timeout: 5)
+        // Let the listener socket bind before stop() shuts it down.
+        Thread.sleep(forTimeInterval: 0.5)
+        server.stop()
+        wait(for: [finished], timeout: 5)
+        XCTAssertTrue(sawStopping, "a stopped server should pass through the .stopping state")
+    }
+
+    func testSwiftClientOmitsInitialIntervals() throws {
+        // With --omit set, the engine marks the first seconds' interval results
+        // as omitted; the wrapper filters omitted streams, so those intervals
+        // arrive with no streams. Assert both an omitted (empty) interval and a
+        // later measured interval are observed.
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.mode = .upload
+        configuration.numStreams = 1
+        configuration.duration = 2
+        configuration.omit = 1
+        configuration.reporterInterval = 0.25
+
+        let finished = expectation(description: "omitting client finished")
+        var didFinish = false
+        var sawOmittedInterval = false
+        var sawMeasuredInterval = false
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { result in
+                if result.state == .TEST_RUNNING {
+                    if result.streams.isEmpty {
+                        sawOmittedInterval = true
+                    } else if result.totalBytes > 0 {
+                        sawMeasuredInterval = true
+                    }
+                }
+            },
+            { error in
+                XCTFail("omitting client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 10)
+        XCTAssertTrue(sawMeasuredInterval, "expected measured intervals after the omit period")
+        XCTAssertTrue(sawOmittedInterval, "expected omitted intervals during the first second")
+    }
 }
 
 private struct ProcessResult {
