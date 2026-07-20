@@ -4,6 +4,63 @@ import Darwin
 @testable import IperfSwift
 
 final class IperfCLIIntegrationTests: XCTestCase {
+    func testRoleApplicabilityErrorsMatchCLI() throws {
+        typealias Mutation = (inout IperfConfiguration) -> Void
+        let tools = try TestTools()
+        let testCases: [(String, [String], Mutation, IperfError, String)] = [
+            (
+                "server-only",
+                ["-c", "127.0.0.1", "-1"],
+                { $0.oneOff = true },
+                .IESERVERONLY,
+                "some option you are trying to set is server only"
+            ),
+            (
+                "client-only",
+                ["-s", "--parallel", "1"],
+                { configuration in
+                    configuration.role = .server
+                    configuration.numStreams = 1
+                },
+                .IECLIENTONLY,
+                "some option you are trying to set is client only"
+            ),
+            (
+                "receive-timeout mode",
+                ["-c", "127.0.0.1", "--rcv-timeout", "1000"],
+                { configuration in
+                    configuration.mode = .upload
+                    configuration.rcvTimeout = 1
+                },
+                .IERVRSONLYRCVTIMEOUT,
+                "client receive timeout is valid only in receiving mode"
+            ),
+        ]
+
+        for (name, arguments, mutate, expectedError, expectedCLIMessage) in testCases {
+            let cliResult = try tools.run(tools.iperf3, arguments: arguments)
+            XCTAssertNotEqual(cliResult.status, 0, name)
+            XCTAssertTrue(cliResult.output.contains(expectedCLIMessage), cliResult.output)
+
+            var configuration = IperfConfiguration()
+            mutate(&configuration)
+            let failed = expectation(description: "Swift \(name) configuration fails")
+            let runner = IperfRunner(with: configuration)
+            var receivedError: IperfError?
+            var states: [IperfRunnerState] = []
+            runner.start({ _ in }, { error in
+                receivedError = error
+                failed.fulfill()
+            }, { state in
+                states.append(state)
+            })
+
+            wait(for: [failed], timeout: 2)
+            XCTAssertEqual(receivedError, expectedError, name)
+            XCTAssertEqual(states.last, .error, name)
+        }
+    }
+
     func testConcurrentStopDuringFinalNotificationsCompletesSafely() throws {
         let tools = try TestTools()
         let port = try TestTools.freePort()
@@ -282,7 +339,6 @@ final class IperfCLIIntegrationTests: XCTestCase {
         configuration.address = "127.0.0.1"
         configuration.bindDevice = "lo0"
         configuration.port = port
-        configuration.prot = .udp
 
         let server = IperfRunner(with: configuration)
         addTeardownBlock {
@@ -1300,7 +1356,6 @@ final class IperfCLIIntegrationTests: XCTestCase {
         configuration.isAuth = true
         configuration.privateKey = credentials.privateKeyBase64
         configuration.authorizedUsers = credentials.authorizedUsers
-        configuration.prot = .udp
 
         let server = IperfRunner(with: configuration)
         addTeardownBlock {
@@ -2035,7 +2090,7 @@ private struct Credentials {
 private final class TestTools {
     let directory: URL
     let iperf3: String
-    let openssl: String
+    private let openssl: String?
 
     init() throws {
         guard let iperf3 = ["/opt/homebrew/bin/iperf3", "/usr/local/bin/iperf3"]
@@ -2043,15 +2098,12 @@ private final class TestTools {
             throw XCTSkip("iperf3 is not installed")
         }
         self.iperf3 = iperf3
-        guard let openssl = [
+        openssl = [
             "/opt/homebrew/bin/openssl",
             "/opt/homebrew/opt/openssl@3/bin/openssl",
             "/usr/local/opt/openssl@3/bin/openssl",
             "/usr/local/bin/openssl",
-        ].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-            throw XCTSkip("OpenSSL is not installed")
-        }
-        self.openssl = openssl
+        ].first(where: { FileManager.default.isExecutableFile(atPath: $0) })
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("iperf-swift-integration-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -2062,6 +2114,9 @@ private final class TestTools {
     }
 
     func makeCredentials() throws -> Credentials {
+        guard let openssl else {
+            throw XCTSkip("OpenSSL is not installed")
+        }
         let privateKeyURL = directory.appendingPathComponent("private.pem")
         let publicKeyURL = directory.appendingPathComponent("public.pem")
 

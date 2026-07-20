@@ -76,8 +76,19 @@ public enum IperfTestMode: String, Codable {
 ///
 /// Values generally correspond to the options in the
 /// [official iperf3 manual](https://software.es.net/iperf/invoking.html).
-/// Options that are not applicable to the selected role or protocol are ignored.
+/// Explicitly set options that do not apply to the selected role are rejected
+/// before the run starts.
 public struct IperfConfiguration {
+    private enum Field: Hashable {
+        case numStreams
+        case mode
+        case prot
+        case omit
+        case timeSkewThreshold
+    }
+
+    private var explicitlySet: Set<Field> = []
+
     /// The remote server hostname/address for a client, or local bind address for a server.
     public var address: String? = "127.0.0.1"
     /// The interface used for socket binding, equivalent to `--bind-dev`.
@@ -86,11 +97,15 @@ public struct IperfConfiguration {
     /// require additional privileges on some platforms.
     public var bindDevice: String?
     /// The number of parallel client streams, equivalent to `--parallel`.
-    public var numStreams = 2
+    public var numStreams = 2 {
+        didSet { explicitlySet.insert(.numStreams) }
+    }
     /// Whether the local endpoint runs as a client or server.
     public var role = IperfRole.client
     /// The data-flow mode for a client run.
-    public var mode = IperfTestMode.download
+    public var mode = IperfTestMode.download {
+        didSet { explicitlySet.insert(.mode) }
+    }
     /// Compatibility access to the unidirectional client mode.
     ///
     /// Setting this property selects upload or download mode. In bidirectional
@@ -101,7 +116,7 @@ public struct IperfConfiguration {
     public var reverse: IperfDirection {
         get { mode == .download ? .download : .upload }
         set {
-            if newValue == reverse { return }
+            if mode == .bidirectional && newValue == .upload { return }
             mode = newValue == .download ? .download : .upload
         }
     }
@@ -111,7 +126,9 @@ public struct IperfConfiguration {
     /// The server port to listen on or connect to. The iperf3 default is `5201`.
     public var port = 5201
     /// The transport protocol used by the data streams.
-    public var prot = IperfProtocol.tcp
+    public var prot = IperfProtocol.tcp {
+        didSet { explicitlySet.insert(.prot) }
+    }
 
     /// The target bitrate in bits per second, equivalent to `--bitrate`.
     ///
@@ -207,7 +224,9 @@ public struct IperfConfiguration {
     /// keeps both intervals in sync and ignores this property.
     public var statsInterval: TimeInterval?
     /// The number of initial seconds omitted from measurements, equivalent to `--omit`.
-    public var omit: Int = 0
+    public var omit: Int = 0 {
+        didSet { explicitlySet.insert(.omit) }
+    }
     /// The path used for libiperf log output, equivalent to `--logfile`.
     public var logfile: String?
     /// Enables verbose libiperf output.
@@ -238,8 +257,66 @@ public struct IperfConfiguration {
     /// Authorized-user content or a file path using iperf3's `username,sha256` format.
     public var authorizedUsers: String = ""
     /// The allowed client/server clock difference in seconds during authentication.
-    public var timeSkewThreshold: Int32 = 10
+    public var timeSkewThreshold: Int32 = 10 {
+        didSet { explicitlySet.insert(.timeSkewThreshold) }
+    }
     
     /// Creates a configuration using the wrapper's defaults.
     public init() {}
+}
+
+extension IperfConfiguration {
+    /// Returns the iperf3-compatible error for an explicitly configured option
+    /// that does not apply to the selected role or mode.
+    func roleApplicabilityError() -> IperfError? {
+        switch role {
+        case .client:
+            let hasServerOnlyOption = oneOff
+                || idleTimeout != nil
+                || !privateKey.isEmpty
+                || !authorizedUsers.isEmpty
+                || explicitlySet.contains(.timeSkewThreshold)
+            if hasServerOnlyOption {
+                return .IESERVERONLY
+            }
+
+            if mode == .upload, rcvTimeout != nil {
+                return .IERVRSONLYRCVTIMEOUT
+            }
+
+        case .server:
+            let hasTrackedClientOnlyOption = explicitlySet.contains(.numStreams)
+                || explicitlySet.contains(.mode)
+                || explicitlySet.contains(.prot)
+                || explicitlySet.contains(.omit)
+            let hasOptionalClientOnlyOption = rate != nil
+                || duration != nil
+                || numberOfBytes != nil
+                || blockSize != nil
+                || socketBufferSize != nil
+                || mss != nil
+                || tos != nil
+                || dscp != nil
+                || timeout != nil
+            let hasBooleanClientOnlyOption = noDelay
+                || repeatingPayload
+                || getServerOutput
+                || udpCounters64Bit
+                || dontFragment
+            let hasClientAuthenticationOption = !username.isEmpty
+                || !publicKey.isEmpty
+                || !password.isEmpty
+
+            if hasTrackedClientOnlyOption
+                || hasOptionalClientOnlyOption
+                || hasBooleanClientOnlyOption
+                || hasClientAuthenticationOption {
+                return .IECLIENTONLY
+            }
+        }
+
+        // The CLI classifies usePkcs1Padding as server-only, but the wrapper
+        // uses it for client encryption as well as server decryption.
+        return nil
+    }
 }

@@ -173,15 +173,15 @@ actually honor:
 3. **Invalid but only knowable at runtime → an explicit, typed error.** Platform-
    or route-dependent limits (interface binding, MSS on loopback) surface as
    `IperfError` values and drive the runner to `.error`.
-4. **The transport protocol never degrades silently.** Selecting a transport the
-   engine cannot honor becomes an error, never a misleading success over a
-   different protocol.
+4. **Role applicability and transport selection fail fast.** Explicitly setting
+   an option for the wrong endpoint role is rejected before the run with
+   `IESERVERONLY` / `IECLIENTONLY`. Selecting a transport the engine cannot
+   honor becomes an error, never a misleading success over a different
+   protocol.
 
-Note that options which do not apply to the current role or protocol (for
-example server-only `oneOff` / `idleTimeout` set on a client) are currently
-ignored rather than rejected, unlike the iperf3 CLI, which fails with
-`IESERVERONLY` / `IECLIENTONLY`. Tightening this into full up-front validation
-is tracked in [#30](https://github.com/gewill/iperf-swift/issues/30).
+Protocol-specific applicability that the iperf3 CLI does not reject during
+argument parsing remains engine-defined and is tracked separately in
+[#31](https://github.com/gewill/iperf-swift/issues/31).
 
 ## Configuration mapping
 

@@ -245,7 +245,7 @@ public class IperfRunner {
             }
         }
 
-        return nil
+        return configuration.roleApplicabilityError()
     }
 
     /// Applies the configuration to ``currentTest``.
