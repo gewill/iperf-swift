@@ -320,9 +320,10 @@ public class IperfRunner {
         
         if configuration.role == .client {
             if set_protocol(currentTest, configuration.prot.iperfConfigValue) < 0 {
-                // The engine registers SCTP only when built with SCTP support,
-                // which stock macOS lacks. Surface that explicitly instead of
-                // silently continuing with the default protocol (TCP).
+                // set_protocol only fails for a transport the engine did not
+                // register. TCP and UDP are always available, so this is not
+                // expected in practice; surface it explicitly rather than
+                // silently continuing with the default protocol.
                 //
                 // set_protocol has set the process-global i_errno to IEPROTOCOL.
                 // We report the mapped error directly, so clear the global to
@@ -331,7 +332,7 @@ public class IperfRunner {
                 // is a (narrow) opportunity to be misread as that runner's
                 // failure.
                 i_errno = IperfError.IENONE.rawValue
-                return configuration.prot == .sctp ? .IENOSCTP : .IEPROTOCOL
+                return .IEPROTOCOL
             }
             switch configuration.mode {
             case .upload:
@@ -354,8 +355,6 @@ public class IperfRunner {
             case .udp:
                 // Zero selects libiperf's dynamic MSS-based datagram size.
                 blksize = 0
-            case .sctp:
-                blksize = DEFAULT_SCTP_BLKSIZE
             }
             if let blockSize = configuration.blockSize {
                 blksize = Int32(clamping: blockSize)
