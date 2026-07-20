@@ -51,13 +51,14 @@ public typealias runnerStateFunctionType = (_ state: IperfRunnerState) -> Void
 /// guaranteed on a specific queue, so callers must dispatch UI updates to the
 /// main actor or main queue. Use one runner for one active test at a time.
 public class IperfRunner {
+    private let stateQueue = DispatchQueue(label: "com.gewill.IperfSwift.runner-state")
+    private let stateQueueKey = DispatchSpecificKey<Void>()
+
     private var onReporterFunction: reporterFunctionType = {result in }
     private var onErrorFunction: errorFunctionType = {error in }
-    private var onRunnerStateFunction: runnerStateFunctionType = {error in }
+    private var onRunnerStateFunction: runnerStateFunctionType = {state in }
     
     private var configuration: IperfConfiguration? = nil
-    private var observer: NSObjectProtocol? = nil
-    private var serverOutputObserver: NSObjectProtocol? = nil
     private var currentTest: UnsafeMutablePointer<iperf_test>? = nil
     
     private var state: IperfRunnerState = .ready {
@@ -72,7 +73,11 @@ public class IperfRunner {
     /// ``IperfConfiguration/getServerOutput``; `nil` otherwise. Because the
     /// text is exchanged right before completion, read it after the runner
     /// reports ``IperfRunnerState/finished``.
-    public private(set) var serverOutput: String?
+    private var storedServerOutput: String?
+
+    public var serverOutput: String? {
+        withState { storedServerOutput }
+    }
     
     // MARK: Initializers
 
@@ -80,51 +85,67 @@ public class IperfRunner {
     /// - Parameter configuration: The client or server options for the run.
     public init(with configuration: IperfConfiguration) {
         self.configuration = configuration
+        stateQueue.setSpecific(key: stateQueueKey, value: ())
     }
     
     // MARK: Callbacks
+
+    // A @convention(c) function pointer cannot capture Swift context, so it
+    // resolves the owning runner from the registry by the test's address and
+    // calls back into it directly — no global NotificationCenter broadcast.
     private let reporterCallback: @convention(c) (UnsafeMutablePointer<iperf_test>?) -> Void = { refTest in
-        // The engine frees both server output variants while displaying the
-        // final results inside iperf_reporter_callback, so copy them out
-        // first. A JSON-mode server delivers json_server_output instead of
-        // text, matching the CLI's "Server JSON output" report.
+        let runner = refTest.flatMap { IperfRunnerRegistry.shared.runner(for: $0) }
+        // Copy the server output before iperf_reporter_callback runs: the
+        // engine frees both variants while displaying the final results.
         if let testPointer = refTest {
-            var output: String?
-            if let text = testPointer.pointee.server_output_text {
-                output = String(cString: text)
-            } else if let json = testPointer.pointee.json_server_output,
-                      let printed = cJSON_Print(json) {
-                output = String(cString: printed)
-                cJSON_free(printed)
-            }
-            if let output = output {
-                let testUID = String(testPointer.hashValue)
-                DispatchQueue.main.async {
-                    NotificationCenter.default.post(
-                        name: Notification.Name(IperfNotificationName.serverOutput.rawValue + testUID),
-                        object: output
-                    )
-                }
-            }
+            runner?.captureServerOutput(from: testPointer)
         }
         iperf_reporter_callback(refTest)
-        DispatchQueue.main.async {
-            if let testPointer = refTest {
-                let testUID = String(testPointer.hashValue)
-                NotificationCenter.default.post(name: Notification.Name(IperfNotificationName.status.rawValue + testUID), object: refTest)
-            }
+        // Process the interval status after the engine has updated the test.
+        if let testPointer = refTest {
+            runner?.handleReporterStatus(testPointer)
         }
     }
-    
-    private func reporterNotificationCallback(notification: Notification) {
+
+    // Copies the server's textual (or JSON-mode) results out of the test
+    // before the engine frees them. Runs on the libiperf worker thread.
+    fileprivate func captureServerOutput(from testPointer: UnsafeMutablePointer<iperf_test>) {
+        // A JSON-mode server delivers json_server_output instead of text,
+        // matching the CLI's "Server JSON output" report.
+        var output: String?
+        if let text = testPointer.pointee.server_output_text {
+            output = String(cString: text)
+        } else if let json = testPointer.pointee.json_server_output,
+                  let printed = cJSON_Print(json) {
+            output = String(cString: printed)
+            cJSON_free(printed)
+        }
+        guard let output = output else {
+            return
+        }
+        withState {
+            guard currentTest == testPointer else {
+                return
+            }
+            storedServerOutput = output
+        }
+    }
+
+    fileprivate func handleReporterStatus(_ pointer: UnsafeMutablePointer<iperf_test>) {
+        withState {
+            handleReporterStatusLocked(pointer)
+        }
+    }
+
+    private func handleReporterStatusLocked(_ pointer: UnsafeMutablePointer<iperf_test>) {
         if state != .running {
             return
         }
-        guard let pointer = notification.object as? UnsafeMutablePointer<iperf_test>,
+        guard pointer == currentTest,
               let configuration = configuration else {
             return
         }
-        
+
         let runningTest = pointer.pointee
         var result = IperfIntervalResult(prot: configuration.prot)
         result.debugDescription = "OK"
@@ -177,6 +198,56 @@ public class IperfRunner {
     }
     
     // MARK: Private methods
+    private func withState<T>(_ body: () -> T) -> T {
+        if DispatchQueue.getSpecific(key: stateQueueKey) != nil {
+            return body()
+        }
+        return stateQueue.sync(execute: body)
+    }
+
+    static func durationSeconds(_ duration: TimeInterval?) -> Int32? {
+        guard let duration = duration else {
+            return nil
+        }
+        guard duration.isFinite else {
+            // Match the CLI's atoi parsing of "nan" and "inf" as 0.
+            return 0
+        }
+
+        let seconds = duration.rounded(.towardZero)
+        guard (0...Double(MAX_TIME)).contains(seconds) else {
+            return nil
+        }
+
+        return Int32(min(seconds, Double(Int32.max)))
+    }
+
+    private func configurationError() -> IperfError? {
+        guard let configuration = configuration else {
+            return nil
+        }
+
+        guard (1...Int(UInt16.max)).contains(configuration.port) else {
+            return .IEBADPORT
+        }
+        guard (0...Int(MAX_OMIT_TIME)).contains(configuration.omit) else {
+            return .IEOMIT
+        }
+
+        if configuration.role == .client {
+            if let duration = configuration.duration,
+               duration.isFinite,
+               Self.durationSeconds(duration) == nil {
+                return .IEDURATION
+            }
+            if let dscp = configuration.dscp, !(0...63).contains(dscp) {
+                return .IEBADTOS
+            }
+        }
+
+        return nil
+    }
+
     private func applyConfiguration() {
         guard let configuration = configuration else {
             return
@@ -189,7 +260,7 @@ public class IperfRunner {
         
         // Server/Client
         iperf_set_test_role(currentTest, configuration.role.rawValue)
-        iperf_set_test_server_port(currentTest, Int32(configuration.port))
+        iperf_set_test_server_port(currentTest, Int32(clamping: configuration.port))
         if configuration.addressFamily != .any {
             iperf_set_test_domain(OpaquePointer(currentTest), configuration.addressFamily.iperfConfigValue)
         }
@@ -202,7 +273,7 @@ public class IperfRunner {
             iperf_set_test_stats_interval(currentTest, Double(reporterInterval))
         }
         if configuration.omit > 0 {
-            iperf_set_test_omit(currentTest, Int32(configuration.omit))
+            iperf_set_test_omit(currentTest, Int32(clamping: configuration.omit))
         }
         if let logfile = configuration.logfile {
             iperf_set_test_logfile(currentTest, logfile)
@@ -297,8 +368,8 @@ public class IperfRunner {
             if let bindDevice = configuration.bindDevice {
                 iperf_set_test_bind_dev(currentTest, bindDevice)
             }
-            if let duration = configuration.duration {
-                iperf_set_test_duration(currentTest, Int32(duration))
+            if let duration = Self.durationSeconds(configuration.duration) {
+                iperf_set_test_duration(currentTest, duration)
             }
             if let numberOfBytes = configuration.numberOfBytes {
                 iperf_set_test_bytes(currentTest, UInt64(numberOfBytes))
@@ -308,7 +379,7 @@ public class IperfRunner {
                 iperf_set_test_connect_timeout(currentTest, Int32(milliseconds))
             }
             if let dscp = configuration.dscp {
-                iperf_set_test_dscp(currentTest, Int32(dscp))
+                iperf_set_test_dscp(currentTest, Int32(clamping: dscp))
             }
             // Applied after dscp on purpose: both write the same tos field,
             // and the full type-of-service byte wins when both are set.
@@ -343,51 +414,55 @@ public class IperfRunner {
         }
     }
     
-    private func startIperfProcess() {
+    private func startIperfProcess(
+        testPointer: UnsafeMutablePointer<iperf_test>,
+        configuration: IperfConfiguration
+    ) {
+        state = .running
         DispatchQueue.global(qos: .userInitiated).async {
             i_errno = IperfError.IENONE.rawValue
-            
-            DispatchQueue.main.sync { self.state = .running }
-            
+
             var code: Int32
-            if let configuration = self.configuration,
-               configuration.role == .client {
-                code = iperf_run_client(self.currentTest)
+            if configuration.role == .client {
+                code = iperf_run_client(testPointer)
             } else {
-                code = iperf_run_server(self.currentTest)
+                code = iperf_run_server(testPointer)
             }
-            if code < 0 || i_errno != IperfError.IENONE.rawValue,
-               self.currentTest?.pointee.done == 0 {
-                self.onError(IperfError.init(rawValue: i_errno) ?? .UNKNOWN)
-            } else {
-                guard let configuration = self.configuration else {
-                    return self.cleanState()
+            let error = IperfError(rawValue: i_errno) ?? .UNKNOWN
+            let wasStopped = testPointer.pointee.done != 0
+            i_errno = IperfError.IENONE.rawValue
+
+            self.stateQueue.async {
+                guard self.currentTest == testPointer else {
+                    return
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + (configuration.reporterInterval ?? 2.0)) {
-                    if self.currentTest != nil {
-                        self.cleanState()
-                    }
+
+                if (code < 0 || error != .IENONE) && !wasStopped {
+                    self.onError(error)
+                } else {
+                    self.cleanState(expectedTest: testPointer)
                 }
             }
         }
     }
     
-    private func cleanState(isExit: Bool = true) {
-        if let observer = observer {
-            NotificationCenter.default.removeObserver(observer)
-            self.observer = nil
+    private func cleanState(
+        isExit: Bool = true,
+        expectedTest: UnsafeMutablePointer<iperf_test>? = nil
+    ) {
+        if let expectedTest = expectedTest, currentTest != expectedTest {
+            return
         }
-        if let serverOutputObserver = serverOutputObserver {
-            NotificationCenter.default.removeObserver(serverOutputObserver)
-            self.serverOutputObserver = nil
-        }
-        
+
         if isExit && configuration != nil {
             configuration = nil
         }
-        if currentTest != nil {
-            iperf_free_test(currentTest)
-            currentTest = nil
+        if let testPointer = currentTest {
+            // Unregister before freeing so a reused address never resolves to
+            // this runner after its test is gone.
+            IperfRunnerRegistry.shared.unregister(testPointer)
+            iperf_free_test(testPointer)
+            self.currentTest = nil
         }
         if isExit && (state == .running || state == .stopping) {
             state = .finished
@@ -399,8 +474,6 @@ public class IperfRunner {
         onErrorFunction(error)
         
         cleanState()
-        // Reset global error code
-        i_errno = IperfError.IENONE.rawValue
     }
     
     // MARK: Public methods
@@ -408,6 +481,11 @@ public class IperfRunner {
     /// Starts a run after replacing the runner's configuration.
     ///
     /// Use this overload when reusing a runner after a completed run.
+    ///
+    /// If a run is already active, this call is silently ignored: none of
+    /// the supplied callbacks are invoked and the in-flight run is left
+    /// untouched. Wait for ``IperfRunnerState/finished`` or ``stop()`` before
+    /// starting another run.
     /// - Parameters:
     ///   - configuration: The client or server options for this run.
     ///   - onReporter: Called when an interval result is available.
@@ -419,11 +497,21 @@ public class IperfRunner {
         _ onError: @escaping errorFunctionType,
         _ onRunnerState: @escaping runnerStateFunctionType)
     {
-        self.configuration = configuration
-        self.start(onReporter, onError, onRunnerState)
+        stateQueue.async {
+            guard self.currentTest == nil else {
+                return
+            }
+            self.configuration = configuration
+            self.start(onReporter, onError, onRunnerState)
+        }
     }
     
     /// Starts a run with the configuration supplied at initialization.
+    ///
+    /// If a run is already active, this call is silently ignored: none of
+    /// the supplied callbacks are invoked and the in-flight run is left
+    /// untouched. Wait for ``IperfRunnerState/finished`` or ``stop()`` before
+    /// starting another run.
     /// - Parameters:
     ///   - onReporter: Called when an interval result is available.
     ///   - onError: Called when the run fails.
@@ -433,14 +521,28 @@ public class IperfRunner {
         _ onError: @escaping errorFunctionType,
         _ onRunnerState: @escaping runnerStateFunctionType
     ) {
+        if DispatchQueue.getSpecific(key: stateQueueKey) == nil {
+            stateQueue.async {
+                self.start(onReporter, onError, onRunnerState)
+            }
+            return
+        }
+
+        guard currentTest == nil else {
+            return
+        }
         signal(SIGPIPE, SIG_IGN)
         onReporterFunction = onReporter
         onErrorFunction = onError
         onRunnerStateFunction = onRunnerState
         
         cleanState(isExit: false)
-        serverOutput = nil
+        storedServerOutput = nil
         state = .initialising
+
+        if let error = configurationError() {
+            return self.onError(error)
+        }
         
         currentTest = iperf_new_test()
         guard let testPointer = currentTest else {
@@ -454,25 +556,15 @@ public class IperfRunner {
 
         applyConfiguration()
         
-        // Configure callbacks and notifications.
+        // Route the C reporter callback back to this runner by the test's
+        // address (see IperfRunnerRegistry).
         testPointer.pointee.reporter_callback = reporterCallback
-        observer = NotificationCenter.default.addObserver(
-            forName: Notification.Name(IperfNotificationName.status.rawValue + String(testPointer.hashValue)),
-            object: nil,
-            queue: nil,
-            using: reporterNotificationCallback
-        )
-        serverOutputObserver = NotificationCenter.default.addObserver(
-            forName: Notification.Name(IperfNotificationName.serverOutput.rawValue + String(testPointer.hashValue)),
-            object: nil,
-            queue: nil
-        ) { [weak self] notification in
-            if let output = notification.object as? String {
-                self?.serverOutput = output
-            }
+        IperfRunnerRegistry.shared.register(self, for: testPointer)
+
+        guard let configuration = configuration else {
+            return onError(.INIT_ERROR)
         }
-        
-        startIperfProcess()
+        startIperfProcess(testPointer: testPointer, configuration: configuration)
     }
     
     /// Requests cancellation of the active run.
@@ -480,6 +572,12 @@ public class IperfRunner {
     /// Calling this method when no test is active has no effect. State changes
     /// are reported asynchronously through the runner-state callback.
     public func stop() {
+        stateQueue.async {
+            self.stopCurrentTest()
+        }
+    }
+
+    private func stopCurrentTest() {
         guard let pointer = currentTest else {
             return
         }
@@ -493,5 +591,47 @@ public class IperfRunner {
                 close(pointer.pointee.listener)
             }
         }
+    }
+}
+
+/// Maps a live `iperf_test` pointer to the ``IperfRunner`` that owns it.
+///
+/// The libiperf reporter callback is a `@convention(c)` function pointer and
+/// cannot capture Swift context, so it resolves its owning runner through this
+/// registry instead of a global `NotificationCenter` broadcast. Entries are
+/// keyed by the test's address and removed when the test is freed, so a reused
+/// address always resolves to its current owner, and independent runners never
+/// receive each other's callbacks. The stored reference is weak so a
+/// registered runner can still deallocate.
+private final class IperfRunnerRegistry {
+    static let shared = IperfRunnerRegistry()
+
+    private let lock = NSLock()
+    private var runners: [UnsafeMutableRawPointer: WeakRunner] = [:]
+
+    private struct WeakRunner {
+        weak var runner: IperfRunner?
+    }
+
+    func register(_ runner: IperfRunner, for test: UnsafeMutablePointer<iperf_test>) {
+        let key = UnsafeMutableRawPointer(test)
+        lock.lock()
+        runners[key] = WeakRunner(runner: runner)
+        lock.unlock()
+    }
+
+    func unregister(_ test: UnsafeMutablePointer<iperf_test>) {
+        let key = UnsafeMutableRawPointer(test)
+        lock.lock()
+        runners.removeValue(forKey: key)
+        lock.unlock()
+    }
+
+    func runner(for test: UnsafeMutablePointer<iperf_test>) -> IperfRunner? {
+        let key = UnsafeMutableRawPointer(test)
+        lock.lock()
+        let runner = runners[key]?.runner
+        lock.unlock()
+        return runner
     }
 }

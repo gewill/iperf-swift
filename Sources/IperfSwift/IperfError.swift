@@ -10,7 +10,11 @@ import Foundation
 /// Error codes emitted by libiperf and the Swift wrapper.
 ///
 /// Values below `400` mirror the embedded iperf3 engine's `i_errno` values.
-public enum IperfError: Int32, CaseIterable {
+///
+/// Conforms to `Error` so it can be thrown and bridged into `do`/`catch`, and
+/// to `LocalizedError`/`CustomStringConvertible` so `localizedDescription` and
+/// string interpolation yield the human-readable message.
+public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomStringConvertible, CustomDebugStringConvertible {
     case UNKNOWN = -1
     case IENONE = 0             // No error
     /* Parameter errors */
@@ -283,5 +287,22 @@ public enum IperfError: Int32, CaseIterable {
         case .INIT_ERROR_DEFAULTS:
             return "iperf_defaults failed"
         }
+    }
+
+    /// A human-readable description of the error code.
+    ///
+    /// Mirrors ``debugDescription`` so string interpolation of an
+    /// ``IperfError`` yields the same message.
+    public var description: String {
+        debugDescription
+    }
+
+    /// A localized message describing the error, used by
+    /// `Error.localizedDescription`.
+    ///
+    /// The wrapper does not currently localize the messages, so this returns
+    /// the same English text as ``debugDescription``.
+    public var errorDescription: String? {
+        debugDescription
     }
 }

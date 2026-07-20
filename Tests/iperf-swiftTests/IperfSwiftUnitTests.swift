@@ -2,6 +2,118 @@ import XCTest
 @testable import IperfSwift
 
 final class IperfSwiftUnitTests: XCTestCase {
+    func testConcurrentStartsDeliverEachCallersErrorCallback() {
+        let invocationCount = 200
+        let callbacks = expectation(description: "all concurrent starts complete")
+        callbacks.expectedFulfillmentCount = invocationCount
+        let lock = NSLock()
+        var callbackIDs = Set<Int>()
+        var configuration = IperfConfiguration()
+        configuration.port = 0
+        let runner = IperfRunner(with: configuration)
+
+        DispatchQueue.concurrentPerform(iterations: invocationCount) { index in
+            runner.start(with: configuration, { _ in }, { error in
+                XCTAssertEqual(error, .IEBADPORT)
+                lock.lock()
+                callbackIDs.insert(index)
+                lock.unlock()
+                callbacks.fulfill()
+            }, { _ in })
+        }
+
+        wait(for: [callbacks], timeout: 5)
+        lock.lock()
+        let receivedCallbackIDs = callbackIDs
+        lock.unlock()
+        XCTAssertEqual(receivedCallbackIDs, Set(0..<invocationCount))
+    }
+
+    func testOutOfRangeConfigurationReturnsCLIParameterErrors() {
+        var testCases: [(configuration: IperfConfiguration, error: IperfError)] = []
+
+        var portConfiguration = IperfConfiguration()
+        portConfiguration.port = .max
+        testCases.append((portConfiguration, .IEBADPORT))
+
+        var negativePortConfiguration = IperfConfiguration()
+        negativePortConfiguration.port = .min
+        testCases.append((negativePortConfiguration, .IEBADPORT))
+
+        var omitConfiguration = IperfConfiguration()
+        omitConfiguration.omit = .max
+        testCases.append((omitConfiguration, .IEOMIT))
+
+        var negativeOmitConfiguration = IperfConfiguration()
+        negativeOmitConfiguration.omit = .min
+        testCases.append((negativeOmitConfiguration, .IEOMIT))
+
+        var oversizedDurationConfiguration = IperfConfiguration()
+        oversizedDurationConfiguration.duration = .greatestFiniteMagnitude
+        testCases.append((oversizedDurationConfiguration, .IEDURATION))
+
+        var negativeDurationConfiguration = IperfConfiguration()
+        negativeDurationConfiguration.duration = -1
+        testCases.append((negativeDurationConfiguration, .IEDURATION))
+
+        var negativeDscpConfiguration = IperfConfiguration()
+        negativeDscpConfiguration.dscp = .min
+        testCases.append((negativeDscpConfiguration, .IEBADTOS))
+
+        var dscpConfiguration = IperfConfiguration()
+        dscpConfiguration.dscp = .max
+        testCases.append((dscpConfiguration, .IEBADTOS))
+
+        for (index, testCase) in testCases.enumerated() {
+            let failed = expectation(description: "invalid configuration \(index) fails normally")
+            let runner = IperfRunner(with: testCase.configuration)
+            var receivedError: IperfError?
+            var states: [IperfRunnerState] = []
+
+            runner.start({ _ in }, { error in
+                receivedError = error
+                failed.fulfill()
+            }, { state in
+                states.append(state)
+            })
+
+            wait(for: [failed], timeout: 2)
+            XCTAssertEqual(receivedError, testCase.error)
+            XCTAssertEqual(states.last, .error)
+        }
+    }
+
+    func testNonFiniteDurationDoesNotTrap() {
+        var configurations: [IperfConfiguration] = []
+
+        var infiniteDurationConfiguration = unreachableClientConfiguration()
+        infiniteDurationConfiguration.duration = .infinity
+        configurations.append(infiniteDurationConfiguration)
+
+        var nanDurationConfiguration = unreachableClientConfiguration()
+        nanDurationConfiguration.duration = .nan
+        configurations.append(nanDurationConfiguration)
+
+        for (index, configuration) in configurations.enumerated() {
+            let failed = expectation(description: "non-finite duration \(index) fails normally")
+            let runner = IperfRunner(with: configuration)
+
+            runner.start({ _ in }, { _ in failed.fulfill() }, { _ in })
+
+            wait(for: [failed], timeout: 2)
+        }
+    }
+
+    func testDurationConversionMatchesCLIIntegerSemantics() {
+        XCTAssertEqual(IperfRunner.durationSeconds(0), 0)
+        XCTAssertEqual(IperfRunner.durationSeconds(-0.5), 0)
+        XCTAssertEqual(IperfRunner.durationSeconds(86_400.9), 86_400)
+        XCTAssertNil(IperfRunner.durationSeconds(-1))
+        XCTAssertNil(IperfRunner.durationSeconds(86_401))
+        XCTAssertEqual(IperfRunner.durationSeconds(.nan), 0)
+        XCTAssertEqual(IperfRunner.durationSeconds(.infinity), 0)
+    }
+
     func testConfigurationDefaultsAndCustomNetworkSettings() {
         var configuration = IperfConfiguration()
 
@@ -210,5 +322,31 @@ final class IperfSwiftUnitTests: XCTestCase {
         let failure = IperfIntervalResult(error: .IEAUTHTEST)
         XCTAssertFalse(success.hasError)
         XCTAssertTrue(failure.hasError)
+    }
+
+    func testErrorConformsToStandardProtocols() {
+        let error = IperfError.IEAUTHTEST
+        let expected = "Test authorization failed"
+
+        // Error: can be thrown and caught as IperfError.
+        func throwing() throws { throw error }
+        XCTAssertThrowsError(try throwing()) { thrown in
+            XCTAssertEqual(thrown as? IperfError, error)
+        }
+
+        // LocalizedError: localizedDescription and errorDescription map to the message.
+        XCTAssertEqual(error.errorDescription, expected)
+        XCTAssertEqual((error as Error).localizedDescription, expected)
+
+        // CustomStringConvertible / interpolation matches debugDescription.
+        XCTAssertEqual(error.description, expected)
+        XCTAssertEqual("\(error)", expected)
+        XCTAssertEqual(error.debugDescription, expected)
+    }
+
+    private func unreachableClientConfiguration() -> IperfConfiguration {
+        var configuration = IperfConfiguration()
+        configuration.address = "invalid.invalid"
+        return configuration
     }
 }
