@@ -222,6 +222,29 @@ public class IperfRunner {
         return Int32(min(seconds, Double(Int32.max)))
     }
 
+    static func blockSizeError(_ blockSize: Int?, for prot: IperfProtocol) -> IperfError? {
+        guard let blockSize, blockSize > 0 else {
+            return nil
+        }
+        if blockSize > Int(MAX_BLOCKSIZE) {
+            return .IEBLOCKSIZE
+        }
+        // Clang cannot import MIN_UDP_BLOCKSIZE / MAX_UDP_BLOCKSIZE because
+        // they are expression macros. Keep their iperf 3.21 values together.
+        if prot == .udp,
+           !(16...65_507).contains(blockSize) {
+            return .IEUDPBLOCKSIZE
+        }
+        return nil
+    }
+
+    static func resolvedBlockSize(_ blockSize: Int?, for prot: IperfProtocol) -> Int32 {
+        guard let blockSize, blockSize > 0 else {
+            return prot == .tcp ? DEFAULT_TCP_BLKSIZE : 0
+        }
+        return Int32(blockSize)
+    }
+
     private func configurationError() -> IperfError? {
         guard let configuration = configuration else {
             return nil
@@ -239,6 +262,9 @@ public class IperfRunner {
                   (minimum...Double(MAX_TIME)).contains(rcvTimeout) else {
                 return .IERCVTIMEOUT
             }
+        }
+        if let blockSizeError = Self.blockSizeError(configuration.blockSize, for: configuration.prot) {
+            return blockSizeError
         }
 
         if configuration.role == .client {
@@ -358,18 +384,10 @@ public class IperfRunner {
             
             iperf_set_test_num_streams(currentTest, Int32(clamping: configuration.numStreams))
 
-            var blksize: Int32
-            switch configuration.prot {
-            case .tcp:
-                blksize = DEFAULT_TCP_BLKSIZE
-            case .udp:
-                // Zero selects libiperf's dynamic MSS-based datagram size.
-                blksize = 0
-            }
-            if let blockSize = configuration.blockSize {
-                blksize = Int32(clamping: blockSize)
-            }
-            iperf_set_test_blksize(currentTest, blksize)
+            iperf_set_test_blksize(
+                currentTest,
+                Self.resolvedBlockSize(configuration.blockSize, for: configuration.prot)
+            )
 
             if let rate = configuration.rate {
                 iperf_set_test_rate(currentTest, rate)

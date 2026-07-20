@@ -222,7 +222,7 @@ keeps wrong-role credential errors ahead of same-role credential completeness.
 | `reverse` | `--reverse` | Client · TCP / UDP | Compatibility accessor for `mode`; a read/write round trip does not cancel bidirectional mode |
 | `prot` | `--tcp` / `--udp` | Client | Defaults to TCP; an explicit Server assignment fails with `IECLIENTONLY` |
 | `rate` | `--bitrate` | Client · TCP / UDP | Unset keeps the CLI defaults: unlimited TCP and 1 Mbit/s UDP |
-| `blockSize` | `--length` | Client · TCP / UDP | TCP read/write block and exact UDP datagram payload; protocol-specific range and zero/default validation are tracked in [#35](https://github.com/gewill/iperf-swift/issues/35) |
+| `blockSize` | `--length` | Client · TCP / UDP | Non-positive values select the default (TCP 128 KiB; UDP dynamic MSS); positive TCP values allow `1...1 MiB`, while UDP allows `16...65,507`; values above 1 MiB fail with `IEBLOCKSIZE`, and other invalid UDP values fail with `IEUDPBLOCKSIZE` |
 | `socketBufferSize` | `--window` | Client · TCP / UDP | Socket send/receive buffer size; remaining value checks are tracked in [#39](https://github.com/gewill/iperf-swift/issues/39) |
 | `noDelay` | `--no-delay` | Client · TCP | Enabling it for UDP fails with `IETCPONLY` |
 | `mss` | `--set-mss` | Client · TCP | UDP fails with `IETCPONLY`; intrinsic range validation is tracked in [#39](https://github.com/gewill/iperf-swift/issues/39), while valid platform/route failures remain `IESETMSS` at runtime |
@@ -277,12 +277,11 @@ is tracked in [#38](https://github.com/gewill/iperf-swift/issues/38).
 
 Follow-up work is deliberately split by behavior and risk:
 
-1. [#35 — validate `blockSize` per transport](https://github.com/gewill/iperf-swift/issues/35)
-2. [#36 — validate and restrict `clientPort`](https://github.com/gewill/iperf-swift/issues/36)
-3. [#37 — reject conflicting test end conditions](https://github.com/gewill/iperf-swift/issues/37)
-4. [#38 — preflight authentication dependencies](https://github.com/gewill/iperf-swift/issues/38)
-5. [#39 — validate remaining client integer ranges](https://github.com/gewill/iperf-swift/issues/39)
-6. [#40 — validate `TimeInterval` values](https://github.com/gewill/iperf-swift/issues/40)
+1. [#36 — validate and restrict `clientPort`](https://github.com/gewill/iperf-swift/issues/36)
+2. [#37 — reject conflicting test end conditions](https://github.com/gewill/iperf-swift/issues/37)
+3. [#38 — preflight authentication dependencies](https://github.com/gewill/iperf-swift/issues/38)
+4. [#39 — validate remaining client integer ranges](https://github.com/gewill/iperf-swift/issues/39)
+5. [#40 — validate `TimeInterval` values](https://github.com/gewill/iperf-swift/issues/40)
 
 ### Unsupported options
 

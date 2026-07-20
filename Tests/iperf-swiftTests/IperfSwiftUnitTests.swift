@@ -109,6 +109,75 @@ final class IperfSwiftUnitTests: XCTestCase {
         }
     }
 
+    func testBlockSizeBoundaryValidation() {
+        let testCases: [(IperfProtocol, Int?, IperfError?)] = [
+            (.tcp, nil, nil),
+            (.tcp, -1, nil),
+            (.tcp, 0, nil),
+            (.tcp, 1, nil),
+            (.tcp, 1_048_576, nil),
+            (.tcp, 1_048_577, .IEBLOCKSIZE),
+            (.udp, nil, nil),
+            (.udp, -1, nil),
+            (.udp, 0, nil),
+            (.udp, 1, .IEUDPBLOCKSIZE),
+            (.udp, 15, .IEUDPBLOCKSIZE),
+            (.udp, 16, nil),
+            (.udp, 65_507, nil),
+            (.udp, 65_508, .IEUDPBLOCKSIZE),
+            (.udp, 1_048_576, .IEUDPBLOCKSIZE),
+            (.udp, 1_048_577, .IEBLOCKSIZE),
+        ]
+
+        for (prot, blockSize, expectedError) in testCases {
+            XCTAssertEqual(
+                IperfRunner.blockSizeError(blockSize, for: prot),
+                expectedError,
+                "\(prot) blockSize=\(String(describing: blockSize))"
+            )
+        }
+
+        XCTAssertEqual(IperfRunner.resolvedBlockSize(nil, for: .tcp), 128 * 1_024)
+        XCTAssertEqual(IperfRunner.resolvedBlockSize(-1, for: .tcp), 128 * 1_024)
+        XCTAssertEqual(IperfRunner.resolvedBlockSize(0, for: .tcp), 128 * 1_024)
+        XCTAssertEqual(IperfRunner.resolvedBlockSize(nil, for: .udp), 0)
+        XCTAssertEqual(IperfRunner.resolvedBlockSize(-1, for: .udp), 0)
+        XCTAssertEqual(IperfRunner.resolvedBlockSize(0, for: .udp), 0)
+        XCTAssertEqual(IperfRunner.resolvedBlockSize(1_200, for: .tcp), 1_200)
+        XCTAssertEqual(IperfRunner.resolvedBlockSize(1_200, for: .udp), 1_200)
+    }
+
+    func testInvalidBlockSizeFailsBeforeApplicabilityAndNetworking() {
+        var oversizedTCP = IperfConfiguration()
+        oversizedTCP.address = "invalid.invalid"
+        oversizedTCP.blockSize = 1_048_577
+
+        var undersizedUDP = IperfConfiguration()
+        undersizedUDP.address = "invalid.invalid"
+        undersizedUDP.prot = .udp
+        undersizedUDP.blockSize = 15
+
+        var oversizedUDP = IperfConfiguration()
+        oversizedUDP.address = "invalid.invalid"
+        oversizedUDP.prot = .udp
+        oversizedUDP.blockSize = 1_048_577
+
+        var wrongRole = IperfConfiguration()
+        wrongRole.role = .server
+        wrongRole.blockSize = 1_048_577
+
+        let testCases: [(String, IperfConfiguration, IperfError)] = [
+            ("TCP generic maximum", oversizedTCP, .IEBLOCKSIZE),
+            ("UDP protocol minimum", undersizedUDP, .IEUDPBLOCKSIZE),
+            ("UDP generic maximum precedence", oversizedUDP, .IEBLOCKSIZE),
+            ("intrinsic before role", wrongRole, .IEBLOCKSIZE),
+        ]
+
+        for (name, configuration, expectedError) in testCases {
+            assertRunnerFails(configuration, with: expectedError, description: name)
+        }
+    }
+
     func testNonFiniteDurationDoesNotTrap() {
         var configurations: [IperfConfiguration] = []
 
