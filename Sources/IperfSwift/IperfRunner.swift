@@ -323,6 +323,14 @@ public class IperfRunner {
                 // The engine registers SCTP only when built with SCTP support,
                 // which stock macOS lacks. Surface that explicitly instead of
                 // silently continuing with the default protocol (TCP).
+                //
+                // set_protocol has set the process-global i_errno to IEPROTOCOL.
+                // We report the mapped error directly, so clear the global to
+                // avoid leaving it set: a concurrent runner resets i_errno
+                // before its run and reads it right after, and a value left here
+                // is a (narrow) opportunity to be misread as that runner's
+                // failure.
+                i_errno = IperfError.IENONE.rawValue
                 return configuration.prot == .sctp ? .IENOSCTP : .IEPROTOCOL
             }
             switch configuration.mode {

@@ -17,14 +17,6 @@ package release number.
   running the test over TCP. This matches the official iperf3 CLI, which
   refuses SCTP when it is not compiled in.
 
-### Added
-
-- Expanded the test suite: client-side RSA authentication (OAEP and PKCS#1
-  padding, plus rejection of wrong credentials), `stop()` during an active
-  run, runner reuse and deallocation, `--bytes` termination, connect-timeout
-  against an unreachable host, and `Codable` round-trips for the public option
-  enums.
-
 ## [3.21.5] - 2026-07-20
 
 ### Added
