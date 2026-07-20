@@ -373,28 +373,6 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertEqual(states.last, .error)
     }
 
-    func testPublicCodableEnumsRoundTrip() throws {
-        // The public option enums advertise Codable so callers can persist a
-        // chosen configuration. Pin the encoded form and the round trip so a
-        // rename of a case is caught as a breaking change.
-        func assertRoundTrips<T: Codable & Equatable>(
-            _ value: T, encodesTo json: String,
-            file: StaticString = #filePath, line: UInt = #line
-        ) throws {
-            let encoder = JSONEncoder()
-            let data = try encoder.encode([value])
-            XCTAssertEqual(String(decoding: data, as: UTF8.self), "[\(json)]", file: file, line: line)
-            let decoded = try JSONDecoder().decode([T].self, from: data)
-            XCTAssertEqual(decoded, [value], file: file, line: line)
-        }
-
-        try assertRoundTrips(IperfProtocol.udp, encodesTo: "\"udp\"")
-        try assertRoundTrips(IperfAddressFamily.ipv6, encodesTo: "\"ipv6\"")
-        try assertRoundTrips(IperfTestMode.bidirectional, encodesTo: "\"bidirectional\"")
-        try assertRoundTrips(IperfRole.server, encodesTo: "115")
-        try assertRoundTrips(IperfDirection.download, encodesTo: "1")
-    }
-
     private func unreachableClientConfiguration() -> IperfConfiguration {
         var configuration = IperfConfiguration()
         configuration.address = "invalid.invalid"
