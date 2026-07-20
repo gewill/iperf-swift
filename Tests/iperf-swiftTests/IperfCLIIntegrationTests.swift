@@ -55,6 +55,67 @@ final class IperfCLIIntegrationTests: XCTestCase {
         }
     }
 
+    func testConcurrentStartWhileRunningIsIgnored() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port)]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.duration = 2
+        configuration.reverse = .upload
+
+        let running = expectation(description: "first run reaches running state")
+        let finished = expectation(description: "first run finishes")
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+
+        var didAttemptSecondStart = false
+        client.start(
+            { _ in },
+            { error in
+                XCTFail("first run's client failed: \(error.debugDescription)")
+            },
+            { state in
+                if state == .running && !didAttemptSecondStart {
+                    didAttemptSecondStart = true
+                    running.fulfill()
+
+                    // A start() issued while a run is active must be a no-op:
+                    // none of these callbacks may fire, and the in-flight run
+                    // below must be left untouched.
+                    client.start(
+                        with: configuration,
+                        { _ in XCTFail("second start's onReporter must not fire") },
+                        { _ in XCTFail("second start's onError must not fire") },
+                        { _ in XCTFail("second start's onRunnerState must not fire") }
+                    )
+                }
+                if state == .finished {
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [running], timeout: 3)
+        wait(for: [finished], timeout: 3)
+    }
+
     func testSwiftServerAcceptsAuthenticatedCLIClient() throws {
         let tools = try TestTools()
         let credentials = try tools.makeCredentials()

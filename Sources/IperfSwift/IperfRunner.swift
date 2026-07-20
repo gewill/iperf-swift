@@ -479,6 +479,11 @@ public class IperfRunner {
     /// Starts a run after replacing the runner's configuration.
     ///
     /// Use this overload when reusing a runner after a completed run.
+    ///
+    /// If a run is already active, this call is silently ignored: none of
+    /// the supplied callbacks are invoked and the in-flight run is left
+    /// untouched. Wait for ``IperfRunnerState/finished`` or ``stop()`` before
+    /// starting another run.
     /// - Parameters:
     ///   - configuration: The client or server options for this run.
     ///   - onReporter: Called when an interval result is available.
@@ -500,6 +505,11 @@ public class IperfRunner {
     }
     
     /// Starts a run with the configuration supplied at initialization.
+    ///
+    /// If a run is already active, this call is silently ignored: none of
+    /// the supplied callbacks are invoked and the in-flight run is left
+    /// untouched. Wait for ``IperfRunnerState/finished`` or ``stop()`` before
+    /// starting another run.
     /// - Parameters:
     ///   - onReporter: Called when an interval result is available.
     ///   - onError: Called when the run fails.
