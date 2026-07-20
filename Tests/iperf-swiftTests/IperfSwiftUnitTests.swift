@@ -234,6 +234,58 @@ final class IperfSwiftUnitTests: XCTestCase {
         }
     }
 
+    func testEndConditionValidationMatchesCLI() {
+        let testCases: [(TimeInterval?, UInt64?, IperfError?)] = [
+            (nil, nil, nil),
+            (1, nil, nil),
+            (nil, 1, nil),
+            (1, 1, .IEENDCONDITIONS),
+            (0, 1, .IEENDCONDITIONS),
+            (1, 0, nil),
+            (0, 0, nil),
+            (-1, 1, .IEDURATION),
+            (.infinity, 1, .IEENDCONDITIONS),
+            (.nan, 1, .IEENDCONDITIONS),
+        ]
+
+        for (duration, numberOfBytes, expectedError) in testCases {
+            XCTAssertEqual(
+                IperfRunner.endConditionError(duration: duration, numberOfBytes: numberOfBytes),
+                expectedError,
+                "duration=\(String(describing: duration)) bytes=\(String(describing: numberOfBytes))"
+            )
+        }
+    }
+
+    func testConflictingEndConditionsFailBeforeApplicabilityAndNetworking() {
+        for prot in [IperfProtocol.tcp, .udp] {
+            for mode in [IperfTestMode.upload, .download, .bidirectional] {
+                var configuration = IperfConfiguration()
+                configuration.address = "invalid.invalid"
+                configuration.prot = prot
+                configuration.mode = mode
+                configuration.duration = 1
+                configuration.numberOfBytes = 1
+
+                assertRunnerFails(
+                    configuration,
+                    with: .IEENDCONDITIONS,
+                    description: "\(prot) \(mode) end condition conflict"
+                )
+            }
+        }
+
+        var wrongRole = IperfConfiguration()
+        wrongRole.role = .server
+        wrongRole.duration = 1
+        wrongRole.numberOfBytes = 1
+        assertRunnerFails(
+            wrongRole,
+            with: .IEENDCONDITIONS,
+            description: "end condition conflict precedes role"
+        )
+    }
+
     func testNonFiniteDurationDoesNotTrap() {
         var configurations: [IperfConfiguration] = []
 

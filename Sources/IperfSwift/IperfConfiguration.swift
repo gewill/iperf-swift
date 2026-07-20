@@ -158,11 +158,11 @@ public struct IperfConfiguration {
 
     /// The client test duration in seconds, equivalent to `--time`.
     ///
-    /// Leave either this value or ``numberOfBytes`` unset because iperf3 accepts
-    /// only one test end condition.
+    /// Combining any explicitly set duration (including zero) with a nonzero
+    /// ``numberOfBytes`` fails with ``IperfError/IEENDCONDITIONS``.
     public var duration: TimeInterval?
     /// The number of bytes the client should transmit before ending the test,
-    /// equivalent to `--bytes`.
+    /// equivalent to `--bytes`. Zero does not select a byte end condition.
     public var numberOfBytes: UInt64?
     /// The client connection timeout in seconds, equivalent to `--connect-timeout`.
     public var timeout: TimeInterval?

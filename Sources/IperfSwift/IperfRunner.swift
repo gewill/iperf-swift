@@ -222,6 +222,23 @@ public class IperfRunner {
         return Int32(min(seconds, Double(Int32.max)))
     }
 
+    static func endConditionError(
+        duration: TimeInterval?,
+        numberOfBytes: UInt64?
+    ) -> IperfError? {
+        if let duration,
+           duration.isFinite,
+           Self.durationSeconds(duration) == nil {
+            return .IEDURATION
+        }
+        if duration != nil,
+           let numberOfBytes,
+           numberOfBytes != 0 {
+            return .IEENDCONDITIONS
+        }
+        return nil
+    }
+
     static func blockSizeError(_ blockSize: Int?, for prot: IperfProtocol) -> IperfError? {
         guard let blockSize, blockSize > 0 else {
             return nil
@@ -299,13 +316,14 @@ public class IperfRunner {
         ) {
             return clientPortError
         }
+        if let endConditionError = Self.endConditionError(
+            duration: configuration.duration,
+            numberOfBytes: configuration.numberOfBytes
+        ) {
+            return endConditionError
+        }
 
         if configuration.role == .client {
-            if let duration = configuration.duration,
-               duration.isFinite,
-               Self.durationSeconds(duration) == nil {
-                return .IEDURATION
-            }
             if let dscp = configuration.dscp, !(0...63).contains(dscp) {
                 return .IEBADTOS
             }

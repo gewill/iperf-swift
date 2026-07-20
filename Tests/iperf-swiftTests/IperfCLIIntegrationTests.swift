@@ -4,6 +4,40 @@ import Darwin
 @testable import IperfSwift
 
 final class IperfCLIIntegrationTests: XCTestCase {
+    func testEndConditionErrorsMatchCLI() throws {
+        let tools = try TestTools()
+
+        for duration in [0, 1] {
+            let cliResult = try tools.run(
+                tools.iperf3,
+                arguments: [
+                    "-c", "127.0.0.1",
+                    "--time", String(duration),
+                    "--bytes", "1",
+                ]
+            )
+            XCTAssertNotEqual(cliResult.status, 0)
+            XCTAssertTrue(
+                cliResult.output.contains("only one test end condition"),
+                cliResult.output
+            )
+
+            var configuration = IperfConfiguration()
+            configuration.duration = TimeInterval(duration)
+            configuration.numberOfBytes = 1
+            let failed = expectation(description: "Swift duration \(duration) conflicts with bytes")
+            let runner = IperfRunner(with: configuration)
+            var receivedError: IperfError?
+            runner.start({ _ in }, { error in
+                receivedError = error
+                failed.fulfill()
+            }, { _ in })
+
+            wait(for: [failed], timeout: 2)
+            XCTAssertEqual(receivedError, .IEENDCONDITIONS)
+        }
+    }
+
     func testClientPortErrorsMatchCLI() throws {
         let tools = try TestTools()
 
