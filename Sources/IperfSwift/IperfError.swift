@@ -47,6 +47,7 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
     case IEBADPORT = 26        // Bad port number
     case IETOTALRATE = 27       // Total required bandwidth is larger than server's limit
     case IETOTALINTERVAL = 28   // Invalid time interval for calculating average data rate
+    case IEIDLETIMEOUT = 30     // Invalid value specified as idle state timeout
     case IERCVTIMEOUT = 31      // Illegal message receive timeout
     case IERVRSONLYRCVTIMEOUT = 32 // Client receive timeout is valid only in receiving mode
     /* Test errors */
@@ -113,6 +114,7 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
     case IETCPONLY = 402        // This option is TCP only
     case IEUDPONLY = 403        // This option is UDP only
     case IEIPV4ONLY = 404       // This option is IPv4 only
+    case IECONNECTTIMEOUT = 405 // Invalid Swift client connection timeout
     
     /// A human-readable description of the error code.
     public var debugDescription: String {
@@ -178,6 +180,8 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
             return "Total required bandwidth is larger than server's limit"
         case .IETOTALINTERVAL:
             return "Invalid time interval for calculating average data rate"
+        case .IEIDLETIMEOUT:
+            return "Idle timeout parameter is not positive or larger than allowed limit"
         case .IERCVTIMEOUT:
             return "Receive timeout value is incorrect or not in range"
         case .IERVRSONLYRCVTIMEOUT:
@@ -303,6 +307,8 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
             return "This option is UDP only"
         case .IEIPV4ONLY:
             return "This option is IPv4 only"
+        case .IECONNECTTIMEOUT:
+            return "Client connection timeout is invalid or out of range"
         }
     }
 

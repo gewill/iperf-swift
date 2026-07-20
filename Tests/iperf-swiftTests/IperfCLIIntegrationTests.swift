@@ -4,6 +4,38 @@ import Darwin
 @testable import IperfSwift
 
 final class IperfCLIIntegrationTests: XCTestCase {
+    func testTimeIntervalErrorsMatchCLIWhereContractsOverlap() throws {
+        typealias Mutation = (inout IperfConfiguration) -> Void
+        let tools = try TestTools()
+        let testCases: [([String], Mutation, IperfError)] = [
+            (["--idle-timeout", "0"], { $0.idleTimeout = 0 }, .IEIDLETIMEOUT),
+            (["--interval", "-1"], { $0.reporterInterval = -1 }, .IEINTERVAL),
+        ]
+
+        for (arguments, mutate, expectedError) in testCases {
+            let cliResult = try tools.run(
+                tools.iperf3,
+                arguments: ["-c", "127.0.0.1"] + arguments
+            )
+            XCTAssertNotEqual(cliResult.status, 0)
+            XCTAssertTrue(cliResult.output.contains("parameter error"), cliResult.output)
+
+            var configuration = IperfConfiguration()
+            configuration.address = "invalid.invalid"
+            mutate(&configuration)
+            let rejected = expectation(description: "Swift rejects \(arguments.joined(separator: " "))")
+            let runner = IperfRunner(with: configuration)
+            var receivedError: IperfError?
+            runner.start({ _ in }, { error in
+                receivedError = error
+                rejected.fulfill()
+            }, { _ in })
+
+            wait(for: [rejected], timeout: 2)
+            XCTAssertEqual(receivedError, expectedError)
+        }
+    }
+
     func testClientIntegerErrorsMatchCLI() throws {
         typealias Mutation = (inout IperfConfiguration) -> Void
         let tools = try TestTools()
