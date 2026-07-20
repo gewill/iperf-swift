@@ -180,7 +180,7 @@ Note that options which do not apply to the current role or protocol (for
 example server-only `oneOff` / `idleTimeout` set on a client) are currently
 ignored rather than rejected, unlike the iperf3 CLI, which fails with
 `IESERVERONLY` / `IECLIENTONLY`. Tightening this into full up-front validation
-is tracked separately.
+is tracked in [#30](https://github.com/gewill/iperf-swift/issues/30).
 
 ## Configuration mapping
 
