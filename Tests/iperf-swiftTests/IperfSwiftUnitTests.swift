@@ -2,6 +2,91 @@ import XCTest
 @testable import IperfSwift
 
 final class IperfSwiftUnitTests: XCTestCase {
+    func testOutOfRangeConfigurationReturnsCLIParameterErrors() {
+        var testCases: [(configuration: IperfConfiguration, error: IperfError)] = []
+
+        var portConfiguration = IperfConfiguration()
+        portConfiguration.port = .max
+        testCases.append((portConfiguration, .IEBADPORT))
+
+        var negativePortConfiguration = IperfConfiguration()
+        negativePortConfiguration.port = .min
+        testCases.append((negativePortConfiguration, .IEBADPORT))
+
+        var omitConfiguration = IperfConfiguration()
+        omitConfiguration.omit = .max
+        testCases.append((omitConfiguration, .IEOMIT))
+
+        var negativeOmitConfiguration = IperfConfiguration()
+        negativeOmitConfiguration.omit = .min
+        testCases.append((negativeOmitConfiguration, .IEOMIT))
+
+        var oversizedDurationConfiguration = IperfConfiguration()
+        oversizedDurationConfiguration.duration = .greatestFiniteMagnitude
+        testCases.append((oversizedDurationConfiguration, .IEDURATION))
+
+        var negativeDurationConfiguration = IperfConfiguration()
+        negativeDurationConfiguration.duration = -1
+        testCases.append((negativeDurationConfiguration, .IEDURATION))
+
+        var negativeDscpConfiguration = IperfConfiguration()
+        negativeDscpConfiguration.dscp = .min
+        testCases.append((negativeDscpConfiguration, .IEBADTOS))
+
+        var dscpConfiguration = IperfConfiguration()
+        dscpConfiguration.dscp = .max
+        testCases.append((dscpConfiguration, .IEBADTOS))
+
+        for (index, testCase) in testCases.enumerated() {
+            let failed = expectation(description: "invalid configuration \(index) fails normally")
+            let runner = IperfRunner(with: testCase.configuration)
+            var receivedError: IperfError?
+            var states: [IperfRunnerState] = []
+
+            runner.start({ _ in }, { error in
+                receivedError = error
+                failed.fulfill()
+            }, { state in
+                states.append(state)
+            })
+
+            wait(for: [failed], timeout: 2)
+            XCTAssertEqual(receivedError, testCase.error)
+            XCTAssertEqual(states.last, .error)
+        }
+    }
+
+    func testNonFiniteDurationDoesNotTrap() {
+        var configurations: [IperfConfiguration] = []
+
+        var infiniteDurationConfiguration = unreachableClientConfiguration()
+        infiniteDurationConfiguration.duration = .infinity
+        configurations.append(infiniteDurationConfiguration)
+
+        var nanDurationConfiguration = unreachableClientConfiguration()
+        nanDurationConfiguration.duration = .nan
+        configurations.append(nanDurationConfiguration)
+
+        for (index, configuration) in configurations.enumerated() {
+            let failed = expectation(description: "non-finite duration \(index) fails normally")
+            let runner = IperfRunner(with: configuration)
+
+            runner.start({ _ in }, { _ in failed.fulfill() }, { _ in })
+
+            wait(for: [failed], timeout: 2)
+        }
+    }
+
+    func testDurationConversionMatchesCLIIntegerSemantics() {
+        XCTAssertEqual(IperfRunner.durationSeconds(0), 0)
+        XCTAssertEqual(IperfRunner.durationSeconds(-0.5), 0)
+        XCTAssertEqual(IperfRunner.durationSeconds(86_400.9), 86_400)
+        XCTAssertNil(IperfRunner.durationSeconds(-1))
+        XCTAssertNil(IperfRunner.durationSeconds(86_401))
+        XCTAssertEqual(IperfRunner.durationSeconds(.nan), 0)
+        XCTAssertEqual(IperfRunner.durationSeconds(.infinity), 0)
+    }
+
     func testConfigurationDefaultsAndCustomNetworkSettings() {
         var configuration = IperfConfiguration()
 
@@ -210,5 +295,11 @@ final class IperfSwiftUnitTests: XCTestCase {
         let failure = IperfIntervalResult(error: .IEAUTHTEST)
         XCTAssertFalse(success.hasError)
         XCTAssertTrue(failure.hasError)
+    }
+
+    private func unreachableClientConfiguration() -> IperfConfiguration {
+        var configuration = IperfConfiguration()
+        configuration.address = "invalid.invalid"
+        return configuration
     }
 }
