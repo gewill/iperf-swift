@@ -244,28 +244,34 @@ public struct IperfConfiguration {
     // MARK: Authentication
 
     /// Enables iperf3 RSA authentication for this endpoint.
+    ///
+    /// Clients must also provide ``username``, ``password``, and a decodable
+    /// ``publicKey``. Servers must provide a decodable ``privateKey``, nonempty
+    /// ``authorizedUsers``, and a positive ``timeSkewThreshold``.
     public var isAuth: Bool = false
     /// Uses legacy PKCS#1 v1.5 padding for compatibility with iperf3 versions before 3.17.
     ///
     /// Keep this disabled to use the official OAEP default. PKCS#1 v1.5 is less secure.
+    /// Enabling this while ``isAuth`` is false fails authentication preflight.
     public var usePkcs1Padding: Bool = false
     
     // MARK: Client authentication
 
-    /// A PEM public key encoded as Base64 for client credential encryption.
+    /// A PEM public key encoded as Base64 for authenticated client encryption.
     public var publicKey: String = ""
-    /// The username sent by an authenticated client.
+    /// The nonempty username sent by an authenticated client.
     public var username: String = ""
-    /// The password sent by an authenticated client.
+    /// The nonempty password sent by an authenticated client.
     public var password: String = ""
 
     // MARK: Server authentication
 
-    /// An unencrypted PEM private key encoded as Base64 for server-side decryption.
+    /// An unencrypted PEM private key encoded as Base64 for authenticated server decryption.
     public var privateKey: String = ""
-    /// Authorized-user content or a file path using iperf3's `username,sha256` format.
+    /// Nonempty authorized-user content or a file path using iperf3's
+    /// `username,sha256` format.
     public var authorizedUsers: String = ""
-    /// The allowed client/server clock difference in seconds during authentication.
+    /// The positive client/server clock-difference limit in seconds during server authentication.
     public var timeSkewThreshold: Int32 = 10 {
         didSet { explicitlySet.insert(.timeSkewThreshold) }
     }
@@ -275,6 +281,21 @@ public struct IperfConfiguration {
 }
 
 extension IperfConfiguration {
+    func hasAuthenticationOptionForSelectedRole() -> Bool {
+        switch role {
+        case .client:
+            return usePkcs1Padding
+                || !username.isEmpty
+                || !password.isEmpty
+                || !publicKey.isEmpty
+        case .server:
+            return usePkcs1Padding
+                || !privateKey.isEmpty
+                || !authorizedUsers.isEmpty
+                || explicitlySet.contains(.timeSkewThreshold)
+        }
+    }
+
     /// Returns the iperf3-compatible error for an explicitly configured option
     /// that does not apply to the selected role or mode.
     func roleApplicabilityError() -> IperfError? {

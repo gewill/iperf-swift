@@ -4,6 +4,29 @@ import Darwin
 @testable import IperfSwift
 
 final class IperfCLIIntegrationTests: XCTestCase {
+    func testEncryptedServerPrivateKeyIsRejectedWithoutPrompt() throws {
+        let tools = try TestTools()
+        let privateKey = try tools.makeEncryptedPrivateKeyBase64()
+
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "invalid.invalid"
+        configuration.isAuth = true
+        configuration.privateKey = privateKey
+        configuration.authorizedUsers = "user,hash\n"
+
+        let rejected = expectation(description: "encrypted private key is rejected")
+        let runner = IperfRunner(with: configuration)
+        var receivedError: IperfError?
+        runner.start({ _ in }, { error in
+            receivedError = error
+            rejected.fulfill()
+        }, { _ in })
+
+        wait(for: [rejected], timeout: 2)
+        XCTAssertEqual(receivedError, .IESETSERVERAUTH)
+    }
+
     func testEndConditionErrorsMatchCLI() throws {
         let tools = try TestTools()
 
@@ -2318,6 +2341,19 @@ private final class TestTools {
             publicKeyURL: publicKeyURL,
             authorizedUsers: "iperf-test-user,\(hash)\n"
         )
+    }
+
+    func makeEncryptedPrivateKeyBase64() throws -> String {
+        guard let openssl else {
+            throw XCTSkip("OpenSSL is not installed")
+        }
+        let privateKeyURL = directory.appendingPathComponent("encrypted-private.pem")
+        _ = try run(openssl, arguments: [
+            "genrsa", "-traditional", "-aes256",
+            "-passout", "pass:iperf-test-passphrase",
+            "-out", privateKeyURL.path, "2048",
+        ])
+        return try Data(contentsOf: privateKeyURL).base64EncodedString()
     }
 
     /// Starts an official iperf3 server configured to authenticate clients,
