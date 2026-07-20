@@ -18,6 +18,12 @@ package release number.
 
 ### Changed
 
+- Internal: the C reporter callback now routes interval results to its owning
+  `IperfRunner` through an address-keyed registry instead of a global
+  `NotificationCenter` broadcast whose name embedded the test pointer's
+  `hashValue` ([#16]). Independent runners can no longer observe each other's
+  callbacks, and a reused test address always resolves to its current owner.
+  No public API or observable behavior changes.
 - Housekeeping ([#13]): removed the vestigial `Tests/LinuxMain.swift` and
   `XCTestManifests.swift` (SwiftPM auto-discovers tests since 5.4), dropped a
   commented-out `tcp_info` field block, fixed a callback default-value
@@ -177,3 +183,4 @@ package release number.
 [#6]: https://github.com/gewill/iperf-swift/pull/6
 [#12]: https://github.com/gewill/iperf-swift/issues/12
 [#13]: https://github.com/gewill/iperf-swift/issues/13
+[#16]: https://github.com/gewill/iperf-swift/issues/16
