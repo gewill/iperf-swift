@@ -165,6 +165,7 @@ them:
 | `address` | `--client` / `--bind` | Client destination or server bind address |
 | `addressFamily` | `-4` / `-6` | Forces IPv4 or IPv6; the default lets the resolver pick |
 | `port` | `--port` | Defaults to `5201` |
+| `prot` | `--tcp` / `--udp` / `--sctp` | Transport protocol; defaults to TCP. Selecting `.sctp` where the platform lacks SCTP support (such as Apple platforms) fails with `IperfError.IENOSCTP` |
 | `bindDevice` | `--bind-dev` | Supported on macOS by iperf3 3.21; privileges may be required elsewhere |
 | `numStreams` | `--parallel` | Parallel client streams for TCP, UDP, and SCTP |
 | `mode` | `--reverse` / `--bidir` | Selects upload, download, or simultaneous bidirectional mode |
