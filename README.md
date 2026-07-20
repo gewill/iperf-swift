@@ -162,9 +162,9 @@ surfaced according to a simple rule of thumb, so a configuration that compiles
 and starts is one the engine can actually honor:
 
 1. **No value on Apple platforms → not exposed.** CLI-only conveniences (daemon
-   mode, JSON-to-stdout, file-based output) are intentionally omitted. Results
-   arrive as structured Swift values through callbacks, so a small API is a
-   feature rather than a gap.
+   mode, JSON-to-stdout, file-based data source) are intentionally omitted.
+   Results arrive as structured Swift values through callbacks, so a small API
+   is a feature rather than a gap.
 2. **Invalid and knowable up front → made unrepresentable.** Where the type
    system can rule out a bad configuration it does. Transports the platform
    cannot provide are simply not offered as `IperfProtocol` cases, so selecting
@@ -172,9 +172,15 @@ and starts is one the engine can actually honor:
 3. **Invalid but only knowable at runtime → an explicit, typed error.** Platform-
    or route-dependent limits (interface binding, MSS on loopback) surface as
    `IperfError` values and drive the runner to `.error`.
-4. **Never silently degrade.** The wrapper does not quietly fall back to a
-   different transport or drop a requested option. A request it cannot satisfy
-   becomes an error, never a misleading success.
+4. **The transport protocol never degrades silently.** Selecting a transport the
+   engine cannot honor becomes an error, never a misleading success over a
+   different protocol.
+
+Note that options which do not apply to the current role or protocol (for
+example server-only `oneOff` / `idleTimeout` set on a client) are currently
+ignored rather than rejected, unlike the iperf3 CLI, which fails with
+`IESERVERONLY` / `IECLIENTONLY`. Tightening this into full up-front validation
+is tracked separately.
 
 ## Configuration mapping
 

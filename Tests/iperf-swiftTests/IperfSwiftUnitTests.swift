@@ -366,6 +366,19 @@ final class IperfSwiftUnitTests: XCTestCase {
         try assertRoundTrips(IperfDirection.download, encodesTo: "1")
     }
 
+    func testDecodingRemovedSCTPProtocolFails() {
+        // `IperfProtocol.sctp` was removed because Apple platforms cannot provide
+        // SCTP. Decoding a configuration persisted before the removal must fail
+        // loudly rather than silently fall back to another transport, which is
+        // the documented breaking behavior of that change.
+        let json = Data(#"["sctp"]"#.utf8)
+        XCTAssertThrowsError(try JSONDecoder().decode([IperfProtocol].self, from: json)) { error in
+            guard case DecodingError.dataCorrupted = error else {
+                return XCTFail("expected dataCorrupted for an unknown protocol, got \(error)")
+            }
+        }
+    }
+
     private func unreachableClientConfiguration() -> IperfConfiguration {
         var configuration = IperfConfiguration()
         configuration.address = "invalid.invalid"
