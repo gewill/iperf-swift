@@ -96,7 +96,7 @@ public struct IperfConfiguration {
     /// For example, use `lo0` for the loopback interface on macOS. Binding may
     /// require additional privileges on some platforms.
     public var bindDevice: String?
-    /// The number of parallel client streams, equivalent to `--parallel`.
+    /// The number of parallel client streams in `1...128`, equivalent to `--parallel`.
     public var numStreams = 2 {
         didSet { explicitlySet.insert(.numStreams) }
     }
@@ -143,14 +143,16 @@ public struct IperfConfiguration {
     /// payload size. Leave unset or use a non-positive value for the iperf3
     /// defaults: 128 KB for TCP and a dynamic MSS-based size for UDP.
     public var blockSize: Int?
-    /// The socket buffer size in bytes, equivalent to `--window`.
+    /// The socket buffer size in `0...512 MiB`, equivalent to `--window`.
+    /// Zero keeps socket autotuning/default behavior.
     public var socketBufferSize: Int?
     /// Disables Nagle's algorithm on TCP streams, equivalent to `--no-delay`.
     /// Enabling this for UDP fails with ``IperfError/IETCPONLY``.
     public var noDelay: Bool = false
-    /// The TCP maximum segment size, equivalent to `--set-mss`.
+    /// The TCP maximum segment size in `0...32,767`, equivalent to `--set-mss`.
     ///
-    /// Support depends on the platform and route; macOS rejects it on loopback
+    /// Zero keeps the engine default. Support depends on the platform and route;
+    /// macOS rejects nonzero values on loopback
     /// connections, and the run then fails with ``IperfError/IESETMSS`` exactly
     /// like the official CLI. Setting this for UDP fails with
     /// ``IperfError/IETCPONLY``.

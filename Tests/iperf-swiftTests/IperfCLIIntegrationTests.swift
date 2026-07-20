@@ -4,6 +4,40 @@ import Darwin
 @testable import IperfSwift
 
 final class IperfCLIIntegrationTests: XCTestCase {
+    func testClientIntegerErrorsMatchCLI() throws {
+        typealias Mutation = (inout IperfConfiguration) -> Void
+        let tools = try TestTools()
+        let testCases: [(String, String, Mutation, IperfError)] = [
+            ("-P", "129", { $0.numStreams = 129 }, .IENUMSTREAMS),
+            ("-w", "536870913", { $0.socketBufferSize = 536_870_913 }, .IEBUFSIZE),
+            ("-M", "32768", { $0.mss = 32_768 }, .IEMSS),
+            ("-S", "-1", { $0.tos = -1 }, .IEBADTOS),
+        ]
+
+        for (option, value, mutate, expectedError) in testCases {
+            let cliResult = try tools.run(
+                tools.iperf3,
+                arguments: ["-c", "127.0.0.1", option, value]
+            )
+            XCTAssertNotEqual(cliResult.status, 0)
+            XCTAssertTrue(cliResult.output.contains("parameter error"), cliResult.output)
+
+            var configuration = IperfConfiguration()
+            configuration.address = "invalid.invalid"
+            mutate(&configuration)
+            let rejected = expectation(description: "Swift rejects \(option) \(value)")
+            let runner = IperfRunner(with: configuration)
+            var receivedError: IperfError?
+            runner.start({ _ in }, { error in
+                receivedError = error
+                rejected.fulfill()
+            }, { _ in })
+
+            wait(for: [rejected], timeout: 2)
+            XCTAssertEqual(receivedError, expectedError)
+        }
+    }
+
     func testEncryptedServerPrivateKeyIsRejectedWithoutPrompt() throws {
         let tools = try TestTools()
         let privateKey = try tools.makeEncryptedPrivateKeyBase64()
