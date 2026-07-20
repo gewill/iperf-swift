@@ -76,8 +76,8 @@ public enum IperfTestMode: String, Codable {
 ///
 /// Values generally correspond to the options in the
 /// [official iperf3 manual](https://software.es.net/iperf/invoking.html).
-/// Explicitly set options that do not apply to the selected role are rejected
-/// before the run starts.
+/// Explicitly set options that do not apply to the selected role, transport,
+/// or forced address family are rejected before the run starts.
 public struct IperfConfiguration {
     private enum Field: Hashable {
         case numStreams
@@ -139,18 +139,21 @@ public struct IperfConfiguration {
     public var rate: UInt64?
     /// The read/write block size in bytes, equivalent to `--length`.
     ///
-    /// For UDP this is the exact datagram payload size. Leave unset to use the
-    /// iperf3 defaults: 128 KB for TCP and a dynamic MSS-based size for UDP.
+    /// This option applies to both transports. For UDP it is the exact datagram
+    /// payload size. Leave unset to use the iperf3 defaults: 128 KB for TCP and
+    /// a dynamic MSS-based size for UDP.
     public var blockSize: Int?
     /// The socket buffer size in bytes, equivalent to `--window`.
     public var socketBufferSize: Int?
     /// Disables Nagle's algorithm on TCP streams, equivalent to `--no-delay`.
+    /// Enabling this for UDP fails with ``IperfError/IETCPONLY``.
     public var noDelay: Bool = false
     /// The TCP maximum segment size, equivalent to `--set-mss`.
     ///
     /// Support depends on the platform and route; macOS rejects it on loopback
     /// connections, and the run then fails with ``IperfError/IESETMSS`` exactly
-    /// like the official CLI.
+    /// like the official CLI. Setting this for UDP fails with
+    /// ``IperfError/IETCPONLY``.
     public var mss: Int?
 
     /// The client test duration in seconds, equivalent to `--time`.
@@ -178,6 +181,7 @@ public struct IperfConfiguration {
     /// `--udp-counters-64bit`.
     ///
     /// Prevents 32-bit counter wrap-around in long or high-rate UDP tests.
+    /// Enabling this for TCP fails with ``IperfError/IEUDPONLY``.
     public var udpCounters64Bit: Bool = false
     /// Fills payloads with a repeating pattern instead of random data,
     /// equivalent to `--repeating-payload`.
@@ -190,11 +194,14 @@ public struct IperfConfiguration {
     ///
     /// The text becomes available through ``IperfRunner/serverOutput``.
     public var getServerOutput: Bool = false
-    /// Sets the IP Do-Not-Fragment flag on UDP packets, equivalent to
-    /// `--dont-fragment`.
+    /// Sets the IPv4 Do-Not-Fragment flag on UDP packets, equivalent to
+    /// `--dont-fragment`. Enabling this for TCP or forced IPv6 fails with
+    /// ``IperfError/IEUDPONLY`` or ``IperfError/IEIPV4ONLY`` respectively.
     ///
     /// Datagrams larger than the path MTU then fail to send, matching the
-    /// CLI: the run completes with zero transferred packets.
+    /// CLI: the run completes with zero transferred packets. With
+    /// ``addressFamily`` set to ``IperfAddressFamily/any``, the flag takes
+    /// effect only when resolution selects IPv4.
     public var dontFragment: Bool = false
 
     // MARK: Server behavior
@@ -318,6 +325,31 @@ extension IperfConfiguration {
 
         // The CLI classifies usePkcs1Padding as server-only, but the wrapper
         // uses it for client encryption as well as server decryption.
+        return nil
+    }
+
+    /// Returns a wrapper-defined error for an enabled option that the selected
+    /// transport or forced address family cannot honor.
+    func protocolApplicabilityError() -> IperfError? {
+        guard role == .client else {
+            return nil
+        }
+
+        switch prot {
+        case .tcp:
+            if udpCounters64Bit || dontFragment {
+                return .IEUDPONLY
+            }
+
+        case .udp:
+            if noDelay || mss != nil {
+                return .IETCPONLY
+            }
+            if dontFragment, addressFamily == .ipv6 {
+                return .IEIPV4ONLY
+            }
+        }
+
         return nil
     }
 }

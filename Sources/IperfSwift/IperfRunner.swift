@@ -252,7 +252,10 @@ public class IperfRunner {
             }
         }
 
-        return configuration.roleApplicabilityError()
+        if let roleError = configuration.roleApplicabilityError() {
+            return roleError
+        }
+        return configuration.protocolApplicabilityError()
     }
 
     /// Applies the configuration to ``currentTest``.

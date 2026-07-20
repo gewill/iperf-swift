@@ -10,6 +10,7 @@ import Foundation
 /// Error codes emitted by libiperf and the Swift wrapper.
 ///
 /// Values below `400` mirror the embedded iperf3 engine's `i_errno` values.
+/// Values of `400` and above are defined by the Swift wrapper.
 ///
 /// Conforms to `Error` so it can be thrown and bridged into `do`/`catch`, and
 /// to `LocalizedError`/`CustomStringConvertible` so `localizedDescription` and
@@ -106,8 +107,12 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
     case IENEWTIMER = 300       // Unable to create new timer (check perror)
     case IEUPDATETIMER = 301    // Unable to update timer (check perror)
     
+    /* Swift wrapper errors */
     case INIT_ERROR = 400
     case INIT_ERROR_DEFAULTS = 401
+    case IETCPONLY = 402        // This option is TCP only
+    case IEUDPONLY = 403        // This option is UDP only
+    case IEIPV4ONLY = 404       // This option is IPv4 only
     
     /// A human-readable description of the error code.
     public var debugDescription: String {
@@ -292,6 +297,12 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
             return "iperf_new_test failed"
         case .INIT_ERROR_DEFAULTS:
             return "iperf_defaults failed"
+        case .IETCPONLY:
+            return "This option is TCP only"
+        case .IEUDPONLY:
+            return "This option is UDP only"
+        case .IEIPV4ONLY:
+            return "This option is IPv4 only"
         }
     }
 

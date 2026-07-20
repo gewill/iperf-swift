@@ -29,6 +29,11 @@ package release number.
   iperf3 CLI ([#30]). Invalid receive-timeout values now report the newly
   exposed `IERCVTIMEOUT`; a valid timeout on a sending client reports the newly
   exposed `IERVRSONLYRCVTIMEOUT` error.
+- Protocol-inapplicable options now fail before the run with the wrapper-defined
+  `IETCPONLY`, `IEUDPONLY`, or `IEIPV4ONLY` errors instead of being silently
+  ignored ([#31]). `blockSize` remains valid for both TCP read/write sizing and
+  UDP datagram sizing. **Breaking:** exhaustive switches over `IperfError` must
+  handle the three new cases.
 
 ## [3.21.5] - 2026-07-20
 
@@ -212,3 +217,5 @@ package release number.
 [#16]: https://github.com/gewill/iperf-swift/issues/16
 [#20]: https://github.com/gewill/iperf-swift/issues/20
 [#29]: https://github.com/gewill/iperf-swift/pull/29
+[#30]: https://github.com/gewill/iperf-swift/issues/30
+[#31]: https://github.com/gewill/iperf-swift/issues/31
