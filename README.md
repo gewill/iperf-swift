@@ -216,26 +216,31 @@ interface, and socket constraints remain runtime decisions.
 
 | Swift property | iperf3 option | Applies when | Constraints / current behavior |
 | --- | --- | --- | --- |
-| `numStreams` | `--parallel` | Client · TCP / UDP | Defaults to `2`; an explicit Server assignment fails with `IECLIENTONLY`; remaining value checks are tracked in [#39](https://github.com/gewill/iperf-swift/issues/39) |
+| `numStreams` | `--parallel` | Client · TCP / UDP | Defaults to `2`; requires `1...128`, otherwise fails with `IENUMSTREAMS`; an explicit Server assignment fails with `IECLIENTONLY` |
 | `mode` | `--reverse` / `--bidir` | Client · TCP / UDP | Defaults to download; selects upload, download, or simultaneous bidirectional flow |
 | `reverse` | `--reverse` | Client · TCP / UDP | Compatibility accessor for `mode`; a read/write round trip does not cancel bidirectional mode |
 | `prot` | `--tcp` / `--udp` | Client | Defaults to TCP; an explicit Server assignment fails with `IECLIENTONLY` |
 | `rate` | `--bitrate` | Client · TCP / UDP | Unset keeps the CLI defaults: unlimited TCP and 1 Mbit/s UDP |
 | `blockSize` | `--length` | Client · TCP / UDP | Non-positive values select the default (TCP 128 KiB; UDP dynamic MSS); positive TCP values allow `1...1 MiB`, while UDP allows `16...65,507`; values above 1 MiB fail with `IEBLOCKSIZE`, and other invalid UDP values fail with `IEUDPBLOCKSIZE` |
-| `socketBufferSize` | `--window` | Client · TCP / UDP | Socket send/receive buffer size; remaining value checks are tracked in [#39](https://github.com/gewill/iperf-swift/issues/39) |
+| `socketBufferSize` | `--window` | Client · TCP / UDP | `0...512 MiB`; zero keeps socket autotuning/default behavior, while invalid values fail with `IEBUFSIZE` |
 | `noDelay` | `--no-delay` | Client · TCP | Enabling it for UDP fails with `IETCPONLY` |
-| `mss` | `--set-mss` | Client · TCP | UDP fails with `IETCPONLY`; intrinsic range validation is tracked in [#39](https://github.com/gewill/iperf-swift/issues/39), while valid platform/route failures remain `IESETMSS` at runtime |
+| `mss` | `--set-mss` | Client · TCP | `0...32,767`; zero keeps the engine default, intrinsic range failures return `IEMSS` before protocol applicability, UDP otherwise fails with `IETCPONLY`, and valid platform/route failures remain `IESETMSS` at runtime |
 | `duration` | `--time` | Client · TCP / UDP | Truncated toward zero to whole seconds in `0...86,400`; invalid finite values fail with `IEDURATION`; nonfinite values match the CLI's zero parsing |
 | `numberOfBytes` | `--bytes` | Client · TCP / UDP | A nonzero byte limit is an end condition; combining it with any explicitly set `duration` fails with `IEENDCONDITIONS`, while zero selects no byte end condition |
 | `timeout` | `--connect-timeout` | Client | Swift unit is seconds and sub-second values are supported; remaining finite/range behavior is tracked in [#40](https://github.com/gewill/iperf-swift/issues/40) |
 | `dscp` | `--dscp` | Client · TCP / UDP · IPv4 / IPv6 | Numeric `0...63`; invalid values fail with `IEBADTOS` |
-| `tos` | `--tos` | Client · TCP / UDP · IPv4 / IPv6 | Applied after `dscp` and therefore wins; the intended `0...255` range is not yet preflight-validated ([#39](https://github.com/gewill/iperf-swift/issues/39)) |
+| `tos` | `--tos` | Client · TCP / UDP · IPv4 / IPv6 | Requires `0...255`, otherwise fails with `IEBADTOS`; applied after `dscp` and therefore wins |
 | `clientPort` | `--cport` | Client · TCP / UDP | `1...65,535`; Server use fails with `IECLIENTONLY`; parallel streams use consecutive ports and bidirectional mode reserves two ranges, with overflow failing as `IEBADPORT` |
 | `udpCounters64Bit` | `--udp-counters-64bit` | Client · UDP | Enabling it for TCP fails with `IEUDPONLY` |
 | `repeatingPayload` | `--repeating-payload` | Client · TCP / UDP | Uses a repeating payload pattern instead of randomized bytes |
 | `getServerOutput` | `--get-server-output` | Client · TCP / UDP | Makes the remote text result available through `IperfRunner.serverOutput` |
 | `dontFragment` | `--dont-fragment` | Client · UDP · IPv4 | TCP fails with `IEUDPONLY`; forced IPv6 fails with `IEIPV4ONLY`; `.any` applies it only when resolution selects IPv4 |
 | `omit` | `--omit` | Client · TCP / UDP | Initial `0...600` seconds excluded from measurements; invalid values fail with `IEOMIT` |
+
+The CLI 3.21 parser accepts nonpositive `--parallel` and negative `--window` /
+`--set-mss` values, then passes unusable values into later execution. The
+wrapper intentionally rejects those values during preflight so they cannot be
+silently narrowed or reach libiperf.
 
 ### Server behavior
 
@@ -277,8 +282,7 @@ remain higher priority than same-role credential completeness.
 
 Follow-up work is deliberately split by behavior and risk:
 
-1. [#39 — validate remaining client integer ranges](https://github.com/gewill/iperf-swift/issues/39)
-2. [#40 — validate `TimeInterval` values](https://github.com/gewill/iperf-swift/issues/40)
+1. [#40 — validate `TimeInterval` values](https://github.com/gewill/iperf-swift/issues/40)
 
 ### Unsupported options
 

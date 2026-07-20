@@ -344,6 +344,68 @@ final class IperfSwiftUnitTests: XCTestCase {
         assertRunnerFails(server, with: .IECLIENTONLY, description: "client username on server")
     }
 
+    func testClientIntegerOptionBoundaries() {
+        typealias Mutation = (inout IperfConfiguration) -> Void
+        let testCases: [(String, Mutation, IperfError?)] = [
+            ("streams minimum", { $0.numStreams = 1 }, nil),
+            ("streams maximum", { $0.numStreams = 128 }, nil),
+            ("streams zero", { $0.numStreams = 0 }, .IENUMSTREAMS),
+            ("streams negative", { $0.numStreams = -1 }, .IENUMSTREAMS),
+            ("streams above maximum", { $0.numStreams = 129 }, .IENUMSTREAMS),
+            ("streams narrowing overflow", { $0.numStreams = .max }, .IENUMSTREAMS),
+            ("buffer default", { $0.socketBufferSize = 0 }, nil),
+            ("buffer maximum", { $0.socketBufferSize = 512 * 1_024 * 1_024 }, nil),
+            ("buffer negative", { $0.socketBufferSize = -1 }, .IEBUFSIZE),
+            ("buffer above maximum", { $0.socketBufferSize = 512 * 1_024 * 1_024 + 1 }, .IEBUFSIZE),
+            ("buffer narrowing overflow", { $0.socketBufferSize = .max }, .IEBUFSIZE),
+            ("mss default", { $0.mss = 0 }, nil),
+            ("mss maximum", { $0.mss = 32_767 }, nil),
+            ("mss negative", { $0.mss = -1 }, .IEMSS),
+            ("mss above maximum", { $0.mss = 32_768 }, .IEMSS),
+            ("mss narrowing overflow", { $0.mss = .max }, .IEMSS),
+            ("tos minimum", { $0.tos = 0 }, nil),
+            ("tos maximum", { $0.tos = 255 }, nil),
+            ("tos negative", { $0.tos = -1 }, .IEBADTOS),
+            ("tos above maximum", { $0.tos = 256 }, .IEBADTOS),
+            ("tos narrowing overflow", { $0.tos = .max }, .IEBADTOS),
+        ]
+
+        for (name, mutate, expectedError) in testCases {
+            var configuration = IperfConfiguration()
+            mutate(&configuration)
+            XCTAssertEqual(
+                IperfRunner.clientIntegerError(for: configuration),
+                expectedError,
+                name
+            )
+        }
+    }
+
+    func testInvalidClientIntegersPrecedeApplicabilityAndNetworking() {
+        var invalidMSS = IperfConfiguration()
+        invalidMSS.address = "invalid.invalid"
+        invalidMSS.prot = .udp
+        invalidMSS.mss = -1
+        assertRunnerFails(invalidMSS, with: .IEMSS, description: "invalid MSS before TCP-only")
+
+        var invalidServerStreams = IperfConfiguration()
+        invalidServerStreams.role = .server
+        invalidServerStreams.numStreams = 0
+        assertRunnerFails(
+            invalidServerStreams,
+            with: .IENUMSTREAMS,
+            description: "invalid stream count before client-only"
+        )
+
+        var invalidTOS = IperfConfiguration()
+        invalidTOS.address = "invalid.invalid"
+        invalidTOS.prot = .udp
+        invalidTOS.addressFamily = .ipv6
+        invalidTOS.dontFragment = true
+        invalidTOS.tos = 256
+        assertRunnerFails(invalidTOS, with: .IEBADTOS, description: "invalid TOS before IPv4-only")
+    }
+
     func testNonFiniteDurationDoesNotTrap() {
         var configurations: [IperfConfiguration] = []
 

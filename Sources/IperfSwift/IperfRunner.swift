@@ -316,6 +316,27 @@ public class IperfRunner {
         return nil
     }
 
+    static func clientIntegerError(for configuration: IperfConfiguration) -> IperfError? {
+        // Clang cannot import these expression macros. Keep the iperf 3.21
+        // values together: MAX_STREAMS, MAX_TCP_BUFFER, and MAX_MSS.
+        guard (1...128).contains(configuration.numStreams) else {
+            return .IENUMSTREAMS
+        }
+        if let socketBufferSize = configuration.socketBufferSize,
+           !(0...512 * 1_024 * 1_024).contains(socketBufferSize) {
+            return .IEBUFSIZE
+        }
+        if let mss = configuration.mss,
+           !(0...32_767).contains(mss) {
+            return .IEMSS
+        }
+        if let tos = configuration.tos,
+           !(0...255).contains(tos) {
+            return .IEBADTOS
+        }
+        return nil
+    }
+
     private func configurationError() -> IperfError? {
         guard let configuration = configuration else {
             return nil
@@ -333,6 +354,9 @@ public class IperfRunner {
                   (minimum...Double(MAX_TIME)).contains(rcvTimeout) else {
                 return .IERCVTIMEOUT
             }
+        }
+        if let clientIntegerError = Self.clientIntegerError(for: configuration) {
+            return clientIntegerError
         }
         if let blockSizeError = Self.blockSizeError(configuration.blockSize, for: configuration.prot) {
             return blockSizeError
@@ -464,7 +488,7 @@ public class IperfRunner {
                 iperf_set_test_bidirectional(currentTest, 1)
             }
             
-            iperf_set_test_num_streams(currentTest, Int32(clamping: configuration.numStreams))
+            iperf_set_test_num_streams(currentTest, Int32(configuration.numStreams))
 
             iperf_set_test_blksize(
                 currentTest,
@@ -480,13 +504,13 @@ public class IperfRunner {
                 iperf_set_test_rate(currentTest, UInt64(UDP_RATE))
             }
             if let socketBufferSize = configuration.socketBufferSize {
-                iperf_set_test_socket_bufsize(currentTest, Int32(clamping: socketBufferSize))
+                iperf_set_test_socket_bufsize(currentTest, Int32(socketBufferSize))
             }
             if configuration.noDelay {
                 iperf_set_test_no_delay(currentTest, 1)
             }
             if let mss = configuration.mss {
-                iperf_set_test_mss(currentTest, Int32(clamping: mss))
+                iperf_set_test_mss(currentTest, Int32(mss))
             }
             
             if let addr = addr {
@@ -511,7 +535,7 @@ public class IperfRunner {
             // Applied after dscp on purpose: both write the same tos field,
             // and the full type-of-service byte wins when both are set.
             if let tos = configuration.tos {
-                iperf_set_test_tos(currentTest, Int32(clamping: tos))
+                iperf_set_test_tos(currentTest, Int32(tos))
             }
             if let clientPort = configuration.clientPort {
                 iperf_set_test_bind_port(currentTest, Int32(clamping: clientPort))
