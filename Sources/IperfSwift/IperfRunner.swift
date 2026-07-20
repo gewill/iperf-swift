@@ -248,11 +248,16 @@ public class IperfRunner {
         return nil
     }
 
-    private func applyConfiguration() {
+    /// Applies the configuration to ``currentTest``.
+    ///
+    /// - Returns: A terminal error when an option cannot be applied, such as
+    ///   selecting a protocol the engine was not built to support; otherwise
+    ///   `nil`.
+    private func applyConfiguration() -> IperfError? {
         guard let configuration = configuration else {
-            return
+            return nil
         }
-        
+
         var addr: UnsafePointer<Int8>? = nil
         if let address = configuration.address, !address.isEmpty {
             addr = NSString(string: address).utf8String
@@ -314,7 +319,20 @@ public class IperfRunner {
         }
         
         if configuration.role == .client {
-            set_protocol(currentTest, configuration.prot.iperfConfigValue)
+            if set_protocol(currentTest, configuration.prot.iperfConfigValue) < 0 {
+                // The engine registers SCTP only when built with SCTP support,
+                // which stock macOS lacks. Surface that explicitly instead of
+                // silently continuing with the default protocol (TCP).
+                //
+                // set_protocol has set the process-global i_errno to IEPROTOCOL.
+                // We report the mapped error directly, so clear the global to
+                // avoid leaving it set: a concurrent runner resets i_errno
+                // before its run and reads it right after, and a value left here
+                // is a (narrow) opportunity to be misread as that runner's
+                // failure.
+                i_errno = IperfError.IENONE.rawValue
+                return configuration.prot == .sctp ? .IENOSCTP : .IEPROTOCOL
+            }
             switch configuration.mode {
             case .upload:
                 iperf_set_test_bidirectional(currentTest, 0)
@@ -412,8 +430,10 @@ public class IperfRunner {
         if configuration.isAuth {
             iperf_set_test_use_pkcs1_padding(currentTest, configuration.usePkcs1Padding ? 1 : 0)
         }
+
+        return nil
     }
-    
+
     private func startIperfProcess(
         testPointer: UnsafeMutablePointer<iperf_test>,
         configuration: IperfConfiguration
@@ -554,8 +574,10 @@ public class IperfRunner {
             return self.onError(.INIT_ERROR_DEFAULTS)
         }
 
-        applyConfiguration()
-        
+        if let applyError = applyConfiguration() {
+            return self.onError(applyError)
+        }
+
         // Route the C reporter callback back to this runner by the test's
         // address (see IperfRunnerRegistry).
         testPointer.pointee.reporter_callback = reporterCallback

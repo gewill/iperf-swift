@@ -344,6 +344,35 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertEqual(error.debugDescription, expected)
     }
 
+    func testSCTPClientReportsNoSupportOnBuildsWithoutSCTP() {
+        // The embedded engine registers SCTP only when built with SCTP support,
+        // which stock macOS lacks. Selecting it must surface .IENOSCTP and reach
+        // the error state rather than silently falling back to TCP. The failure
+        // is raised while applying the configuration, before any connection, so
+        // no server is required.
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.prot = .sctp
+
+        let failed = expectation(description: "SCTP selection is rejected")
+        var receivedError: IperfError?
+        var states: [IperfRunnerState] = []
+        let runner = IperfRunner(with: configuration)
+
+        runner.start(
+            { _ in },
+            { error in
+                receivedError = error
+                failed.fulfill()
+            },
+            { state in states.append(state) }
+        )
+
+        wait(for: [failed], timeout: 2)
+        XCTAssertEqual(receivedError, .IENOSCTP)
+        XCTAssertEqual(states.last, .error)
+    }
+
     private func unreachableClientConfiguration() -> IperfConfiguration {
         var configuration = IperfConfiguration()
         configuration.address = "invalid.invalid"

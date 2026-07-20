@@ -1360,6 +1360,105 @@ final class IperfCLIIntegrationTests: XCTestCase {
             result.output
         )
     }
+
+    func testConcurrentSCTPRejectionDoesNotCorruptAValidRun() throws {
+        // Rejecting an unsupported SCTP protocol makes the engine set the
+        // process-global i_errno to IEPROTOCOL; the wrapper clears it on the
+        // rejection path. A concurrent valid runner resets i_errno before its
+        // run and reads it right after, so only a very narrow window is exposed
+        // and this test cannot force the interleaving deterministically. It is a
+        // concurrency guard: a valid run stays clean and every SCTP rejection
+        // reports IENOSCTP while rejections happen throughout the valid run.
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port)]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.mode = .upload
+        configuration.numStreams = 1
+        configuration.duration = 1
+        configuration.reporterInterval = 0.1
+
+        let finished = expectation(description: "valid run settled")
+        finished.assertForOverFulfill = false
+        let lock = NSLock()
+        var validError: IperfError?
+        var validRunning = true
+        var sctpErrors: [IperfError] = []
+
+        // Reject SCTP runners continuously while the valid run is active, so a
+        // rejection's IEPROTOCOL write is likely to be the most recent global
+        // i_errno write when the valid run reads it.
+        let hammerFinished = DispatchSemaphore(value: 0)
+        DispatchQueue(label: "sctp-hammer").async {
+            while true {
+                lock.lock(); let running = validRunning; lock.unlock()
+                if !running { break }
+
+                var sctpConfiguration = IperfConfiguration()
+                sctpConfiguration.role = .client
+                sctpConfiguration.prot = .sctp
+                let sctpRunner = IperfRunner(with: sctpConfiguration)
+                let rejected = DispatchSemaphore(value: 0)
+                sctpRunner.start(
+                    { _ in },
+                    { error in
+                        lock.lock(); sctpErrors.append(error); lock.unlock()
+                        rejected.signal()
+                    },
+                    { _ in }
+                )
+                _ = rejected.wait(timeout: .now() + 2)
+            }
+            hammerFinished.signal()
+        }
+
+        let validClient = IperfRunner(with: configuration)
+        addTeardownBlock {
+            validClient.stop()
+        }
+        validClient.start(
+            { _ in },
+            { error in
+                lock.lock(); validError = error; validRunning = false; lock.unlock()
+                finished.fulfill()
+            },
+            { state in
+                if state == .finished {
+                    lock.lock(); validRunning = false; lock.unlock()
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 15)
+        _ = hammerFinished.wait(timeout: .now() + 5)
+
+        lock.lock()
+        let observedValidError = validError
+        let observedSctpErrors = sctpErrors
+        lock.unlock()
+
+        XCTAssertNil(observedValidError,
+                     "a concurrent rejected SCTP runner must not corrupt the valid run's result")
+        XCTAssertFalse(observedSctpErrors.isEmpty, "the SCTP runners should have run and been rejected")
+        XCTAssertTrue(observedSctpErrors.allSatisfy { $0 == .IENOSCTP },
+                      "every SCTP rejection should report IENOSCTP, got \(observedSctpErrors)")
+    }
 }
 
 private struct ProcessResult {
