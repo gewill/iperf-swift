@@ -175,7 +175,8 @@ public struct IperfConfiguration {
     public var tos: Int?
     /// The local port the client binds to, equivalent to `--cport`.
     ///
-    /// Leave unset to use an ephemeral port.
+    /// Leave unset to use ephemeral ports. Parallel streams use consecutive
+    /// ports; bidirectional tests reserve a second consecutive range.
     public var clientPort: Int?
     /// Uses 64-bit packet counters in UDP test packets, equivalent to
     /// `--udp-counters-64bit`.
@@ -306,6 +307,7 @@ extension IperfConfiguration {
                 || tos != nil
                 || dscp != nil
                 || timeout != nil
+                || clientPort != nil
             let hasBooleanClientOnlyOption = noDelay
                 || repeatingPayload
                 || getServerOutput

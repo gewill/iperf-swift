@@ -4,6 +4,35 @@ import Darwin
 @testable import IperfSwift
 
 final class IperfCLIIntegrationTests: XCTestCase {
+    func testClientPortErrorsMatchCLI() throws {
+        let tools = try TestTools()
+
+        for clientPort in [-1, 0, 65_536] {
+            let cliResult = try tools.run(
+                tools.iperf3,
+                arguments: ["-c", "127.0.0.1", "--cport", String(clientPort)]
+            )
+            XCTAssertNotEqual(cliResult.status, 0)
+            XCTAssertTrue(
+                cliResult.output.contains("port number must be between 1 and 65535 inclusive"),
+                cliResult.output
+            )
+
+            var configuration = IperfConfiguration()
+            configuration.clientPort = clientPort
+            let failed = expectation(description: "Swift client port \(clientPort) fails")
+            let runner = IperfRunner(with: configuration)
+            var receivedError: IperfError?
+            runner.start({ _ in }, { error in
+                receivedError = error
+                failed.fulfill()
+            }, { _ in })
+
+            wait(for: [failed], timeout: 2)
+            XCTAssertEqual(receivedError, .IEBADPORT)
+        }
+    }
+
     func testBlockSizeErrorsMatchCLI() throws {
         let tools = try TestTools()
         let testCases: [(String, IperfProtocol, Int, IperfError, String)] = [
@@ -949,68 +978,72 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
     func testSwiftClientBindsRequestedClientPort() throws {
         let tools = try TestTools()
-        let port = try TestTools.freePort()
-        let clientPort = try TestTools.freePort()
-        let jsonURL = tools.directory.appendingPathComponent("server.json")
-        FileManager.default.createFile(atPath: jsonURL.path, contents: nil)
-        let cliServer = Process()
-        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
-        cliServer.arguments = ["-s", "-p", String(port), "-1", "-J"]
-        cliServer.standardOutput = try FileHandle(forWritingTo: jsonURL)
-        cliServer.standardError = FileHandle.nullDevice
-        try cliServer.run()
-        addTeardownBlock {
-            if cliServer.isRunning {
-                cliServer.terminate()
-            }
-        }
-        Thread.sleep(forTimeInterval: 0.3)
+        let protocols: [(String, IperfProtocol)] = [("tcp", .tcp), ("udp", .udp)]
 
-        var configuration = IperfConfiguration()
-        configuration.role = .client
-        configuration.address = "127.0.0.1"
-        configuration.port = port
-        configuration.prot = .tcp
-        configuration.mode = .upload
-        // Streams bind clientPort, clientPort+1, ... — keep a single stream so
-        // only the reserved port is used.
-        configuration.numStreams = 1
-        configuration.clientPort = clientPort
-        configuration.duration = 1
-        configuration.reporterInterval = 0.25
-
-        let finished = expectation(description: "Client with fixed local port finished")
-        var didFinish = false
-        let client = IperfRunner(with: configuration)
-        addTeardownBlock {
-            client.stop()
-        }
-        client.start(
-            { _ in },
-            { error in
-                XCTFail("Swift client failed: \(error.debugDescription)")
-                if !didFinish {
-                    didFinish = true
-                    finished.fulfill()
-                }
-            },
-            { state in
-                if state == .finished && !didFinish {
-                    didFinish = true
-                    finished.fulfill()
+        for (name, prot) in protocols {
+            let port = try TestTools.freePort()
+            let clientPort = try TestTools.freePort()
+            let jsonURL = tools.directory.appendingPathComponent("\(name)-server.json")
+            FileManager.default.createFile(atPath: jsonURL.path, contents: nil)
+            let cliServer = Process()
+            cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+            cliServer.arguments = ["-s", "-p", String(port), "-1", "-J"]
+            cliServer.standardOutput = try FileHandle(forWritingTo: jsonURL)
+            cliServer.standardError = FileHandle.nullDevice
+            try cliServer.run()
+            addTeardownBlock {
+                if cliServer.isRunning {
+                    cliServer.terminate()
                 }
             }
-        )
+            Thread.sleep(forTimeInterval: 0.3)
 
-        wait(for: [finished], timeout: 8)
-        cliServer.waitUntilExit()
+            var configuration = IperfConfiguration()
+            configuration.role = .client
+            configuration.address = "127.0.0.1"
+            configuration.port = port
+            configuration.prot = prot
+            configuration.mode = .upload
+            // Streams bind clientPort, clientPort+1, ... — keep a single stream so
+            // only the reserved port is used.
+            configuration.numStreams = 1
+            configuration.clientPort = clientPort
+            configuration.duration = 1
+            configuration.reporterInterval = 0.25
 
-        let json = try JSONSerialization.jsonObject(
-            with: Data(contentsOf: jsonURL)) as? [String: Any]
-        let start = json?["start"] as? [String: Any]
-        let connected = (start?["connected"] as? [[String: Any]])?.first
-        XCTAssertEqual(connected?["remote_port"] as? Int, clientPort,
-                       "server should observe the requested client port")
+            let finished = expectation(description: "\(name) client with fixed local port finished")
+            var didFinish = false
+            let client = IperfRunner(with: configuration)
+            addTeardownBlock {
+                client.stop()
+            }
+            client.start(
+                { _ in },
+                { error in
+                    XCTFail("Swift client failed: \(error.debugDescription)")
+                    if !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                },
+                { state in
+                    if state == .finished && !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                }
+            )
+
+            wait(for: [finished], timeout: 8)
+            cliServer.waitUntilExit()
+
+            let json = try JSONSerialization.jsonObject(
+                with: Data(contentsOf: jsonURL)) as? [String: Any]
+            let start = json?["start"] as? [String: Any]
+            let connected = (start?["connected"] as? [[String: Any]])?.first
+            XCTAssertEqual(connected?["remote_port"] as? Int, clientPort,
+                           "\(name) server should observe the requested client port")
+        }
     }
 
     func testSwiftClientRunsUDPWithCountersRepeatingPayloadAndTOS() throws {

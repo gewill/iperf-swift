@@ -178,6 +178,62 @@ final class IperfSwiftUnitTests: XCTestCase {
         }
     }
 
+    func testClientPortBoundaryValidation() {
+        let testCases: [(Int?, Int, IperfTestMode, IperfError?)] = [
+            (nil, 2, .upload, nil),
+            (0, 2, .upload, .IEBADPORT),
+            (-1, 2, .upload, .IEBADPORT),
+            (65_536, 2, .upload, .IEBADPORT),
+            (65_535, 1, .upload, nil),
+            (65_534, 2, .upload, nil),
+            (65_535, 2, .upload, .IEBADPORT),
+            (65_534, 1, .bidirectional, nil),
+            (65_535, 1, .bidirectional, .IEBADPORT),
+            (65_532, 2, .bidirectional, nil),
+            (65_533, 2, .bidirectional, .IEBADPORT),
+            (1, .max, .bidirectional, .IEBADPORT),
+            (65_535, 0, .upload, nil),
+        ]
+
+        for (clientPort, numStreams, mode, expectedError) in testCases {
+            XCTAssertEqual(
+                IperfRunner.clientPortError(clientPort, numStreams: numStreams, mode: mode),
+                expectedError,
+                "port=\(String(describing: clientPort)) streams=\(numStreams) mode=\(mode)"
+            )
+        }
+    }
+
+    func testInvalidClientPortFailsBeforeRoleAndNetworking() {
+        var invalidBase = IperfConfiguration()
+        invalidBase.address = "invalid.invalid"
+        invalidBase.clientPort = 0
+
+        var invalidRange = IperfConfiguration()
+        invalidRange.address = "invalid.invalid"
+        invalidRange.clientPort = 65_535
+        invalidRange.numStreams = 2
+
+        var invalidServerBase = IperfConfiguration()
+        invalidServerBase.role = .server
+        invalidServerBase.clientPort = 0
+
+        var validServerBase = IperfConfiguration()
+        validServerBase.role = .server
+        validServerBase.clientPort = 5_203
+
+        let testCases: [(String, IperfConfiguration, IperfError)] = [
+            ("base range", invalidBase, .IEBADPORT),
+            ("stream range", invalidRange, .IEBADPORT),
+            ("value before role", invalidServerBase, .IEBADPORT),
+            ("client-only role", validServerBase, .IECLIENTONLY),
+        ]
+
+        for (name, configuration, expectedError) in testCases {
+            assertRunnerFails(configuration, with: expectedError, description: name)
+        }
+    }
+
     func testNonFiniteDurationDoesNotTrap() {
         var configurations: [IperfConfiguration] = []
 
@@ -334,6 +390,7 @@ final class IperfSwiftUnitTests: XCTestCase {
             ("tos", .server, { $0.tos = 1 }, .IECLIENTONLY),
             ("dscp", .server, { $0.dscp = 1 }, .IECLIENTONLY),
             ("timeout", .server, { $0.timeout = 1 }, .IECLIENTONLY),
+            ("clientPort", .server, { $0.clientPort = 5_203 }, .IECLIENTONLY),
             ("noDelay", .server, { $0.noDelay = true }, .IECLIENTONLY),
             ("repeatingPayload", .server, { $0.repeatingPayload = true }, .IECLIENTONLY),
             ("getServerOutput", .server, { $0.getServerOutput = true }, .IECLIENTONLY),
@@ -389,7 +446,6 @@ final class IperfSwiftUnitTests: XCTestCase {
             ("reporterInterval", { $0.reporterInterval = 0.5 }),
             ("logfile", { $0.logfile = "/tmp/iperf.log" }),
             ("verbose", { $0.verbose = true }),
-            ("clientPort", { $0.clientPort = 5_203 }),
             ("isAuth", { $0.isAuth = true }),
             ("usePkcs1Padding", { $0.usePkcs1Padding = true }),
             ("statsInterval", { $0.statsInterval = 0.5 }),

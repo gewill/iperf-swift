@@ -245,6 +245,32 @@ public class IperfRunner {
         return Int32(blockSize)
     }
 
+    static func clientPortError(
+        _ clientPort: Int?,
+        numStreams: Int,
+        mode: IperfTestMode
+    ) -> IperfError? {
+        guard let clientPort else {
+            return nil
+        }
+        guard (1...Int(UInt16.max)).contains(clientPort) else {
+            return .IEBADPORT
+        }
+        // numStreams has its own validation policy. Only evaluate the
+        // consecutive-port range when it represents at least one stream.
+        guard numStreams > 0 else {
+            return nil
+        }
+
+        let directionCount = mode == .bidirectional ? 2 : 1
+        let (portCount, overflow) = numStreams.multipliedReportingOverflow(by: directionCount)
+        guard !overflow,
+              portCount - 1 <= Int(UInt16.max) - clientPort else {
+            return .IEBADPORT
+        }
+        return nil
+    }
+
     private func configurationError() -> IperfError? {
         guard let configuration = configuration else {
             return nil
@@ -265,6 +291,13 @@ public class IperfRunner {
         }
         if let blockSizeError = Self.blockSizeError(configuration.blockSize, for: configuration.prot) {
             return blockSizeError
+        }
+        if let clientPortError = Self.clientPortError(
+            configuration.clientPort,
+            numStreams: configuration.numStreams,
+            mode: configuration.mode
+        ) {
+            return clientPortError
         }
 
         if configuration.role == .client {
