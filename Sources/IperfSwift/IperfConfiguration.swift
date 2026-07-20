@@ -12,7 +12,6 @@ import IperfCLib
 public enum IperfProtocol: String, Codable {
     case tcp
     case udp
-    case sctp
 
     /// The protocol identifier expected by libiperf.
     public var iperfConfigValue: Int32 {
@@ -21,8 +20,6 @@ public enum IperfProtocol: String, Codable {
             return Ptcp
         case .udp:
             return Pudp
-        case .sctp:
-            return Psctp
         }
     }
 }
@@ -119,15 +116,14 @@ public struct IperfConfiguration {
     /// The target bitrate in bits per second, equivalent to `--bitrate`.
     ///
     /// Applies application-level pacing to any protocol. Leave unset for the
-    /// CLI defaults: unlimited for TCP/SCTP and 1 Mbit/s for UDP, which the
+    /// CLI defaults: unlimited for TCP and 1 Mbit/s for UDP, which the
     /// wrapper enforces explicitly because the engine's own default is
     /// unlimited for every protocol.
     public var rate: UInt64?
     /// The read/write block size in bytes, equivalent to `--length`.
     ///
     /// For UDP this is the exact datagram payload size. Leave unset to use the
-    /// iperf3 defaults: 128 KB for TCP, a dynamic MSS-based size for UDP, and
-    /// 64 KB for SCTP.
+    /// iperf3 defaults: 128 KB for TCP and a dynamic MSS-based size for UDP.
     public var blockSize: Int?
     /// The socket buffer size in bytes, equivalent to `--window`.
     public var socketBufferSize: Int?

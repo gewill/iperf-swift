@@ -9,13 +9,21 @@ package release number.
 
 ## [Unreleased]
 
-### Fixed
+### Removed
 
-- Selecting the SCTP protocol (`IperfConfiguration.prot = .sctp`) on a build
-  without SCTP support — the default on Apple platforms — now fails with
-  `IperfError.IENOSCTP` and reaches the error state, instead of silently
-  running the test over TCP. This matches the official iperf3 CLI, which
-  refuses SCTP when it is not compiled in.
+- Removed the `IperfProtocol.sctp` case ([#29]). Apple platform builds of iperf3 are not
+  compiled with SCTP, so the transport could never succeed; selecting it is now
+  a compile-time error instead of a runtime `IperfError.IENOSCTP`. This
+  supersedes the earlier change that made `.sctp` fail at runtime. The
+  `IENOSCTP` error code is retained for callers that mirror the engine's error
+  set. **Breaking:** code referencing `.sctp`, and persisted configurations that
+  encode `"sctp"`, no longer compile or decode.
+
+### Changed
+
+- Documented the wrapper's option-exposure philosophy in the README and split
+  the configuration mapping into supported and intentionally unsupported
+  options.
 
 ## [3.21.5] - 2026-07-20
 
@@ -198,3 +206,4 @@ package release number.
 [#13]: https://github.com/gewill/iperf-swift/issues/13
 [#16]: https://github.com/gewill/iperf-swift/issues/16
 [#20]: https://github.com/gewill/iperf-swift/issues/20
+[#29]: https://github.com/gewill/iperf-swift/pull/29

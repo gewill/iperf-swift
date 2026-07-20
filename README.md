@@ -20,7 +20,7 @@ maintained. Development continues here without upstream involvement.
 
 ## Features
 
-- TCP, UDP, and SCTP (where the platform provides it) in client and server roles
+- TCP and UDP in client and server roles
 - Upload, download (`--reverse`), and bidirectional (`--bidir`) tests
 - iperf3 RSA authentication with OAEP and optional legacy PKCS#1 v1.5 padding
 - DSCP marking and network-interface binding
@@ -155,7 +155,37 @@ and callbacks are not guaranteed to use a specific queue. Dispatch UI updates
 to `MainActor` or the main queue. Terminal callback handling should be
 idempotent because libiperf can emit more than one terminal state notification.
 
+## Design philosophy
+
+The wrapper is a Swift library, not a re-export of the iperf3 CLI. Options are
+surfaced according to a few guiding rules, so that — for the transport protocol
+in particular — a configuration that compiles and starts is one the engine can
+actually honor:
+
+1. **No value on Apple platforms → not exposed.** CLI-only conveniences (daemon
+   mode, JSON-to-stdout, file-based data source) are intentionally omitted.
+   Results arrive as structured Swift values through callbacks, so a small API
+   is a feature rather than a gap.
+2. **Invalid and knowable up front → made unrepresentable.** Where the type
+   system can rule out a bad configuration it does. Transports the platform
+   cannot provide are simply not offered as `IperfProtocol` cases, so selecting
+   them is a compile-time error instead of a runtime surprise.
+3. **Invalid but only knowable at runtime → an explicit, typed error.** Platform-
+   or route-dependent limits (interface binding, MSS on loopback) surface as
+   `IperfError` values and drive the runner to `.error`.
+4. **The transport protocol never degrades silently.** Selecting a transport the
+   engine cannot honor becomes an error, never a misleading success over a
+   different protocol.
+
+Note that options which do not apply to the current role or protocol (for
+example server-only `oneOff` / `idleTimeout` set on a client) are currently
+ignored rather than rejected, unlike the iperf3 CLI, which fails with
+`IESERVERONLY` / `IECLIENTONLY`. Tightening this into full up-front validation
+is tracked in [#30](https://github.com/gewill/iperf-swift/issues/30).
+
 ## Configuration mapping
+
+### Supported options
 
 The wrapper follows the official iperf3 options where the embedded API exposes
 them:
@@ -165,12 +195,12 @@ them:
 | `address` | `--client` / `--bind` | Client destination or server bind address |
 | `addressFamily` | `-4` / `-6` | Forces IPv4 or IPv6; the default lets the resolver pick |
 | `port` | `--port` | Defaults to `5201` |
-| `prot` | `--tcp` / `--udp` / `--sctp` | Transport protocol; defaults to TCP. Selecting `.sctp` where the platform lacks SCTP support (such as Apple platforms) fails with `IperfError.IENOSCTP` |
+| `prot` | `--tcp` / `--udp` | Transport protocol; defaults to TCP |
 | `bindDevice` | `--bind-dev` | Supported on macOS by iperf3 3.21; privileges may be required elsewhere |
-| `numStreams` | `--parallel` | Parallel client streams for TCP, UDP, and SCTP |
+| `numStreams` | `--parallel` | Parallel client streams for TCP and UDP |
 | `mode` | `--reverse` / `--bidir` | Selects upload, download, or simultaneous bidirectional mode |
 | `reverse` | `--reverse` | Compatibility accessor for upload/download mode |
-| `rate` | `--bitrate` | Bits per second for any protocol; unset keeps the iperf3 defaults (unlimited TCP/SCTP, 1 Mbit/s UDP) |
+| `rate` | `--bitrate` | Bits per second for either protocol; unset keeps the iperf3 defaults (unlimited TCP, 1 Mbit/s UDP) |
 | `blockSize` | `--length` | Read/write block size in bytes; the exact UDP datagram payload size |
 | `socketBufferSize` | `--window` | Socket buffer size in bytes |
 | `noDelay` | `--no-delay` | Disables Nagle's algorithm on TCP streams |
@@ -191,6 +221,20 @@ them:
 | `reporterInterval` | `--interval` | Interval between reporter callbacks; statistics sample at the same interval |
 | `statsInterval` | — | Ignored; the engine retains one statistics sample per interval, so sampling always follows `reporterInterval` |
 | `omit` | `--omit` | Initial seconds excluded from measurements |
+| `logfile` | `--logfile` | Path for the engine's own text log output |
+| `verbose` | `--verbose` | Enables verbose libiperf logging |
+
+### Unsupported options
+
+These iperf3 capabilities are intentionally not exposed. See
+[Design philosophy](#design-philosophy) for the reasoning.
+
+| iperf3 capability | Status | Reason / future support |
+| --- | --- | --- |
+| SCTP transport (`--sctp`) | Not supported | Apple platform builds of iperf3 are not compiled with SCTP, so `IperfProtocol` offers only `.tcp` and `.udp` — selecting SCTP is a compile-time error rather than a runtime failure. The `IperfError.IENOSCTP` code is retained for callers mirroring the engine's error set. No plan to support it while Apple platforms lack SCTP. |
+| Daemon / server persistence (`--daemon`) | Not exposed | The runner is an in-process object with an explicit lifecycle; background daemonization has no meaning inside a host app. Use `oneOff` or `idleTimeout` to bound a server's lifetime. |
+| JSON output (`--json`) | Not exposed | Results are delivered as typed `IperfIntervalResult` values through callbacks, so there is no need to parse the engine's JSON. Raw engine text logging is still available through `logfile` and `verbose`. |
+| File-based data source (`--file`) | Not exposed | Streaming a file as the payload is a CLI convenience with no library use case; block size and payload shape are controlled through `blockSize` and `repeatingPayload`. |
 
 ## Authentication
 
