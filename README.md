@@ -227,7 +227,7 @@ keeps wrong-role credential errors ahead of same-role credential completeness.
 | `noDelay` | `--no-delay` | Client · TCP | Enabling it for UDP fails with `IETCPONLY` |
 | `mss` | `--set-mss` | Client · TCP | UDP fails with `IETCPONLY`; intrinsic range validation is tracked in [#39](https://github.com/gewill/iperf-swift/issues/39), while valid platform/route failures remain `IESETMSS` at runtime |
 | `duration` | `--time` | Client · TCP / UDP | Truncated toward zero to whole seconds in `0...86,400`; invalid finite values fail with `IEDURATION`; nonfinite values match the CLI's zero parsing |
-| `numberOfBytes` | `--bytes` | Client · TCP / UDP | A nonzero byte limit is an end condition; conflict validation with `duration` is tracked in [#37](https://github.com/gewill/iperf-swift/issues/37) |
+| `numberOfBytes` | `--bytes` | Client · TCP / UDP | A nonzero byte limit is an end condition; combining it with any explicitly set `duration` fails with `IEENDCONDITIONS`, while zero selects no byte end condition |
 | `timeout` | `--connect-timeout` | Client | Swift unit is seconds and sub-second values are supported; remaining finite/range behavior is tracked in [#40](https://github.com/gewill/iperf-swift/issues/40) |
 | `dscp` | `--dscp` | Client · TCP / UDP · IPv4 / IPv6 | Numeric `0...63`; invalid values fail with `IEBADTOS` |
 | `tos` | `--tos` | Client · TCP / UDP · IPv4 / IPv6 | Applied after `dscp` and therefore wins; the intended `0...255` range is not yet preflight-validated ([#39](https://github.com/gewill/iperf-swift/issues/39)) |
@@ -266,7 +266,7 @@ is tracked in [#38](https://github.com/gewill/iperf-swift/issues/38).
 
 | Combination | Current behavior | Follow-up |
 | --- | --- | --- |
-| `duration` + nonzero `numberOfBytes` | Both currently reach libiperf; whichever condition is met first ends the test | Reject with `IEENDCONDITIONS` in [#37](https://github.com/gewill/iperf-swift/issues/37) |
+| `duration` + nonzero `numberOfBytes` | Fails before networking with `IEENDCONDITIONS`; an explicitly set zero duration still counts as a duration condition | Implemented |
 | `dscp` + `tos` | `tos` is applied last and wins | Implemented |
 | Authentication field + `isAuth == false` | Correct-role fields are currently ignored | Preflight dependencies in [#38](https://github.com/gewill/iperf-swift/issues/38) |
 | Explicit same-default role option | Assigning `numStreams`, `mode`, `prot`, `omit`, or `timeSkewThreshold` records caller intent, so wrong-role use still fails | Implemented |
@@ -277,10 +277,9 @@ is tracked in [#38](https://github.com/gewill/iperf-swift/issues/38).
 
 Follow-up work is deliberately split by behavior and risk:
 
-1. [#37 — reject conflicting test end conditions](https://github.com/gewill/iperf-swift/issues/37)
-2. [#38 — preflight authentication dependencies](https://github.com/gewill/iperf-swift/issues/38)
-3. [#39 — validate remaining client integer ranges](https://github.com/gewill/iperf-swift/issues/39)
-4. [#40 — validate `TimeInterval` values](https://github.com/gewill/iperf-swift/issues/40)
+1. [#38 — preflight authentication dependencies](https://github.com/gewill/iperf-swift/issues/38)
+2. [#39 — validate remaining client integer ranges](https://github.com/gewill/iperf-swift/issues/39)
+3. [#40 — validate `TimeInterval` values](https://github.com/gewill/iperf-swift/issues/40)
 
 ### Unsupported options
 
