@@ -11,6 +11,8 @@ package release number.
 
 ### Added
 
+- Declared tvOS 13+ as a supported platform ([#20]). The package already built
+  on tvOS; the platform was missing from `Package.swift`.
 - `IperfError` now conforms to `Error`, `LocalizedError`,
   `CustomStringConvertible`, and `CustomDebugStringConvertible` ([#12]). It can
   be thrown and caught directly, and `localizedDescription` / string
@@ -184,3 +186,4 @@ package release number.
 [#12]: https://github.com/gewill/iperf-swift/issues/12
 [#13]: https://github.com/gewill/iperf-swift/issues/13
 [#16]: https://github.com/gewill/iperf-swift/issues/16
+[#20]: https://github.com/gewill/iperf-swift/issues/20
