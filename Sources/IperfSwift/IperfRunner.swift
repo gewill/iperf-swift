@@ -177,6 +177,49 @@ public class IperfRunner {
     }
     
     // MARK: Private methods
+    static func durationSeconds(_ duration: TimeInterval?) -> Int32? {
+        guard let duration = duration else {
+            return nil
+        }
+        guard duration.isFinite else {
+            // Match the CLI's atoi parsing of "nan" and "inf" as 0.
+            return 0
+        }
+
+        let seconds = duration.rounded(.towardZero)
+        guard (0...Double(MAX_TIME)).contains(seconds) else {
+            return nil
+        }
+
+        return Int32(min(seconds, Double(Int32.max)))
+    }
+
+    private func configurationError() -> IperfError? {
+        guard let configuration = configuration else {
+            return nil
+        }
+
+        guard (1...Int(UInt16.max)).contains(configuration.port) else {
+            return .IEBADPORT
+        }
+        guard (0...Int(MAX_OMIT_TIME)).contains(configuration.omit) else {
+            return .IEOMIT
+        }
+
+        if configuration.role == .client {
+            if let duration = configuration.duration,
+               duration.isFinite,
+               Self.durationSeconds(duration) == nil {
+                return .IEDURATION
+            }
+            if let dscp = configuration.dscp, !(0...63).contains(dscp) {
+                return .IEBADTOS
+            }
+        }
+
+        return nil
+    }
+
     private func applyConfiguration() {
         guard let configuration = configuration else {
             return
@@ -297,9 +340,8 @@ public class IperfRunner {
             if let bindDevice = configuration.bindDevice {
                 iperf_set_test_bind_dev(currentTest, bindDevice)
             }
-            if let duration = configuration.duration, duration.isFinite, duration > 0 {
-                let seconds = min(duration, Double(Int32.max))
-                iperf_set_test_duration(currentTest, Int32(seconds))
+            if let duration = Self.durationSeconds(configuration.duration) {
+                iperf_set_test_duration(currentTest, duration)
             }
             if let numberOfBytes = configuration.numberOfBytes {
                 iperf_set_test_bytes(currentTest, UInt64(numberOfBytes))
@@ -442,6 +484,10 @@ public class IperfRunner {
         cleanState(isExit: false)
         serverOutput = nil
         state = .initialising
+
+        if let error = configurationError() {
+            return self.onError(error)
+        }
         
         currentTest = iperf_new_test()
         guard let testPointer = currentTest else {
