@@ -140,8 +140,8 @@ public struct IperfConfiguration {
     /// The read/write block size in bytes, equivalent to `--length`.
     ///
     /// This option applies to both transports. For UDP it is the exact datagram
-    /// payload size. Leave unset to use the iperf3 defaults: 128 KB for TCP and
-    /// a dynamic MSS-based size for UDP.
+    /// payload size. Leave unset or use a non-positive value for the iperf3
+    /// defaults: 128 KB for TCP and a dynamic MSS-based size for UDP.
     public var blockSize: Int?
     /// The socket buffer size in bytes, equivalent to `--window`.
     public var socketBufferSize: Int?

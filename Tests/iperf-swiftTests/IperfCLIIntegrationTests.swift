@@ -4,6 +4,111 @@ import Darwin
 @testable import IperfSwift
 
 final class IperfCLIIntegrationTests: XCTestCase {
+    func testBlockSizeErrorsMatchCLI() throws {
+        let tools = try TestTools()
+        let testCases: [(String, IperfProtocol, Int, IperfError, String)] = [
+            ("TCP generic maximum", .tcp, 1_048_577, .IEBLOCKSIZE, "block size too large"),
+            ("UDP minimum", .udp, 15, .IEUDPBLOCKSIZE, "block size invalid"),
+            ("UDP maximum", .udp, 65_508, .IEUDPBLOCKSIZE, "block size invalid"),
+            ("UDP generic maximum precedence", .udp, 1_048_577, .IEBLOCKSIZE, "block size too large"),
+        ]
+
+        for (name, prot, blockSize, expectedError, expectedCLIMessage) in testCases {
+            var arguments = ["-c", "127.0.0.1", "--length", String(blockSize)]
+            if prot == .udp {
+                arguments.append("--udp")
+            }
+            let cliResult = try tools.run(tools.iperf3, arguments: arguments)
+            XCTAssertNotEqual(cliResult.status, 0, name)
+            XCTAssertTrue(cliResult.output.contains(expectedCLIMessage), cliResult.output)
+
+            var configuration = IperfConfiguration()
+            configuration.prot = prot
+            configuration.blockSize = blockSize
+            let failed = expectation(description: "Swift \(name) configuration fails")
+            let runner = IperfRunner(with: configuration)
+            var receivedError: IperfError?
+            runner.start({ _ in }, { error in
+                receivedError = error
+                failed.fulfill()
+            }, { _ in })
+
+            wait(for: [failed], timeout: 2)
+            XCTAssertEqual(receivedError, expectedError, name)
+        }
+    }
+
+    func testSwiftClientNonPositiveBlockSizeMatchesCLIDefaults() throws {
+        let tools = try TestTools()
+
+        func resolvedBlockSize(for prot: IperfProtocol) throws -> Int {
+            let port = try TestTools.freePort()
+            let cliServer = Process()
+            cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+            cliServer.arguments = ["-s", "-p", String(port), "-1", "-J"]
+            cliServer.standardOutput = FileHandle.nullDevice
+            cliServer.standardError = FileHandle.nullDevice
+            try cliServer.run()
+            addTeardownBlock {
+                if cliServer.isRunning {
+                    cliServer.terminate()
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.3)
+
+            var configuration = IperfConfiguration()
+            configuration.address = "127.0.0.1"
+            configuration.port = port
+            configuration.prot = prot
+            configuration.mode = .upload
+            configuration.numStreams = 1
+            configuration.blockSize = -1
+            configuration.getServerOutput = true
+            configuration.duration = 1
+            configuration.reporterInterval = 0.25
+
+            let finished = expectation(description: "\(prot) client with default block size finishes")
+            var didFinish = false
+            let client = IperfRunner(with: configuration)
+            addTeardownBlock {
+                client.stop()
+            }
+            client.start(
+                { _ in },
+                { error in
+                    XCTFail("Swift client failed: \(error.debugDescription)")
+                    if !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                },
+                { state in
+                    if state == .finished && !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                }
+            )
+
+            wait(for: [finished], timeout: 8)
+            let outputDelivered = expectation(
+                for: NSPredicate { _, _ in client.serverOutput != nil },
+                evaluatedWith: nil
+            )
+            wait(for: [outputDelivered], timeout: 3)
+            let text = try XCTUnwrap(client.serverOutput)
+            let json = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
+            )
+            let start = try XCTUnwrap(json["start"] as? [String: Any])
+            let testStart = try XCTUnwrap(start["test_start"] as? [String: Any])
+            return try XCTUnwrap(testStart["blksize"] as? Int)
+        }
+
+        XCTAssertEqual(try resolvedBlockSize(for: .tcp), 128 * 1_024)
+        XCTAssertTrue((16...65_507).contains(try resolvedBlockSize(for: .udp)))
+    }
+
     func testRoleApplicabilityErrorsMatchCLI() throws {
         typealias Mutation = (inout IperfConfiguration) -> Void
         let tools = try TestTools()
