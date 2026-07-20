@@ -55,6 +55,114 @@ final class IperfCLIIntegrationTests: XCTestCase {
         }
     }
 
+    // Regression for #16: the reporter callback resolves its owning runner by
+    // the test's address, so concurrent independent runners must each receive
+    // only their own reporter and server-output callbacks. Each client fixes a
+    // distinct source port (`--cport`), which the server names in its output,
+    // so a crossed delivery would leave a runner holding another's output —
+    // missing its own client port.
+    func testIndependentConcurrentRunnersDoNotCrossCallbacks() throws {
+        let tools = try TestTools()
+        let runnerCount = 3
+
+        var clientPorts: [Int] = []
+        var runners: [IperfRunner] = []
+        var finishedExpectations: [XCTestExpectation] = []
+        let lock = NSLock()
+        var reporterCounts = [Int](repeating: 0, count: runnerCount)
+
+        for index in 0..<runnerCount {
+            let serverPort = try TestTools.freePort()
+            let clientPort = try TestTools.freePort()
+            clientPorts.append(clientPort)
+
+            let cliServer = Process()
+            let serverPipe = Pipe()
+            cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+            cliServer.arguments = ["-s", "-p", String(serverPort), "-1"]
+            cliServer.standardOutput = serverPipe
+            cliServer.standardError = serverPipe
+            try cliServer.run()
+            addTeardownBlock {
+                if cliServer.isRunning {
+                    cliServer.terminate()
+                }
+            }
+
+            var configuration = IperfConfiguration()
+            configuration.address = "127.0.0.1"
+            configuration.port = serverPort
+            configuration.clientPort = clientPort
+            configuration.numStreams = 1
+            configuration.numberOfBytes = 2_000_000
+            configuration.reporterInterval = 0.05
+            configuration.getServerOutput = true
+
+            let finished = expectation(description: "runner \(index) finishes")
+            finished.assertForOverFulfill = false
+            finishedExpectations.append(finished)
+
+            let runner = IperfRunner(with: configuration)
+            runners.append(runner)
+            addTeardownBlock {
+                runner.stop()
+            }
+        }
+
+        // Let every one-off server start listening before connecting.
+        Thread.sleep(forTimeInterval: 0.3)
+
+        DispatchQueue.concurrentPerform(iterations: runnerCount) { index in
+            runners[index].start(
+                { _ in
+                    lock.lock()
+                    reporterCounts[index] += 1
+                    lock.unlock()
+                },
+                { error in
+                    XCTFail("runner \(index) failed: \(error.debugDescription)")
+                    finishedExpectations[index].fulfill()
+                },
+                { state in
+                    if state == .finished {
+                        finishedExpectations[index].fulfill()
+                    }
+                }
+            )
+        }
+
+        wait(for: finishedExpectations, timeout: 15)
+
+        for index in 0..<runnerCount {
+            let outputDelivered = expectation(
+                for: NSPredicate { _, _ in runners[index].serverOutput != nil },
+                evaluatedWith: nil
+            )
+            wait(for: [outputDelivered], timeout: 3)
+        }
+
+        var outputs: [String] = []
+        for index in 0..<runnerCount {
+            let output = try XCTUnwrap(
+                runners[index].serverOutput,
+                "runner \(index) never received server output"
+            )
+            outputs.append(output)
+            XCTAssertTrue(
+                output.contains(String(clientPorts[index])),
+                "runner \(index) server output is missing its own client port \(clientPorts[index])"
+            )
+            XCTAssertGreaterThan(
+                reporterCounts[index], 0,
+                "runner \(index) received no reporter callbacks"
+            )
+        }
+        XCTAssertEqual(
+            Set(outputs).count, runnerCount,
+            "concurrent runners received non-distinct server outputs"
+        )
+    }
+
     func testConcurrentStartWhileRunningIsIgnored() throws {
         let tools = try TestTools()
         let port = try TestTools.freePort()

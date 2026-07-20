@@ -59,8 +59,6 @@ public class IperfRunner {
     private var onRunnerStateFunction: runnerStateFunctionType = {state in }
     
     private var configuration: IperfConfiguration? = nil
-    private var observer: NSObjectProtocol? = nil
-    private var serverOutputObserver: NSObjectProtocol? = nil
     private var currentTest: UnsafeMutablePointer<iperf_test>? = nil
     
     private var state: IperfRunnerState = .ready {
@@ -91,54 +89,63 @@ public class IperfRunner {
     }
     
     // MARK: Callbacks
+
+    // A @convention(c) function pointer cannot capture Swift context, so it
+    // resolves the owning runner from the registry by the test's address and
+    // calls back into it directly — no global NotificationCenter broadcast.
     private let reporterCallback: @convention(c) (UnsafeMutablePointer<iperf_test>?) -> Void = { refTest in
-        // The engine frees both server output variants while displaying the
-        // final results inside iperf_reporter_callback, so copy them out
-        // first. A JSON-mode server delivers json_server_output instead of
-        // text, matching the CLI's "Server JSON output" report.
+        let runner = refTest.flatMap { IperfRunnerRegistry.shared.runner(for: $0) }
+        // Copy the server output before iperf_reporter_callback runs: the
+        // engine frees both variants while displaying the final results.
         if let testPointer = refTest {
-            var output: String?
-            if let text = testPointer.pointee.server_output_text {
-                output = String(cString: text)
-            } else if let json = testPointer.pointee.json_server_output,
-                      let printed = cJSON_Print(json) {
-                output = String(cString: printed)
-                cJSON_free(printed)
-            }
-            if let output = output {
-                let testUID = String(testPointer.hashValue)
-                NotificationCenter.default.post(
-                    name: Notification.Name(IperfNotificationName.serverOutput.rawValue + testUID),
-                    object: output
-                )
-            }
+            runner?.captureServerOutput(from: testPointer)
         }
         iperf_reporter_callback(refTest)
+        // Process the interval status after the engine has updated the test.
         if let testPointer = refTest {
-            let testUID = String(testPointer.hashValue)
-            NotificationCenter.default.post(
-                name: Notification.Name(IperfNotificationName.status.rawValue + testUID),
-                object: refTest
-            )
-        }
-    }
-    
-    private func reporterNotificationCallback(notification: Notification) {
-        withState {
-            handleReporterNotification(notification)
+            runner?.handleReporterStatus(testPointer)
         }
     }
 
-    private func handleReporterNotification(_ notification: Notification) {
+    // Copies the server's textual (or JSON-mode) results out of the test
+    // before the engine frees them. Runs on the libiperf worker thread.
+    fileprivate func captureServerOutput(from testPointer: UnsafeMutablePointer<iperf_test>) {
+        // A JSON-mode server delivers json_server_output instead of text,
+        // matching the CLI's "Server JSON output" report.
+        var output: String?
+        if let text = testPointer.pointee.server_output_text {
+            output = String(cString: text)
+        } else if let json = testPointer.pointee.json_server_output,
+                  let printed = cJSON_Print(json) {
+            output = String(cString: printed)
+            cJSON_free(printed)
+        }
+        guard let output = output else {
+            return
+        }
+        withState {
+            guard currentTest == testPointer else {
+                return
+            }
+            storedServerOutput = output
+        }
+    }
+
+    fileprivate func handleReporterStatus(_ pointer: UnsafeMutablePointer<iperf_test>) {
+        withState {
+            handleReporterStatusLocked(pointer)
+        }
+    }
+
+    private func handleReporterStatusLocked(_ pointer: UnsafeMutablePointer<iperf_test>) {
         if state != .running {
             return
         }
-        guard let pointer = notification.object as? UnsafeMutablePointer<iperf_test>,
-              pointer == currentTest,
+        guard pointer == currentTest,
               let configuration = configuration else {
             return
         }
-        
+
         let runningTest = pointer.pointee
         var result = IperfIntervalResult(prot: configuration.prot)
         result.debugDescription = "OK"
@@ -446,19 +453,14 @@ public class IperfRunner {
         if let expectedTest = expectedTest, currentTest != expectedTest {
             return
         }
-        if let observer = observer {
-            NotificationCenter.default.removeObserver(observer)
-            self.observer = nil
-        }
-        if let serverOutputObserver = serverOutputObserver {
-            NotificationCenter.default.removeObserver(serverOutputObserver)
-            self.serverOutputObserver = nil
-        }
-        
+
         if isExit && configuration != nil {
             configuration = nil
         }
         if let testPointer = currentTest {
+            // Unregister before freeing so a reused address never resolves to
+            // this runner after its test is gone.
+            IperfRunnerRegistry.shared.unregister(testPointer)
             iperf_free_test(testPointer)
             self.currentTest = nil
         }
@@ -554,28 +556,11 @@ public class IperfRunner {
 
         applyConfiguration()
         
-        // Configure callbacks and notifications.
+        // Route the C reporter callback back to this runner by the test's
+        // address (see IperfRunnerRegistry).
         testPointer.pointee.reporter_callback = reporterCallback
-        observer = NotificationCenter.default.addObserver(
-            forName: Notification.Name(IperfNotificationName.status.rawValue + String(testPointer.hashValue)),
-            object: nil,
-            queue: nil,
-            using: reporterNotificationCallback
-        )
-        serverOutputObserver = NotificationCenter.default.addObserver(
-            forName: Notification.Name(IperfNotificationName.serverOutput.rawValue + String(testPointer.hashValue)),
-            object: nil,
-            queue: nil
-        ) { [weak self] notification in
-            guard let self = self,
-                  let output = notification.object as? String else {
-                return
-            }
-            self.withState {
-                self.storedServerOutput = output
-            }
-        }
-        
+        IperfRunnerRegistry.shared.register(self, for: testPointer)
+
         guard let configuration = configuration else {
             return onError(.INIT_ERROR)
         }
@@ -606,5 +591,47 @@ public class IperfRunner {
                 close(pointer.pointee.listener)
             }
         }
+    }
+}
+
+/// Maps a live `iperf_test` pointer to the ``IperfRunner`` that owns it.
+///
+/// The libiperf reporter callback is a `@convention(c)` function pointer and
+/// cannot capture Swift context, so it resolves its owning runner through this
+/// registry instead of a global `NotificationCenter` broadcast. Entries are
+/// keyed by the test's address and removed when the test is freed, so a reused
+/// address always resolves to its current owner, and independent runners never
+/// receive each other's callbacks. The stored reference is weak so a
+/// registered runner can still deallocate.
+private final class IperfRunnerRegistry {
+    static let shared = IperfRunnerRegistry()
+
+    private let lock = NSLock()
+    private var runners: [UnsafeMutableRawPointer: WeakRunner] = [:]
+
+    private struct WeakRunner {
+        weak var runner: IperfRunner?
+    }
+
+    func register(_ runner: IperfRunner, for test: UnsafeMutablePointer<iperf_test>) {
+        let key = UnsafeMutableRawPointer(test)
+        lock.lock()
+        runners[key] = WeakRunner(runner: runner)
+        lock.unlock()
+    }
+
+    func unregister(_ test: UnsafeMutablePointer<iperf_test>) {
+        let key = UnsafeMutableRawPointer(test)
+        lock.lock()
+        runners.removeValue(forKey: key)
+        lock.unlock()
+    }
+
+    func runner(for test: UnsafeMutablePointer<iperf_test>) -> IperfRunner? {
+        let key = UnsafeMutableRawPointer(test)
+        lock.lock()
+        let runner = runners[key]?.runner
+        lock.unlock()
+        return runner
     }
 }
