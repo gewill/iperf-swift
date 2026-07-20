@@ -7,6 +7,23 @@ Versioning follows the embedded iperf3 engine: the major and minor components
 track the engine version (currently 3.21), and the patch component is the
 package release number.
 
+## [Unreleased]
+
+### Added
+
+- `IperfError` now conforms to `Error`, `LocalizedError`,
+  `CustomStringConvertible`, and `CustomDebugStringConvertible` ([#12]). It can
+  be thrown and caught directly, and `localizedDescription` / string
+  interpolation yield the existing human-readable message.
+
+### Changed
+
+- Housekeeping ([#13]): removed the vestigial `Tests/LinuxMain.swift` and
+  `XCTestManifests.swift` (SwiftPM auto-discovers tests since 5.4), dropped a
+  commented-out `tcp_info` field block, fixed a callback default-value
+  parameter name, and clarified that `IperfIntervalResult.averageRtt` is
+  currently unused.
+
 ## [3.21.4] - 2026-07-18
 
 ### Added
@@ -140,6 +157,7 @@ package release number.
 
 - Embedded engine updated to iperf3 3.14.
 
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.4...HEAD
 [3.21.4]: https://github.com/gewill/iperf-swift/compare/v3.21.3...v3.21.4
 [3.21.3]: https://github.com/gewill/iperf-swift/compare/v3.21.2...v3.21.3
 [3.21.2]: https://github.com/gewill/iperf-swift/compare/v3.21.1...v3.21.2
@@ -157,3 +175,5 @@ package release number.
 [#4]: https://github.com/gewill/iperf-swift/pull/4
 [#5]: https://github.com/gewill/iperf-swift/pull/5
 [#6]: https://github.com/gewill/iperf-swift/pull/6
+[#12]: https://github.com/gewill/iperf-swift/issues/12
+[#13]: https://github.com/gewill/iperf-swift/issues/13

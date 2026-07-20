@@ -324,6 +324,26 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertTrue(failure.hasError)
     }
 
+    func testErrorConformsToStandardProtocols() {
+        let error = IperfError.IEAUTHTEST
+        let expected = "Test authorization failed"
+
+        // Error: can be thrown and caught as IperfError.
+        func throwing() throws { throw error }
+        XCTAssertThrowsError(try throwing()) { thrown in
+            XCTAssertEqual(thrown as? IperfError, error)
+        }
+
+        // LocalizedError: localizedDescription and errorDescription map to the message.
+        XCTAssertEqual(error.errorDescription, expected)
+        XCTAssertEqual((error as Error).localizedDescription, expected)
+
+        // CustomStringConvertible / interpolation matches debugDescription.
+        XCTAssertEqual(error.description, expected)
+        XCTAssertEqual("\(error)", expected)
+        XCTAssertEqual(error.debugDescription, expected)
+    }
+
     private func unreachableClientConfiguration() -> IperfConfiguration {
         var configuration = IperfConfiguration()
         configuration.address = "invalid.invalid"

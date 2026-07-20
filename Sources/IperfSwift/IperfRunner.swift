@@ -56,7 +56,7 @@ public class IperfRunner {
 
     private var onReporterFunction: reporterFunctionType = {result in }
     private var onErrorFunction: errorFunctionType = {error in }
-    private var onRunnerStateFunction: runnerStateFunctionType = {error in }
+    private var onRunnerStateFunction: runnerStateFunctionType = {state in }
     
     private var configuration: IperfConfiguration? = nil
     private var observer: NSObjectProtocol? = nil

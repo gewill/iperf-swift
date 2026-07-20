@@ -89,7 +89,12 @@ public struct IperfIntervalResult: Identifiable {
     /// receiving endpoint. Prefer the receiving direction's
     /// ``IperfDirectionalIntervalResult/averageJitter``.
     public var averageJitter: Double = 0.0
-    /// Reserved for an aggregate round-trip time value.
+    /// An aggregate round-trip time value.
+    ///
+    /// - Note: Currently unused. The wrapper always leaves this at `0.0`; the
+    ///   property is retained for source compatibility and may be populated in
+    ///   a future release. Read per-stream ``IperfStreamIntervalResult/rtt``
+    ///   for actual RTT measurements.
     public var averageRtt: Double = 0.0
     /// Length of the reporting interval in seconds.
     public var duration: TimeInterval = 0.0
