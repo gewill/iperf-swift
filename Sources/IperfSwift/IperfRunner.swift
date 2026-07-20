@@ -51,6 +51,9 @@ public typealias runnerStateFunctionType = (_ state: IperfRunnerState) -> Void
 /// guaranteed on a specific queue, so callers must dispatch UI updates to the
 /// main actor or main queue. Use one runner for one active test at a time.
 public class IperfRunner {
+    private let stateQueue = DispatchQueue(label: "com.gewill.IperfSwift.runner-state")
+    private let stateQueueKey = DispatchSpecificKey<Void>()
+
     private var onReporterFunction: reporterFunctionType = {result in }
     private var onErrorFunction: errorFunctionType = {error in }
     private var onRunnerStateFunction: runnerStateFunctionType = {error in }
@@ -72,7 +75,11 @@ public class IperfRunner {
     /// ``IperfConfiguration/getServerOutput``; `nil` otherwise. Because the
     /// text is exchanged right before completion, read it after the runner
     /// reports ``IperfRunnerState/finished``.
-    public private(set) var serverOutput: String?
+    private var storedServerOutput: String?
+
+    public var serverOutput: String? {
+        withState { storedServerOutput }
+    }
     
     // MARK: Initializers
 
@@ -80,6 +87,7 @@ public class IperfRunner {
     /// - Parameter configuration: The client or server options for the run.
     public init(with configuration: IperfConfiguration) {
         self.configuration = configuration
+        stateQueue.setSpecific(key: stateQueueKey, value: ())
     }
     
     // MARK: Callbacks
@@ -99,28 +107,34 @@ public class IperfRunner {
             }
             if let output = output {
                 let testUID = String(testPointer.hashValue)
-                DispatchQueue.main.async {
-                    NotificationCenter.default.post(
-                        name: Notification.Name(IperfNotificationName.serverOutput.rawValue + testUID),
-                        object: output
-                    )
-                }
+                NotificationCenter.default.post(
+                    name: Notification.Name(IperfNotificationName.serverOutput.rawValue + testUID),
+                    object: output
+                )
             }
         }
         iperf_reporter_callback(refTest)
-        DispatchQueue.main.async {
-            if let testPointer = refTest {
-                let testUID = String(testPointer.hashValue)
-                NotificationCenter.default.post(name: Notification.Name(IperfNotificationName.status.rawValue + testUID), object: refTest)
-            }
+        if let testPointer = refTest {
+            let testUID = String(testPointer.hashValue)
+            NotificationCenter.default.post(
+                name: Notification.Name(IperfNotificationName.status.rawValue + testUID),
+                object: refTest
+            )
         }
     }
     
     private func reporterNotificationCallback(notification: Notification) {
+        withState {
+            handleReporterNotification(notification)
+        }
+    }
+
+    private func handleReporterNotification(_ notification: Notification) {
         if state != .running {
             return
         }
         guard let pointer = notification.object as? UnsafeMutablePointer<iperf_test>,
+              pointer == currentTest,
               let configuration = configuration else {
             return
         }
@@ -177,6 +191,13 @@ public class IperfRunner {
     }
     
     // MARK: Private methods
+    private func withState<T>(_ body: () -> T) -> T {
+        if DispatchQueue.getSpecific(key: stateQueueKey) != nil {
+            return body()
+        }
+        return stateQueue.sync(execute: body)
+    }
+
     static func durationSeconds(_ duration: TimeInterval?) -> Int32? {
         guard let duration = duration else {
             return nil
@@ -386,36 +407,45 @@ public class IperfRunner {
         }
     }
     
-    private func startIperfProcess() {
+    private func startIperfProcess(
+        testPointer: UnsafeMutablePointer<iperf_test>,
+        configuration: IperfConfiguration
+    ) {
+        state = .running
         DispatchQueue.global(qos: .userInitiated).async {
             i_errno = IperfError.IENONE.rawValue
-            
-            DispatchQueue.main.sync { self.state = .running }
-            
+
             var code: Int32
-            if let configuration = self.configuration,
-               configuration.role == .client {
-                code = iperf_run_client(self.currentTest)
+            if configuration.role == .client {
+                code = iperf_run_client(testPointer)
             } else {
-                code = iperf_run_server(self.currentTest)
+                code = iperf_run_server(testPointer)
             }
-            if code < 0 || i_errno != IperfError.IENONE.rawValue,
-               self.currentTest?.pointee.done == 0 {
-                self.onError(IperfError.init(rawValue: i_errno) ?? .UNKNOWN)
-            } else {
-                guard let configuration = self.configuration else {
-                    return self.cleanState()
+            let error = IperfError(rawValue: i_errno) ?? .UNKNOWN
+            let wasStopped = testPointer.pointee.done != 0
+            i_errno = IperfError.IENONE.rawValue
+
+            self.stateQueue.async {
+                guard self.currentTest == testPointer else {
+                    return
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + (configuration.reporterInterval ?? 2.0)) {
-                    if self.currentTest != nil {
-                        self.cleanState()
-                    }
+
+                if (code < 0 || error != .IENONE) && !wasStopped {
+                    self.onError(error)
+                } else {
+                    self.cleanState(expectedTest: testPointer)
                 }
             }
         }
     }
     
-    private func cleanState(isExit: Bool = true) {
+    private func cleanState(
+        isExit: Bool = true,
+        expectedTest: UnsafeMutablePointer<iperf_test>? = nil
+    ) {
+        if let expectedTest = expectedTest, currentTest != expectedTest {
+            return
+        }
         if let observer = observer {
             NotificationCenter.default.removeObserver(observer)
             self.observer = nil
@@ -428,9 +458,9 @@ public class IperfRunner {
         if isExit && configuration != nil {
             configuration = nil
         }
-        if currentTest != nil {
-            iperf_free_test(currentTest)
-            currentTest = nil
+        if let testPointer = currentTest {
+            iperf_free_test(testPointer)
+            self.currentTest = nil
         }
         if isExit && (state == .running || state == .stopping) {
             state = .finished
@@ -442,8 +472,6 @@ public class IperfRunner {
         onErrorFunction(error)
         
         cleanState()
-        // Reset global error code
-        i_errno = IperfError.IENONE.rawValue
     }
     
     // MARK: Public methods
@@ -462,8 +490,13 @@ public class IperfRunner {
         _ onError: @escaping errorFunctionType,
         _ onRunnerState: @escaping runnerStateFunctionType)
     {
-        self.configuration = configuration
-        self.start(onReporter, onError, onRunnerState)
+        stateQueue.async {
+            guard self.currentTest == nil else {
+                return
+            }
+            self.configuration = configuration
+            self.start(onReporter, onError, onRunnerState)
+        }
     }
     
     /// Starts a run with the configuration supplied at initialization.
@@ -476,13 +509,23 @@ public class IperfRunner {
         _ onError: @escaping errorFunctionType,
         _ onRunnerState: @escaping runnerStateFunctionType
     ) {
+        if DispatchQueue.getSpecific(key: stateQueueKey) == nil {
+            stateQueue.async {
+                self.start(onReporter, onError, onRunnerState)
+            }
+            return
+        }
+
+        guard currentTest == nil else {
+            return
+        }
         signal(SIGPIPE, SIG_IGN)
         onReporterFunction = onReporter
         onErrorFunction = onError
         onRunnerStateFunction = onRunnerState
         
         cleanState(isExit: false)
-        serverOutput = nil
+        storedServerOutput = nil
         state = .initialising
 
         if let error = configurationError() {
@@ -514,12 +557,19 @@ public class IperfRunner {
             object: nil,
             queue: nil
         ) { [weak self] notification in
-            if let output = notification.object as? String {
-                self?.serverOutput = output
+            guard let self = self,
+                  let output = notification.object as? String else {
+                return
+            }
+            self.withState {
+                self.storedServerOutput = output
             }
         }
         
-        startIperfProcess()
+        guard let configuration = configuration else {
+            return onError(.INIT_ERROR)
+        }
+        startIperfProcess(testPointer: testPointer, configuration: configuration)
     }
     
     /// Requests cancellation of the active run.
@@ -527,6 +577,12 @@ public class IperfRunner {
     /// Calling this method when no test is active has no effect. State changes
     /// are reported asynchronously through the runner-state callback.
     public func stop() {
+        stateQueue.async {
+            self.stopCurrentTest()
+        }
+    }
+
+    private func stopCurrentTest() {
         guard let pointer = currentTest else {
             return
         }

@@ -2,6 +2,33 @@ import XCTest
 @testable import IperfSwift
 
 final class IperfSwiftUnitTests: XCTestCase {
+    func testConcurrentStartsDeliverEachCallersErrorCallback() {
+        let invocationCount = 200
+        let callbacks = expectation(description: "all concurrent starts complete")
+        callbacks.expectedFulfillmentCount = invocationCount
+        let lock = NSLock()
+        var callbackIDs = Set<Int>()
+        var configuration = IperfConfiguration()
+        configuration.port = 0
+        let runner = IperfRunner(with: configuration)
+
+        DispatchQueue.concurrentPerform(iterations: invocationCount) { index in
+            runner.start(with: configuration, { _ in }, { error in
+                XCTAssertEqual(error, .IEBADPORT)
+                lock.lock()
+                callbackIDs.insert(index)
+                lock.unlock()
+                callbacks.fulfill()
+            }, { _ in })
+        }
+
+        wait(for: [callbacks], timeout: 5)
+        lock.lock()
+        let receivedCallbackIDs = callbackIDs
+        lock.unlock()
+        XCTAssertEqual(receivedCallbackIDs, Set(0..<invocationCount))
+    }
+
     func testOutOfRangeConfigurationReturnsCLIParameterErrors() {
         var testCases: [(configuration: IperfConfiguration, error: IperfError)] = []
 

@@ -4,6 +4,57 @@ import Darwin
 @testable import IperfSwift
 
 final class IperfCLIIntegrationTests: XCTestCase {
+    func testConcurrentStopDuringFinalNotificationsCompletesSafely() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port)]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        for iteration in 0..<5 {
+            var configuration = IperfConfiguration()
+            configuration.address = "127.0.0.1"
+            configuration.port = port
+            configuration.reverse = .upload
+            configuration.numberOfBytes = 1_000_000
+            configuration.reporterInterval = 0.01
+            configuration.getServerOutput = true
+
+            let finished = expectation(description: "run \(iteration) reaches final notification")
+            finished.assertForOverFulfill = false
+            let client = IperfRunner(with: configuration)
+            client.start(
+                { _ in },
+                { error in
+                    XCTFail("Swift client failed: \(error.debugDescription)")
+                    finished.fulfill()
+                },
+                { state in
+                    if state == .finished {
+                        finished.fulfill()
+                    }
+                }
+            )
+
+            wait(for: [finished], timeout: 3)
+            DispatchQueue.concurrentPerform(iterations: 20) { _ in
+                client.stop()
+                _ = client.serverOutput
+            }
+            XCTAssertNotNil(client.serverOutput)
+        }
+    }
+
     func testSwiftServerAcceptsAuthenticatedCLIClient() throws {
         let tools = try TestTools()
         let credentials = try tools.makeCredentials()
