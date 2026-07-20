@@ -8,13 +8,32 @@ on:
 
 jobs:
   test:
+    name: Test (macOS)
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+      # openssl@3 is required by the RSA auth interoperability tests, which
+      # shell out to the Homebrew openssl CLI to generate credentials; it is
+      # not used for building (OpenSSL comes from the openssl-spm XCFramework).
       - name: Install test dependencies
         run: brew install iperf3 openssl@3
       - name: Build
         run: swift build
       - name: Run tests
         run: swift test
+
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: macos-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [iOS, tvOS]
+    steps:
+      - uses: actions/checkout@v5
+      # Verify the declared-supported platforms compile. Running the test
+      # suite there needs a simulator/host; a build is the cheap guard.
+      - name: Build for ${{ matrix.platform }}
+        run: xcodebuild -scheme IperfSwift -destination 'generic/platform=${{ matrix.platform }}' build
