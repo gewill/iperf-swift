@@ -22,6 +22,11 @@ jobs:
         run: swift build
       - name: Run tests
         run: swift test
+      # HAVE_SSL is hardcoded on, so the no-SSL fallback in custom.c is never
+      # compiled by swift build/test. Exercise it directly so the unconditional
+      # RSA-validation declarations can never regress into a link failure.
+      - name: Verify no-SSL RSA-validation stubs
+        run: ./Scripts/verify_no_ssl_stubs.sh
 
   build:
     name: Build (${{ matrix.platform }})
