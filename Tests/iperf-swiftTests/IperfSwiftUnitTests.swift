@@ -980,6 +980,11 @@ final class IperfSwiftUnitTests: XCTestCase {
     }
 
     func testErrorMappingAndResultErrorState() {
+        XCTAssertEqual(IperfError(rawValue: 29), .IESKEWTHRESHOLD)
+        XCTAssertEqual(
+            IperfError.IESKEWTHRESHOLD.debugDescription,
+            "Invalid value specified as skew threshold"
+        )
         XCTAssertEqual(IperfError(rawValue: 30), .IEIDLETIMEOUT)
         XCTAssertEqual(
             IperfError.IEIDLETIMEOUT.debugDescription,
