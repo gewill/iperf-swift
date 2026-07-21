@@ -10,6 +10,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         let testCases: [([String], Mutation, IperfError)] = [
             (["--idle-timeout", "0"], { $0.idleTimeout = 0 }, .IEIDLETIMEOUT),
             (["--interval", "-1"], { $0.reporterInterval = -1 }, .IEINTERVAL),
+            (["--interval", "0.099"], { $0.reporterInterval = 0.099 }, .IEINTERVAL),
         ]
 
         for (arguments, mutate, expectedError) in testCases {
@@ -346,12 +347,20 @@ final class IperfCLIIntegrationTests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.3)
 
         for iteration in 0..<5 {
+            // The single-connection CLI server needs a moment to return to its
+            // accept loop after the previous iteration's run and concurrent
+            // stop() spam; without this settle the next connect can race the
+            // server's reset and fail with IECONNECT under CI load.
+            if iteration > 0 {
+                Thread.sleep(forTimeInterval: 0.3)
+            }
+
             var configuration = IperfConfiguration()
             configuration.address = "127.0.0.1"
             configuration.port = port
             configuration.reverse = .upload
             configuration.numberOfBytes = 1_000_000
-            configuration.reporterInterval = 0.01
+            configuration.reporterInterval = 0.1
             configuration.getServerOutput = true
 
             let finished = expectation(description: "run \(iteration) reaches final notification")
@@ -419,7 +428,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
             configuration.clientPort = clientPort
             configuration.numStreams = 1
             configuration.numberOfBytes = 2_000_000
-            configuration.reporterInterval = 0.05
+            configuration.reporterInterval = 0.1
             configuration.getServerOutput = true
 
             let finished = expectation(description: "runner \(index) finishes")

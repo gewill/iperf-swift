@@ -207,7 +207,7 @@ interface, and socket constraints remain runtime decisions.
 | `port` | `--port` | Client / Server | Defaults to `5201`; values outside `1...65535` fail with `IEBADPORT` |
 | `bindDevice` | `--bind-dev` | Client / Server | Interface existence, platform support, and permissions are checked at runtime |
 | `rcvTimeout` | `--rcv-timeout` | Server; Client download / bidirectional | `0.1...86,400` seconds; invalid values fail with `IERCVTIMEOUT`, while Client upload fails with `IERVRSONLYRCVTIMEOUT` |
-| `reporterInterval` | `--interval` | Client / Server | Seconds; zero disables periodic callbacks, otherwise accepts `0.000001...60`; invalid values fail with `IEINTERVAL` before timer creation; unlike the CLI's `0.1` minimum, the wrapper preserves safe microsecond-resolution intervals |
+| `reporterInterval` | `--interval` | Client / Server | Seconds; zero disables periodic callbacks, otherwise accepts `0.1...60` (iperf3's `MIN_INTERVAL`/`MAX_INTERVAL`); values below the minimum, out of range, or nonfinite fail with `IEINTERVAL` before timer creation |
 | `statsInterval` | — | Ignored | Retained for compatibility; statistics always sample at `reporterInterval` |
 | `logfile` | `--logfile` | Client / Server | File-open failures are reported by the engine at runtime |
 | `verbose` | `--verbose` | Client / Server | Enables verbose libiperf text logging |
