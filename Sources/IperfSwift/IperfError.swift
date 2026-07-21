@@ -47,6 +47,7 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
     case IEBADPORT = 26        // Bad port number
     case IETOTALRATE = 27       // Total required bandwidth is larger than server's limit
     case IETOTALINTERVAL = 28   // Invalid time interval for calculating average data rate
+    case IESKEWTHRESHOLD = 29   // Invalid value specified as skew threshold
     case IEIDLETIMEOUT = 30     // Invalid value specified as idle state timeout
     case IERCVTIMEOUT = 31      // Illegal message receive timeout
     case IERVRSONLYRCVTIMEOUT = 32 // Client receive timeout is valid only in receiving mode
@@ -180,6 +181,8 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
             return "Total required bandwidth is larger than server's limit"
         case .IETOTALINTERVAL:
             return "Invalid time interval for calculating average data rate"
+        case .IESKEWTHRESHOLD:
+            return "Invalid value specified as skew threshold"
         case .IEIDLETIMEOUT:
             return "Idle timeout parameter is not positive or larger than allowed limit"
         case .IERCVTIMEOUT:
