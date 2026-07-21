@@ -30,16 +30,19 @@ package release number.
   now fail before the run with `IESERVERONLY` / `IECLIENTONLY`, matching the
   iperf3 CLI ([#30]). Invalid receive-timeout values now report the newly
   exposed `IERCVTIMEOUT`; a valid timeout on a sending client reports the newly
-  exposed `IERVRSONLYRCVTIMEOUT` error.
+  exposed `IERVRSONLYRCVTIMEOUT` error. **Breaking:** exhaustive switches over
+  `IperfError` must handle these two new cases.
 - Protocol-inapplicable options now fail before the run with the wrapper-defined
   `IETCPONLY`, `IEUDPONLY`, or `IEIPV4ONLY` errors instead of being silently
   ignored ([#31]). `blockSize` remains valid for both TCP read/write sizing and
   UDP datagram sizing. **Breaking:** exhaustive switches over `IperfError` must
   handle the three new cases.
-- `blockSize` is now validated per transport before the run ([#35]): TCP sizes
-  above `MAX_BLOCKSIZE` fail with `IEBLOCKSIZE`, and UDP sizes outside the
-  datagram range fail with `IEUDPBLOCKSIZE`. Non-positive values still select the
-  defaults (128 KB for TCP, dynamic MSS-based for UDP).
+- `blockSize` is now validated per transport before the run ([#35]): the generic
+  `MAX_BLOCKSIZE` (1 MiB) cap is checked first for both transports and fails with
+  `IEBLOCKSIZE`, so a UDP size above 1 MiB also reports `IEBLOCKSIZE`; only UDP
+  sizes within that cap but outside the datagram range (`16...65507`) fail with
+  `IEUDPBLOCKSIZE`. Non-positive values still select the defaults (128 KB for TCP,
+  dynamic MSS-based for UDP).
 - `clientPort` (`--cport`) is now validated before the run ([#36]): values
   outside `1...65535` fail with `IEBADPORT`, and parallel or bidirectional stream
   ranges that would run past 65535 are rejected up front. `clientPort` is
