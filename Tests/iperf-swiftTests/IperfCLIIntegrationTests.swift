@@ -10,6 +10,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         let testCases: [([String], Mutation, IperfError)] = [
             (["--idle-timeout", "0"], { $0.idleTimeout = 0 }, .IEIDLETIMEOUT),
             (["--interval", "-1"], { $0.reporterInterval = -1 }, .IEINTERVAL),
+            (["--interval", "0.099"], { $0.reporterInterval = 0.099 }, .IEINTERVAL),
         ]
 
         for (arguments, mutate, expectedError) in testCases {
