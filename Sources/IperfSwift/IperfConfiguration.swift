@@ -231,7 +231,9 @@ public struct IperfConfiguration {
     ///
     /// The wrapper uses this value for both libiperf's reporter and statistics
     /// intervals. Zero disables periodic callbacks; nonzero values must be in
-    /// `0.000001...60`, matching the embedded timer's microsecond precision.
+    /// `0.1...60`, matching iperf3's `MIN_INTERVAL`/`MAX_INTERVAL`. Values below
+    /// `MIN_INTERVAL` are rejected because they drive the embedded timer to fire
+    /// on nearly every loop iteration, flooding the reporter with empty results.
     public var reporterInterval: TimeInterval?
     /// Unused: statistics always sample at ``reporterInterval``.
     ///
