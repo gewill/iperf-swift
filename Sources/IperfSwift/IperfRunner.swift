@@ -324,10 +324,10 @@ public class IperfRunner {
            !(0...Int(MAX_TCP_BUFFER)).contains(socketBufferSize) {
             return .IEBUFSIZE
         }
-        // ClangImporter surfaces a macro that reduces to a single binary
-        // operation between literals (MAX_STREAMS, MAX_TCP_BUFFER = 512 * MB),
-        // but not chained expressions. MAX_MSS is `(32 * 1024 - 1)`, so keep
-        // its iperf 3.21 value inline.
+        // ClangImporter surfaces a macro that is a literal (MAX_STREAMS = 128)
+        // or a single-operation expression (MAX_TCP_BUFFER = 512 * MB), but not
+        // a chained expression. MAX_MSS is `(32 * 1024 - 1)`, so keep its
+        // iperf 3.21 value inline.
         if let mss = configuration.mss,
            !(0...32_767).contains(mss) {
             return .IEMSS
