@@ -347,6 +347,14 @@ final class IperfCLIIntegrationTests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.3)
 
         for iteration in 0..<5 {
+            // The single-connection CLI server needs a moment to return to its
+            // accept loop after the previous iteration's run and concurrent
+            // stop() spam; without this settle the next connect can race the
+            // server's reset and fail with IECONNECT under CI load.
+            if iteration > 0 {
+                Thread.sleep(forTimeInterval: 0.3)
+            }
+
             var configuration = IperfConfiguration()
             configuration.address = "127.0.0.1"
             configuration.port = port
