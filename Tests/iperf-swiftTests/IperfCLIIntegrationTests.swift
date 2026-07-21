@@ -351,7 +351,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
             configuration.port = port
             configuration.reverse = .upload
             configuration.numberOfBytes = 1_000_000
-            configuration.reporterInterval = 0.01
+            configuration.reporterInterval = 0.1
             configuration.getServerOutput = true
 
             let finished = expectation(description: "run \(iteration) reaches final notification")
@@ -419,7 +419,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
             configuration.clientPort = clientPort
             configuration.numStreams = 1
             configuration.numberOfBytes = 2_000_000
-            configuration.reporterInterval = 0.05
+            configuration.reporterInterval = 0.1
             configuration.getServerOutput = true
 
             let finished = expectation(description: "runner \(index) finishes")

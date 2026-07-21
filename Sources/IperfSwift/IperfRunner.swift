@@ -364,7 +364,7 @@ public class IperfRunner {
         }
         if let reporterInterval = configuration.reporterInterval,
            reporterInterval != 0,
-           (!reporterInterval.isFinite || !(0.000_001...60).contains(reporterInterval)) {
+           (!reporterInterval.isFinite || !(MIN_INTERVAL...MAX_INTERVAL).contains(reporterInterval)) {
             return .IEINTERVAL
         }
         if let timeout = configuration.timeout,
