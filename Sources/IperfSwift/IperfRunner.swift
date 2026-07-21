@@ -317,15 +317,17 @@ public class IperfRunner {
     }
 
     static func clientIntegerError(for configuration: IperfConfiguration) -> IperfError? {
-        // Clang cannot import these expression macros. Keep the iperf 3.21
-        // values together: MAX_STREAMS, MAX_TCP_BUFFER, and MAX_MSS.
-        guard (1...128).contains(configuration.numStreams) else {
+        guard (1...Int(MAX_STREAMS)).contains(configuration.numStreams) else {
             return .IENUMSTREAMS
         }
         if let socketBufferSize = configuration.socketBufferSize,
-           !(0...512 * 1_024 * 1_024).contains(socketBufferSize) {
+           !(0...Int(MAX_TCP_BUFFER)).contains(socketBufferSize) {
             return .IEBUFSIZE
         }
+        // ClangImporter surfaces a macro that is a literal (MAX_STREAMS = 128)
+        // or a single-operation expression (MAX_TCP_BUFFER = 512 * MB), but not
+        // a chained expression. MAX_MSS is `(32 * 1024 - 1)`, so keep its
+        // iperf 3.21 value inline.
         if let mss = configuration.mss,
            !(0...32_767).contains(mss) {
             return .IEMSS
