@@ -834,6 +834,10 @@ final class IperfCLIIntegrationTests: XCTestCase {
             { result in
                 if !didReportBothDirections,
                    resultMatchesExpectation(result) {
+                    XCTAssertEqual(result.error, .UNKNOWN)
+                    XCTAssertTrue(result.hasError)
+                    XCTAssertEqual(result.debugDescription, "OK")
+                    XCTAssertEqual(result.runnerState, .unknown)
                     didReportBothDirections = true
                     reportedBothDirections.fulfill()
                 }

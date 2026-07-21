@@ -14,6 +14,10 @@ the main actor or main queue, and keep terminal-state handling idempotent.
 
 ## Topics
 
+### Examples
+
+- <doc:UsingIperfSwift>
+
 ### Running a Test
 
 - ``IperfConfiguration``
@@ -24,7 +28,9 @@ the main actor or main queue, and keep terminal-state handling idempotent.
 
 - ``IperfProtocol``
 - ``IperfRole``
+- ``IperfTestMode``
 - ``IperfDirection``
+- ``IperfAddressFamily``
 
 ### Results
 
