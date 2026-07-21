@@ -34,6 +34,50 @@ package release number.
   ignored ([#31]). `blockSize` remains valid for both TCP read/write sizing and
   UDP datagram sizing. **Breaking:** exhaustive switches over `IperfError` must
   handle the three new cases.
+- `blockSize` is now validated per transport before the run ([#35]): TCP sizes
+  above `MAX_BLOCKSIZE` fail with `IEBLOCKSIZE`, and UDP sizes outside the
+  datagram range fail with `IEUDPBLOCKSIZE`. Non-positive values still select the
+  defaults (128 KB for TCP, dynamic MSS-based for UDP).
+- `clientPort` (`--cport`) is now validated before the run ([#36]): values
+  outside `1...65535` fail with `IEBADPORT`, and parallel or bidirectional stream
+  ranges that would run past 65535 are rejected up front. `clientPort` is
+  client-only and rejected on a server with `IECLIENTONLY`.
+- Setting a `duration` together with a nonzero `numberOfBytes` now fails with
+  `IEENDCONDITIONS` before the run instead of letting the engine silently pick a
+  single end condition ([#37]).
+- Authentication is now preflighted ([#38]): incomplete or role-mismatched
+  credentials fail with `IESETCLIENTAUTH` / `IESETSERVERAUTH`, RSA public/private
+  keys are Base64/PEM-decoded and checked, and encrypted private keys are
+  rejected up front rather than blocking on an interactive passphrase.
+- `numStreams`, `socketBufferSize`, `mss`, and `tos` are now range-checked before
+  the run ([#39]) with `IENUMSTREAMS`, `IEBUFSIZE`, `IEMSS`, and `IEBADTOS`;
+  previously out-of-range values were silently clamped.
+- `idleTimeout`, `reporterInterval`, and the client connection `timeout` are now
+  validated for finite, in-range, and sufficiently precise values before any
+  timer or socket is created ([#40]), instead of being silently ignored, rounded,
+  or clamped. Exposes `IEIDLETIMEOUT` and the wrapper-specific `IECONNECTTIMEOUT`.
+  **Breaking:** exhaustive switches over `IperfError` must handle the two new
+  cases.
+- `reporterInterval` now rejects nonzero values below iperf3's `MIN_INTERVAL`
+  (0.1 s), matching the CLI's `0.1...60` contract ([#48]). Previously the wrapper
+  accepted intervals down to 1 µs, which drove the embedded timer to fire on
+  nearly every loop iteration and flooded the reporter callback with near-empty
+  results. **Breaking:** a nonzero `reporterInterval` below 0.1 s now fails with
+  `IEINTERVAL` before the run starts.
+- `IperfError.IESKEWTHRESHOLD` (raw value 29) is now mapped instead of surfacing
+  as `.UNKNOWN` ([#49]), mirroring the embedded engine's code for an invalid
+  server skew threshold. **Breaking:** exhaustive switches over `IperfError` must
+  handle the new case.
+- Internal: preflight stream-count and socket-buffer bounds now use the engine's
+  `MAX_STREAMS` / `MAX_TCP_BUFFER` macros instead of duplicated literals, so they
+  track the vendored engine on sync ([#51]). No observable behavior change.
+
+### Fixed
+
+- The RSA-validation helpers (`iperf_validate_client_rsa_pubkey` /
+  `iperf_validate_server_rsa_privkey`) stay defined even when the vendored C
+  config is built without OpenSSL, preventing a latent undefined-symbol link
+  failure; a dedicated CI check now compiles that `HAVE_SSL`-off branch ([#50]).
 
 ## [3.21.5] - 2026-07-20
 
@@ -219,3 +263,13 @@ package release number.
 [#29]: https://github.com/gewill/iperf-swift/pull/29
 [#30]: https://github.com/gewill/iperf-swift/issues/30
 [#31]: https://github.com/gewill/iperf-swift/issues/31
+[#35]: https://github.com/gewill/iperf-swift/issues/35
+[#36]: https://github.com/gewill/iperf-swift/issues/36
+[#37]: https://github.com/gewill/iperf-swift/issues/37
+[#38]: https://github.com/gewill/iperf-swift/issues/38
+[#39]: https://github.com/gewill/iperf-swift/issues/39
+[#40]: https://github.com/gewill/iperf-swift/issues/40
+[#48]: https://github.com/gewill/iperf-swift/issues/48
+[#49]: https://github.com/gewill/iperf-swift/issues/49
+[#50]: https://github.com/gewill/iperf-swift/issues/50
+[#51]: https://github.com/gewill/iperf-swift/issues/51
