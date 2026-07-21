@@ -9,6 +9,8 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.6] - 2026-07-21
+
 ### Removed
 
 - Removed the `IperfProtocol.sctp` case ([#29]). Apple platform builds of iperf3 are not
@@ -237,7 +239,8 @@ package release number.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.5...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.6...HEAD
+[3.21.6]: https://github.com/gewill/iperf-swift/compare/v3.21.5...v3.21.6
 [3.21.5]: https://github.com/gewill/iperf-swift/compare/v3.21.4...v3.21.5
 [3.21.4]: https://github.com/gewill/iperf-swift/compare/v3.21.3...v3.21.4
 [3.21.3]: https://github.com/gewill/iperf-swift/compare/v3.21.2...v3.21.3
