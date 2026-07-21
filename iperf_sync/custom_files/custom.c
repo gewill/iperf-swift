@@ -73,4 +73,17 @@ int iperf_validate_server_rsa_privkey(const char* base64) {
     EVP_PKEY_free(key);
     return 0;
 }
+#else
+/* Without OpenSSL there is no RSA key to validate. Keep the symbols defined
+   so the unconditional header declarations and Swift call sites still link,
+   and report every key as invalid — authentication is unavailable anyway. */
+int iperf_validate_client_rsa_pubkey(const char* base64) {
+    (void)base64;
+    return -1;
+}
+
+int iperf_validate_server_rsa_privkey(const char* base64) {
+    (void)base64;
+    return -1;
+}
 #endif
