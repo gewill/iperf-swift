@@ -222,6 +222,161 @@ public class IperfRunner {
         return Int32(min(seconds, Double(Int32.max)))
     }
 
+    static func endConditionError(
+        duration: TimeInterval?,
+        numberOfBytes: UInt64?
+    ) -> IperfError? {
+        if let duration,
+           duration.isFinite,
+           Self.durationSeconds(duration) == nil {
+            return .IEDURATION
+        }
+        if duration != nil,
+           let numberOfBytes,
+           numberOfBytes != 0 {
+            return .IEENDCONDITIONS
+        }
+        return nil
+    }
+
+    static func blockSizeError(_ blockSize: Int?, for prot: IperfProtocol) -> IperfError? {
+        guard let blockSize, blockSize > 0 else {
+            return nil
+        }
+        if blockSize > Int(MAX_BLOCKSIZE) {
+            return .IEBLOCKSIZE
+        }
+        // Clang cannot import MIN_UDP_BLOCKSIZE / MAX_UDP_BLOCKSIZE because
+        // they are expression macros. Keep their iperf 3.21 values together.
+        if prot == .udp,
+           !(16...65_507).contains(blockSize) {
+            return .IEUDPBLOCKSIZE
+        }
+        return nil
+    }
+
+    static func resolvedBlockSize(_ blockSize: Int?, for prot: IperfProtocol) -> Int32 {
+        guard let blockSize, blockSize > 0 else {
+            return prot == .tcp ? DEFAULT_TCP_BLKSIZE : 0
+        }
+        return Int32(blockSize)
+    }
+
+    static func clientPortError(
+        _ clientPort: Int?,
+        numStreams: Int,
+        mode: IperfTestMode
+    ) -> IperfError? {
+        guard let clientPort else {
+            return nil
+        }
+        guard (1...Int(UInt16.max)).contains(clientPort) else {
+            return .IEBADPORT
+        }
+        // numStreams has its own validation policy. Only evaluate the
+        // consecutive-port range when it represents at least one stream.
+        guard numStreams > 0 else {
+            return nil
+        }
+
+        let directionCount = mode == .bidirectional ? 2 : 1
+        let (portCount, overflow) = numStreams.multipliedReportingOverflow(by: directionCount)
+        guard !overflow,
+              portCount - 1 <= Int(UInt16.max) - clientPort else {
+            return .IEBADPORT
+        }
+        return nil
+    }
+
+    static func authenticationError(for configuration: IperfConfiguration) -> IperfError? {
+        let error: IperfError = configuration.role == .client
+            ? .IESETCLIENTAUTH
+            : .IESETSERVERAUTH
+
+        guard configuration.isAuth else {
+            return configuration.hasAuthenticationOptionForSelectedRole() ? error : nil
+        }
+
+        switch configuration.role {
+        case .client:
+            guard !configuration.username.isEmpty,
+                  !configuration.password.isEmpty,
+                  !configuration.publicKey.isEmpty,
+                  iperf_validate_client_rsa_pubkey(configuration.publicKey) == 0 else {
+                return error
+            }
+        case .server:
+            guard !configuration.privateKey.isEmpty,
+                  !configuration.authorizedUsers.isEmpty,
+                  configuration.timeSkewThreshold > 0,
+                  iperf_validate_server_rsa_privkey(configuration.privateKey) == 0 else {
+                return error
+            }
+        }
+        return nil
+    }
+
+    static func clientIntegerError(for configuration: IperfConfiguration) -> IperfError? {
+        guard (1...Int(MAX_STREAMS)).contains(configuration.numStreams) else {
+            return .IENUMSTREAMS
+        }
+        if let socketBufferSize = configuration.socketBufferSize,
+           !(0...Int(MAX_TCP_BUFFER)).contains(socketBufferSize) {
+            return .IEBUFSIZE
+        }
+        // ClangImporter surfaces a macro that is a literal (MAX_STREAMS = 128)
+        // or a single-operation expression (MAX_TCP_BUFFER = 512 * MB), but not
+        // a chained expression. MAX_MSS is `(32 * 1024 - 1)`, so keep its
+        // iperf 3.21 value inline.
+        if let mss = configuration.mss,
+           !(0...32_767).contains(mss) {
+            return .IEMSS
+        }
+        if let tos = configuration.tos,
+           !(0...255).contains(tos) {
+            return .IEBADTOS
+        }
+        return nil
+    }
+
+    static func idleTimeoutSeconds(_ idleTimeout: TimeInterval) -> Int32? {
+        guard idleTimeout.isFinite, idleTimeout > 0 else {
+            return nil
+        }
+        let seconds = idleTimeout.rounded(.up)
+        guard seconds <= Double(MAX_TIME) else {
+            return nil
+        }
+        return Int32(seconds)
+    }
+
+    static func connectTimeoutMilliseconds(_ timeout: TimeInterval) -> Int32? {
+        let maximum = Double(Int32.max) / 1_000
+        guard timeout.isFinite, (0.001...maximum).contains(timeout) else {
+            return nil
+        }
+        let milliseconds = (timeout * 1_000).rounded(.towardZero)
+        return Int32(milliseconds)
+    }
+
+    static func timeIntervalError(for configuration: IperfConfiguration) -> IperfError? {
+        if let idleTimeout = configuration.idleTimeout,
+           Self.idleTimeoutSeconds(idleTimeout) == nil {
+            return .IEIDLETIMEOUT
+        }
+        if let reporterInterval = configuration.reporterInterval,
+           reporterInterval != 0,
+           (!reporterInterval.isFinite || !(MIN_INTERVAL...MAX_INTERVAL).contains(reporterInterval)) {
+            return .IEINTERVAL
+        }
+        if let timeout = configuration.timeout,
+           timeout != 0,
+           Self.connectTimeoutMilliseconds(timeout) == nil {
+            return .IECONNECTTIMEOUT
+        }
+        return nil
+    }
+
     private func configurationError() -> IperfError? {
         guard let configuration = configuration else {
             return nil
@@ -233,26 +388,61 @@ public class IperfRunner {
         guard (0...Int(MAX_OMIT_TIME)).contains(configuration.omit) else {
             return .IEOMIT
         }
+        if let rcvTimeout = configuration.rcvTimeout {
+            let minimum = Double(MIN_NO_MSG_RCVD_TIMEOUT) / 1_000
+            guard rcvTimeout.isFinite,
+                  (minimum...Double(MAX_TIME)).contains(rcvTimeout) else {
+                return .IERCVTIMEOUT
+            }
+        }
+        if let timeIntervalError = Self.timeIntervalError(for: configuration) {
+            return timeIntervalError
+        }
+        if let clientIntegerError = Self.clientIntegerError(for: configuration) {
+            return clientIntegerError
+        }
+        if let blockSizeError = Self.blockSizeError(configuration.blockSize, for: configuration.prot) {
+            return blockSizeError
+        }
+        if let clientPortError = Self.clientPortError(
+            configuration.clientPort,
+            numStreams: configuration.numStreams,
+            mode: configuration.mode
+        ) {
+            return clientPortError
+        }
+        if let endConditionError = Self.endConditionError(
+            duration: configuration.duration,
+            numberOfBytes: configuration.numberOfBytes
+        ) {
+            return endConditionError
+        }
 
         if configuration.role == .client {
-            if let duration = configuration.duration,
-               duration.isFinite,
-               Self.durationSeconds(duration) == nil {
-                return .IEDURATION
-            }
             if let dscp = configuration.dscp, !(0...63).contains(dscp) {
                 return .IEBADTOS
             }
         }
 
-        return nil
+        if let roleError = configuration.roleApplicabilityError() {
+            return roleError
+        }
+        if let authenticationError = Self.authenticationError(for: configuration) {
+            return authenticationError
+        }
+        return configuration.protocolApplicabilityError()
     }
 
-    private func applyConfiguration() {
+    /// Applies the configuration to ``currentTest``.
+    ///
+    /// - Returns: A terminal error when an option cannot be applied, such as
+    ///   selecting a protocol the engine was not built to support; otherwise
+    ///   `nil`.
+    private func applyConfiguration() -> IperfError? {
         guard let configuration = configuration else {
-            return
+            return nil
         }
-        
+
         var addr: UnsafePointer<Int8>? = nil
         if let address = configuration.address, !address.isEmpty {
             addr = NSString(string: address).utf8String
@@ -299,11 +489,9 @@ public class IperfRunner {
             if configuration.oneOff {
                 iperf_set_test_one_off(currentTest, 1)
             }
-            if let idleTimeout = configuration.idleTimeout, idleTimeout.isFinite, idleTimeout > 0 {
-                // Round up so sub-second values do not truncate to 0, which
-                // the engine treats as "no idle timeout".
-                let seconds = idleTimeout.rounded(.up)
-                iperf_set_test_idle_timeout(OpaquePointer(currentTest), Int32(min(seconds, Double(Int32.max))))
+            if let idleTimeout = configuration.idleTimeout,
+               let seconds = Self.idleTimeoutSeconds(idleTimeout) {
+                iperf_set_test_idle_timeout(OpaquePointer(currentTest), seconds)
             }
             
             if configuration.isAuth {
@@ -314,7 +502,21 @@ public class IperfRunner {
         }
         
         if configuration.role == .client {
-            set_protocol(currentTest, configuration.prot.iperfConfigValue)
+            if set_protocol(currentTest, configuration.prot.iperfConfigValue) < 0 {
+                // set_protocol only fails for a transport the engine did not
+                // register. TCP and UDP are always available, so this is not
+                // expected in practice; surface it explicitly rather than
+                // silently continuing with the default protocol.
+                //
+                // set_protocol has set the process-global i_errno to IEPROTOCOL.
+                // We report the mapped error directly, so clear the global to
+                // avoid leaving it set: a concurrent runner resets i_errno
+                // before its run and reads it right after, and a value left here
+                // is a (narrow) opportunity to be misread as that runner's
+                // failure.
+                i_errno = IperfError.IENONE.rawValue
+                return .IEPROTOCOL
+            }
             switch configuration.mode {
             case .upload:
                 iperf_set_test_bidirectional(currentTest, 0)
@@ -327,22 +529,12 @@ public class IperfRunner {
                 iperf_set_test_bidirectional(currentTest, 1)
             }
             
-            iperf_set_test_num_streams(currentTest, Int32(clamping: configuration.numStreams))
+            iperf_set_test_num_streams(currentTest, Int32(configuration.numStreams))
 
-            var blksize: Int32
-            switch configuration.prot {
-            case .tcp:
-                blksize = DEFAULT_TCP_BLKSIZE
-            case .udp:
-                // Zero selects libiperf's dynamic MSS-based datagram size.
-                blksize = 0
-            case .sctp:
-                blksize = DEFAULT_SCTP_BLKSIZE
-            }
-            if let blockSize = configuration.blockSize {
-                blksize = Int32(clamping: blockSize)
-            }
-            iperf_set_test_blksize(currentTest, blksize)
+            iperf_set_test_blksize(
+                currentTest,
+                Self.resolvedBlockSize(configuration.blockSize, for: configuration.prot)
+            )
 
             if let rate = configuration.rate {
                 iperf_set_test_rate(currentTest, rate)
@@ -353,13 +545,13 @@ public class IperfRunner {
                 iperf_set_test_rate(currentTest, UInt64(UDP_RATE))
             }
             if let socketBufferSize = configuration.socketBufferSize {
-                iperf_set_test_socket_bufsize(currentTest, Int32(clamping: socketBufferSize))
+                iperf_set_test_socket_bufsize(currentTest, Int32(socketBufferSize))
             }
             if configuration.noDelay {
                 iperf_set_test_no_delay(currentTest, 1)
             }
             if let mss = configuration.mss {
-                iperf_set_test_mss(currentTest, Int32(clamping: mss))
+                iperf_set_test_mss(currentTest, Int32(mss))
             }
             
             if let addr = addr {
@@ -374,9 +566,9 @@ public class IperfRunner {
             if let numberOfBytes = configuration.numberOfBytes {
                 iperf_set_test_bytes(currentTest, UInt64(numberOfBytes))
             }
-            if let timeout = configuration.timeout, timeout.isFinite, timeout > 0 {
-                let milliseconds = min(timeout * 1000, Double(Int32.max))
-                iperf_set_test_connect_timeout(currentTest, Int32(milliseconds))
+            if let timeout = configuration.timeout,
+               let milliseconds = Self.connectTimeoutMilliseconds(timeout) {
+                iperf_set_test_connect_timeout(currentTest, milliseconds)
             }
             if let dscp = configuration.dscp {
                 iperf_set_test_dscp(currentTest, Int32(clamping: dscp))
@@ -384,7 +576,7 @@ public class IperfRunner {
             // Applied after dscp on purpose: both write the same tos field,
             // and the full type-of-service byte wins when both are set.
             if let tos = configuration.tos {
-                iperf_set_test_tos(currentTest, Int32(clamping: tos))
+                iperf_set_test_tos(currentTest, Int32(tos))
             }
             if let clientPort = configuration.clientPort {
                 iperf_set_test_bind_port(currentTest, Int32(clamping: clientPort))
@@ -412,8 +604,10 @@ public class IperfRunner {
         if configuration.isAuth {
             iperf_set_test_use_pkcs1_padding(currentTest, configuration.usePkcs1Padding ? 1 : 0)
         }
+
+        return nil
     }
-    
+
     private func startIperfProcess(
         testPointer: UnsafeMutablePointer<iperf_test>,
         configuration: IperfConfiguration
@@ -554,8 +748,10 @@ public class IperfRunner {
             return self.onError(.INIT_ERROR_DEFAULTS)
         }
 
-        applyConfiguration()
-        
+        if let applyError = applyConfiguration() {
+            return self.onError(applyError)
+        }
+
         // Route the C reporter callback back to this runner by the test's
         // address (see IperfRunnerRegistry).
         testPointer.pointee.reporter_callback = reporterCallback

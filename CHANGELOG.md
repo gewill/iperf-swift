@@ -7,6 +7,83 @@ Versioning follows the embedded iperf3 engine: the major and minor components
 track the engine version (currently 3.21), and the patch component is the
 package release number.
 
+## [Unreleased]
+
+## [3.21.6] - 2026-07-21
+
+### Removed
+
+- Removed the `IperfProtocol.sctp` case ([#29]). Apple platform builds of iperf3 are not
+  compiled with SCTP, so the transport could never succeed; selecting it is now
+  a compile-time error instead of a runtime `IperfError.IENOSCTP`. This
+  supersedes the earlier change that made `.sctp` fail at runtime. The
+  `IENOSCTP` error code is retained for callers that mirror the engine's error
+  set. **Breaking:** code referencing `.sctp`, and persisted configurations that
+  encode `"sctp"`, no longer compile or decode.
+
+### Changed
+
+- Documented the wrapper's option-exposure philosophy in the README and split
+  the configuration mapping into supported and intentionally unsupported
+  options.
+- Explicitly configured options that do not apply to the selected endpoint role
+  now fail before the run with `IESERVERONLY` / `IECLIENTONLY`, matching the
+  iperf3 CLI ([#30]). Invalid receive-timeout values now report the newly
+  exposed `IERCVTIMEOUT`; a valid timeout on a sending client reports the newly
+  exposed `IERVRSONLYRCVTIMEOUT` error. **Breaking:** exhaustive switches over
+  `IperfError` must handle these two new cases.
+- Protocol-inapplicable options now fail before the run with the wrapper-defined
+  `IETCPONLY`, `IEUDPONLY`, or `IEIPV4ONLY` errors instead of being silently
+  ignored ([#31]). `blockSize` remains valid for both TCP read/write sizing and
+  UDP datagram sizing. **Breaking:** exhaustive switches over `IperfError` must
+  handle the three new cases.
+- `blockSize` is now validated per transport before the run ([#35]): the generic
+  `MAX_BLOCKSIZE` (1 MiB) cap is checked first for both transports and fails with
+  `IEBLOCKSIZE`, so a UDP size above 1 MiB also reports `IEBLOCKSIZE`; only UDP
+  sizes within that cap but outside the datagram range (`16...65507`) fail with
+  `IEUDPBLOCKSIZE`. Non-positive values still select the defaults (128 KB for TCP,
+  dynamic MSS-based for UDP).
+- `clientPort` (`--cport`) is now validated before the run ([#36]): values
+  outside `1...65535` fail with `IEBADPORT`, and parallel or bidirectional stream
+  ranges that would run past 65535 are rejected up front. `clientPort` is
+  client-only and rejected on a server with `IECLIENTONLY`.
+- Setting a `duration` together with a nonzero `numberOfBytes` now fails with
+  `IEENDCONDITIONS` before the run instead of letting the engine silently pick a
+  single end condition ([#37]).
+- Authentication is now preflighted ([#38]): incomplete or role-mismatched
+  credentials fail with `IESETCLIENTAUTH` / `IESETSERVERAUTH`, RSA public/private
+  keys are Base64/PEM-decoded and checked, and encrypted private keys are
+  rejected up front rather than blocking on an interactive passphrase.
+- `numStreams`, `socketBufferSize`, `mss`, and `tos` are now range-checked before
+  the run ([#39]) with `IENUMSTREAMS`, `IEBUFSIZE`, `IEMSS`, and `IEBADTOS`;
+  previously out-of-range values were silently clamped.
+- `idleTimeout`, `reporterInterval`, and the client connection `timeout` are now
+  validated for finite, in-range, and sufficiently precise values before any
+  timer or socket is created ([#40]), instead of being silently ignored, rounded,
+  or clamped. Exposes `IEIDLETIMEOUT` and the wrapper-specific `IECONNECTTIMEOUT`.
+  **Breaking:** exhaustive switches over `IperfError` must handle the two new
+  cases.
+- `reporterInterval` now rejects nonzero values below iperf3's `MIN_INTERVAL`
+  (0.1 s), matching the CLI's `0.1...60` contract ([#48]). Previously the wrapper
+  accepted intervals down to 1 µs, which drove the embedded timer to fire on
+  nearly every loop iteration and flooded the reporter callback with near-empty
+  results. **Breaking:** a nonzero `reporterInterval` below 0.1 s now fails with
+  `IEINTERVAL` before the run starts.
+- `IperfError.IESKEWTHRESHOLD` (raw value 29) is now mapped instead of surfacing
+  as `.UNKNOWN` ([#49]), mirroring the embedded engine's code for an invalid
+  server skew threshold. **Breaking:** exhaustive switches over `IperfError` must
+  handle the new case.
+- Internal: preflight stream-count and socket-buffer bounds now use the engine's
+  `MAX_STREAMS` / `MAX_TCP_BUFFER` macros instead of duplicated literals, so they
+  track the vendored engine on sync ([#51]). No observable behavior change.
+
+### Fixed
+
+- The RSA-validation helpers (`iperf_validate_client_rsa_pubkey` /
+  `iperf_validate_server_rsa_privkey`) stay defined even when the vendored C
+  config is built without OpenSSL, preventing a latent undefined-symbol link
+  failure; a dedicated CI check now compiles that `HAVE_SSL`-off branch ([#50]).
+
 ## [3.21.5] - 2026-07-20
 
 ### Added
@@ -165,6 +242,8 @@ package release number.
 
 - Embedded engine updated to iperf3 3.14.
 
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.6...HEAD
+[3.21.6]: https://github.com/gewill/iperf-swift/compare/v3.21.5...v3.21.6
 [3.21.5]: https://github.com/gewill/iperf-swift/compare/v3.21.4...v3.21.5
 [3.21.4]: https://github.com/gewill/iperf-swift/compare/v3.21.3...v3.21.4
 [3.21.3]: https://github.com/gewill/iperf-swift/compare/v3.21.2...v3.21.3
@@ -187,3 +266,16 @@ package release number.
 [#13]: https://github.com/gewill/iperf-swift/issues/13
 [#16]: https://github.com/gewill/iperf-swift/issues/16
 [#20]: https://github.com/gewill/iperf-swift/issues/20
+[#29]: https://github.com/gewill/iperf-swift/pull/29
+[#30]: https://github.com/gewill/iperf-swift/issues/30
+[#31]: https://github.com/gewill/iperf-swift/issues/31
+[#35]: https://github.com/gewill/iperf-swift/issues/35
+[#36]: https://github.com/gewill/iperf-swift/issues/36
+[#37]: https://github.com/gewill/iperf-swift/issues/37
+[#38]: https://github.com/gewill/iperf-swift/issues/38
+[#39]: https://github.com/gewill/iperf-swift/issues/39
+[#40]: https://github.com/gewill/iperf-swift/issues/40
+[#48]: https://github.com/gewill/iperf-swift/issues/48
+[#49]: https://github.com/gewill/iperf-swift/issues/49
+[#50]: https://github.com/gewill/iperf-swift/issues/50
+[#51]: https://github.com/gewill/iperf-swift/issues/51

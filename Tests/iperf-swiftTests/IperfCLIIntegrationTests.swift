@@ -4,6 +4,331 @@ import Darwin
 @testable import IperfSwift
 
 final class IperfCLIIntegrationTests: XCTestCase {
+    func testTimeIntervalErrorsMatchCLIWhereContractsOverlap() throws {
+        typealias Mutation = (inout IperfConfiguration) -> Void
+        let tools = try TestTools()
+        let testCases: [([String], Mutation, IperfError)] = [
+            (["--idle-timeout", "0"], { $0.idleTimeout = 0 }, .IEIDLETIMEOUT),
+            (["--interval", "-1"], { $0.reporterInterval = -1 }, .IEINTERVAL),
+            (["--interval", "0.099"], { $0.reporterInterval = 0.099 }, .IEINTERVAL),
+        ]
+
+        for (arguments, mutate, expectedError) in testCases {
+            let cliResult = try tools.run(
+                tools.iperf3,
+                arguments: ["-c", "127.0.0.1"] + arguments
+            )
+            XCTAssertNotEqual(cliResult.status, 0)
+            XCTAssertTrue(cliResult.output.contains("parameter error"), cliResult.output)
+
+            var configuration = IperfConfiguration()
+            configuration.address = "invalid.invalid"
+            mutate(&configuration)
+            let rejected = expectation(description: "Swift rejects \(arguments.joined(separator: " "))")
+            let runner = IperfRunner(with: configuration)
+            var receivedError: IperfError?
+            runner.start({ _ in }, { error in
+                receivedError = error
+                rejected.fulfill()
+            }, { _ in })
+
+            wait(for: [rejected], timeout: 2)
+            XCTAssertEqual(receivedError, expectedError)
+        }
+    }
+
+    func testClientIntegerErrorsMatchCLI() throws {
+        typealias Mutation = (inout IperfConfiguration) -> Void
+        let tools = try TestTools()
+        let testCases: [(String, String, Mutation, IperfError)] = [
+            ("-P", "129", { $0.numStreams = 129 }, .IENUMSTREAMS),
+            ("-w", "536870913", { $0.socketBufferSize = 536_870_913 }, .IEBUFSIZE),
+            ("-M", "32768", { $0.mss = 32_768 }, .IEMSS),
+            ("-S", "-1", { $0.tos = -1 }, .IEBADTOS),
+        ]
+
+        for (option, value, mutate, expectedError) in testCases {
+            let cliResult = try tools.run(
+                tools.iperf3,
+                arguments: ["-c", "127.0.0.1", option, value]
+            )
+            XCTAssertNotEqual(cliResult.status, 0)
+            XCTAssertTrue(cliResult.output.contains("parameter error"), cliResult.output)
+
+            var configuration = IperfConfiguration()
+            configuration.address = "invalid.invalid"
+            mutate(&configuration)
+            let rejected = expectation(description: "Swift rejects \(option) \(value)")
+            let runner = IperfRunner(with: configuration)
+            var receivedError: IperfError?
+            runner.start({ _ in }, { error in
+                receivedError = error
+                rejected.fulfill()
+            }, { _ in })
+
+            wait(for: [rejected], timeout: 2)
+            XCTAssertEqual(receivedError, expectedError)
+        }
+    }
+
+    func testEncryptedServerPrivateKeyIsRejectedWithoutPrompt() throws {
+        let tools = try TestTools()
+        let privateKey = try tools.makeEncryptedPrivateKeyBase64()
+
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "invalid.invalid"
+        configuration.isAuth = true
+        configuration.privateKey = privateKey
+        configuration.authorizedUsers = "user,hash\n"
+
+        let rejected = expectation(description: "encrypted private key is rejected")
+        let runner = IperfRunner(with: configuration)
+        var receivedError: IperfError?
+        runner.start({ _ in }, { error in
+            receivedError = error
+            rejected.fulfill()
+        }, { _ in })
+
+        wait(for: [rejected], timeout: 2)
+        XCTAssertEqual(receivedError, .IESETSERVERAUTH)
+    }
+
+    func testEndConditionErrorsMatchCLI() throws {
+        let tools = try TestTools()
+
+        for duration in [0, 1] {
+            let cliResult = try tools.run(
+                tools.iperf3,
+                arguments: [
+                    "-c", "127.0.0.1",
+                    "--time", String(duration),
+                    "--bytes", "1",
+                ]
+            )
+            XCTAssertNotEqual(cliResult.status, 0)
+            XCTAssertTrue(
+                cliResult.output.contains("only one test end condition"),
+                cliResult.output
+            )
+
+            var configuration = IperfConfiguration()
+            configuration.duration = TimeInterval(duration)
+            configuration.numberOfBytes = 1
+            let failed = expectation(description: "Swift duration \(duration) conflicts with bytes")
+            let runner = IperfRunner(with: configuration)
+            var receivedError: IperfError?
+            runner.start({ _ in }, { error in
+                receivedError = error
+                failed.fulfill()
+            }, { _ in })
+
+            wait(for: [failed], timeout: 2)
+            XCTAssertEqual(receivedError, .IEENDCONDITIONS)
+        }
+    }
+
+    func testClientPortErrorsMatchCLI() throws {
+        let tools = try TestTools()
+
+        for clientPort in [-1, 0, 65_536] {
+            let cliResult = try tools.run(
+                tools.iperf3,
+                arguments: ["-c", "127.0.0.1", "--cport", String(clientPort)]
+            )
+            XCTAssertNotEqual(cliResult.status, 0)
+            XCTAssertTrue(
+                cliResult.output.contains("port number must be between 1 and 65535 inclusive"),
+                cliResult.output
+            )
+
+            var configuration = IperfConfiguration()
+            configuration.clientPort = clientPort
+            let failed = expectation(description: "Swift client port \(clientPort) fails")
+            let runner = IperfRunner(with: configuration)
+            var receivedError: IperfError?
+            runner.start({ _ in }, { error in
+                receivedError = error
+                failed.fulfill()
+            }, { _ in })
+
+            wait(for: [failed], timeout: 2)
+            XCTAssertEqual(receivedError, .IEBADPORT)
+        }
+    }
+
+    func testBlockSizeErrorsMatchCLI() throws {
+        let tools = try TestTools()
+        let testCases: [(String, IperfProtocol, Int, IperfError, String)] = [
+            ("TCP generic maximum", .tcp, 1_048_577, .IEBLOCKSIZE, "block size too large"),
+            ("UDP minimum", .udp, 15, .IEUDPBLOCKSIZE, "block size invalid"),
+            ("UDP maximum", .udp, 65_508, .IEUDPBLOCKSIZE, "block size invalid"),
+            ("UDP generic maximum precedence", .udp, 1_048_577, .IEBLOCKSIZE, "block size too large"),
+        ]
+
+        for (name, prot, blockSize, expectedError, expectedCLIMessage) in testCases {
+            var arguments = ["-c", "127.0.0.1", "--length", String(blockSize)]
+            if prot == .udp {
+                arguments.append("--udp")
+            }
+            let cliResult = try tools.run(tools.iperf3, arguments: arguments)
+            XCTAssertNotEqual(cliResult.status, 0, name)
+            XCTAssertTrue(cliResult.output.contains(expectedCLIMessage), cliResult.output)
+
+            var configuration = IperfConfiguration()
+            configuration.prot = prot
+            configuration.blockSize = blockSize
+            let failed = expectation(description: "Swift \(name) configuration fails")
+            let runner = IperfRunner(with: configuration)
+            var receivedError: IperfError?
+            runner.start({ _ in }, { error in
+                receivedError = error
+                failed.fulfill()
+            }, { _ in })
+
+            wait(for: [failed], timeout: 2)
+            XCTAssertEqual(receivedError, expectedError, name)
+        }
+    }
+
+    func testSwiftClientNonPositiveBlockSizeMatchesCLIDefaults() throws {
+        let tools = try TestTools()
+
+        func resolvedBlockSize(for prot: IperfProtocol) throws -> Int {
+            let port = try TestTools.freePort()
+            let cliServer = Process()
+            cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+            cliServer.arguments = ["-s", "-p", String(port), "-1", "-J"]
+            cliServer.standardOutput = FileHandle.nullDevice
+            cliServer.standardError = FileHandle.nullDevice
+            try cliServer.run()
+            addTeardownBlock {
+                if cliServer.isRunning {
+                    cliServer.terminate()
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.3)
+
+            var configuration = IperfConfiguration()
+            configuration.address = "127.0.0.1"
+            configuration.port = port
+            configuration.prot = prot
+            configuration.mode = .upload
+            configuration.numStreams = 1
+            configuration.blockSize = -1
+            configuration.getServerOutput = true
+            configuration.duration = 1
+            configuration.reporterInterval = 0.25
+
+            let finished = expectation(description: "\(prot) client with default block size finishes")
+            var didFinish = false
+            let client = IperfRunner(with: configuration)
+            addTeardownBlock {
+                client.stop()
+            }
+            client.start(
+                { _ in },
+                { error in
+                    XCTFail("Swift client failed: \(error.debugDescription)")
+                    if !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                },
+                { state in
+                    if state == .finished && !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                }
+            )
+
+            wait(for: [finished], timeout: 8)
+            let outputDelivered = expectation(
+                for: NSPredicate { _, _ in client.serverOutput != nil },
+                evaluatedWith: nil
+            )
+            wait(for: [outputDelivered], timeout: 3)
+            let text = try XCTUnwrap(client.serverOutput)
+            let json = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
+            )
+            let start = try XCTUnwrap(json["start"] as? [String: Any])
+            let testStart = try XCTUnwrap(start["test_start"] as? [String: Any])
+            return try XCTUnwrap(testStart["blksize"] as? Int)
+        }
+
+        XCTAssertEqual(try resolvedBlockSize(for: .tcp), 128 * 1_024)
+        XCTAssertTrue((16...65_507).contains(try resolvedBlockSize(for: .udp)))
+    }
+
+    func testRoleApplicabilityErrorsMatchCLI() throws {
+        typealias Mutation = (inout IperfConfiguration) -> Void
+        let tools = try TestTools()
+        let testCases: [(String, [String], Mutation, IperfError, String)] = [
+            (
+                "server-only",
+                ["-c", "127.0.0.1", "-1"],
+                { $0.oneOff = true },
+                .IESERVERONLY,
+                "some option you are trying to set is server only"
+            ),
+            (
+                "client-only",
+                ["-s", "--parallel", "1"],
+                { configuration in
+                    configuration.role = .server
+                    configuration.numStreams = 1
+                },
+                .IECLIENTONLY,
+                "some option you are trying to set is client only"
+            ),
+            (
+                "receive-timeout range",
+                ["-c", "127.0.0.1", "--rcv-timeout", "50"],
+                { configuration in
+                    configuration.mode = .upload
+                    configuration.rcvTimeout = 0.05
+                },
+                .IERCVTIMEOUT,
+                "receive timeout value is incorrect or not in range"
+            ),
+            (
+                "receive-timeout mode",
+                ["-c", "127.0.0.1", "--rcv-timeout", "1000"],
+                { configuration in
+                    configuration.mode = .upload
+                    configuration.rcvTimeout = 1
+                },
+                .IERVRSONLYRCVTIMEOUT,
+                "client receive timeout is valid only in receiving mode"
+            ),
+        ]
+
+        for (name, arguments, mutate, expectedError, expectedCLIMessage) in testCases {
+            let cliResult = try tools.run(tools.iperf3, arguments: arguments)
+            XCTAssertNotEqual(cliResult.status, 0, name)
+            XCTAssertTrue(cliResult.output.contains(expectedCLIMessage), cliResult.output)
+
+            var configuration = IperfConfiguration()
+            mutate(&configuration)
+            let failed = expectation(description: "Swift \(name) configuration fails")
+            let runner = IperfRunner(with: configuration)
+            var receivedError: IperfError?
+            var states: [IperfRunnerState] = []
+            runner.start({ _ in }, { error in
+                receivedError = error
+                failed.fulfill()
+            }, { state in
+                states.append(state)
+            })
+
+            wait(for: [failed], timeout: 2)
+            XCTAssertEqual(receivedError, expectedError, name)
+            XCTAssertEqual(states.last, .error, name)
+        }
+    }
+
     func testConcurrentStopDuringFinalNotificationsCompletesSafely() throws {
         let tools = try TestTools()
         let port = try TestTools.freePort()
@@ -22,12 +347,20 @@ final class IperfCLIIntegrationTests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.3)
 
         for iteration in 0..<5 {
+            // The single-connection CLI server needs a moment to return to its
+            // accept loop after the previous iteration's run and concurrent
+            // stop() spam; without this settle the next connect can race the
+            // server's reset and fail with IECONNECT under CI load.
+            if iteration > 0 {
+                Thread.sleep(forTimeInterval: 0.3)
+            }
+
             var configuration = IperfConfiguration()
             configuration.address = "127.0.0.1"
             configuration.port = port
             configuration.reverse = .upload
             configuration.numberOfBytes = 1_000_000
-            configuration.reporterInterval = 0.01
+            configuration.reporterInterval = 0.1
             configuration.getServerOutput = true
 
             let finished = expectation(description: "run \(iteration) reaches final notification")
@@ -95,7 +428,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
             configuration.clientPort = clientPort
             configuration.numStreams = 1
             configuration.numberOfBytes = 2_000_000
-            configuration.reporterInterval = 0.05
+            configuration.reporterInterval = 0.1
             configuration.getServerOutput = true
 
             let finished = expectation(description: "runner \(index) finishes")
@@ -282,7 +615,6 @@ final class IperfCLIIntegrationTests: XCTestCase {
         configuration.address = "127.0.0.1"
         configuration.bindDevice = "lo0"
         configuration.port = port
-        configuration.prot = .udp
 
         let server = IperfRunner(with: configuration)
         addTeardownBlock {
@@ -778,68 +1110,72 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
     func testSwiftClientBindsRequestedClientPort() throws {
         let tools = try TestTools()
-        let port = try TestTools.freePort()
-        let clientPort = try TestTools.freePort()
-        let jsonURL = tools.directory.appendingPathComponent("server.json")
-        FileManager.default.createFile(atPath: jsonURL.path, contents: nil)
-        let cliServer = Process()
-        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
-        cliServer.arguments = ["-s", "-p", String(port), "-1", "-J"]
-        cliServer.standardOutput = try FileHandle(forWritingTo: jsonURL)
-        cliServer.standardError = FileHandle.nullDevice
-        try cliServer.run()
-        addTeardownBlock {
-            if cliServer.isRunning {
-                cliServer.terminate()
-            }
-        }
-        Thread.sleep(forTimeInterval: 0.3)
+        let protocols: [(String, IperfProtocol)] = [("tcp", .tcp), ("udp", .udp)]
 
-        var configuration = IperfConfiguration()
-        configuration.role = .client
-        configuration.address = "127.0.0.1"
-        configuration.port = port
-        configuration.prot = .tcp
-        configuration.mode = .upload
-        // Streams bind clientPort, clientPort+1, ... — keep a single stream so
-        // only the reserved port is used.
-        configuration.numStreams = 1
-        configuration.clientPort = clientPort
-        configuration.duration = 1
-        configuration.reporterInterval = 0.25
-
-        let finished = expectation(description: "Client with fixed local port finished")
-        var didFinish = false
-        let client = IperfRunner(with: configuration)
-        addTeardownBlock {
-            client.stop()
-        }
-        client.start(
-            { _ in },
-            { error in
-                XCTFail("Swift client failed: \(error.debugDescription)")
-                if !didFinish {
-                    didFinish = true
-                    finished.fulfill()
-                }
-            },
-            { state in
-                if state == .finished && !didFinish {
-                    didFinish = true
-                    finished.fulfill()
+        for (name, prot) in protocols {
+            let port = try TestTools.freePort()
+            let clientPort = try TestTools.freePort()
+            let jsonURL = tools.directory.appendingPathComponent("\(name)-server.json")
+            FileManager.default.createFile(atPath: jsonURL.path, contents: nil)
+            let cliServer = Process()
+            cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+            cliServer.arguments = ["-s", "-p", String(port), "-1", "-J"]
+            cliServer.standardOutput = try FileHandle(forWritingTo: jsonURL)
+            cliServer.standardError = FileHandle.nullDevice
+            try cliServer.run()
+            addTeardownBlock {
+                if cliServer.isRunning {
+                    cliServer.terminate()
                 }
             }
-        )
+            Thread.sleep(forTimeInterval: 0.3)
 
-        wait(for: [finished], timeout: 8)
-        cliServer.waitUntilExit()
+            var configuration = IperfConfiguration()
+            configuration.role = .client
+            configuration.address = "127.0.0.1"
+            configuration.port = port
+            configuration.prot = prot
+            configuration.mode = .upload
+            // Streams bind clientPort, clientPort+1, ... — keep a single stream so
+            // only the reserved port is used.
+            configuration.numStreams = 1
+            configuration.clientPort = clientPort
+            configuration.duration = 1
+            configuration.reporterInterval = 0.25
 
-        let json = try JSONSerialization.jsonObject(
-            with: Data(contentsOf: jsonURL)) as? [String: Any]
-        let start = json?["start"] as? [String: Any]
-        let connected = (start?["connected"] as? [[String: Any]])?.first
-        XCTAssertEqual(connected?["remote_port"] as? Int, clientPort,
-                       "server should observe the requested client port")
+            let finished = expectation(description: "\(name) client with fixed local port finished")
+            var didFinish = false
+            let client = IperfRunner(with: configuration)
+            addTeardownBlock {
+                client.stop()
+            }
+            client.start(
+                { _ in },
+                { error in
+                    XCTFail("Swift client failed: \(error.debugDescription)")
+                    if !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                },
+                { state in
+                    if state == .finished && !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                }
+            )
+
+            wait(for: [finished], timeout: 8)
+            cliServer.waitUntilExit()
+
+            let json = try JSONSerialization.jsonObject(
+                with: Data(contentsOf: jsonURL)) as? [String: Any]
+            let start = json?["start"] as? [String: Any]
+            let connected = (start?["connected"] as? [[String: Any]])?.first
+            XCTAssertEqual(connected?["remote_port"] as? Int, clientPort,
+                           "\(name) server should observe the requested client port")
+        }
     }
 
     func testSwiftClientRunsUDPWithCountersRepeatingPayloadAndTOS() throws {
@@ -1300,7 +1636,6 @@ final class IperfCLIIntegrationTests: XCTestCase {
         configuration.isAuth = true
         configuration.privateKey = credentials.privateKeyBase64
         configuration.authorizedUsers = credentials.authorizedUsers
-        configuration.prot = .udp
 
         let server = IperfRunner(with: configuration)
         addTeardownBlock {
@@ -1360,6 +1695,657 @@ final class IperfCLIIntegrationTests: XCTestCase {
             result.output
         )
     }
+
+    // MARK: Client-side authentication
+
+    func testSwiftClientAuthenticatesWithCLIServer() throws {
+        try assertSwiftClientAuthenticates(usePkcs1Padding: false)
+    }
+
+    func testSwiftClientAuthenticatesWithCLIServerUsingPkcs1Padding() throws {
+        try assertSwiftClientAuthenticates(usePkcs1Padding: true)
+    }
+
+    // Mirror image of testSwiftServerAcceptsAuthenticatedCLIClient: exercise the
+    // client-side credential path (iperf_set_test_client_rsa_pubkey / username /
+    // password) against the official CLI acting as the authenticating server.
+    private func assertSwiftClientAuthenticates(usePkcs1Padding: Bool) throws {
+        let tools = try TestTools()
+        let credentials = try tools.makeCredentials()
+        let port = try TestTools.freePort()
+        let server = try tools.startAuthenticatedCLIServer(
+            port: port, credentials: credentials, usePkcs1Padding: usePkcs1Padding)
+        addTeardownBlock {
+            if server.isRunning {
+                server.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.mode = .upload
+        configuration.duration = 1
+        configuration.reporterInterval = 0.25
+        configuration.isAuth = true
+        configuration.usePkcs1Padding = usePkcs1Padding
+        configuration.username = credentials.username
+        configuration.password = credentials.password
+        configuration.publicKey = try credentials.publicKeyBase64()
+
+        let finished = expectation(description: "authenticated Swift client finished")
+        var didFinish = false
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { _ in },
+            { error in
+                XCTFail("authenticated Swift client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 10)
+        server.waitUntilExit()
+        XCTAssertEqual(server.terminationStatus, 0, "the CLI server should accept the client and exit cleanly")
+    }
+
+    func testSwiftClientRejectedByCLIServerWithWrongPassword() throws {
+        let tools = try TestTools()
+        let credentials = try tools.makeCredentials()
+        let port = try TestTools.freePort()
+        // A long-lived server: it rejects the bad client and keeps listening,
+        // so teardown terminates it rather than relying on --one-off exit.
+        let server = try tools.startAuthenticatedCLIServer(
+            port: port, credentials: credentials, usePkcs1Padding: false, oneOff: false)
+        addTeardownBlock {
+            if server.isRunning {
+                server.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.mode = .upload
+        configuration.duration = 1
+        configuration.isAuth = true
+        configuration.username = credentials.username
+        configuration.password = "wrong-password"
+        configuration.publicKey = try credentials.publicKeyBase64()
+
+        let failed = expectation(description: "Swift client is rejected")
+        var states: [IperfRunnerState] = []
+        var receivedError: IperfError?
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { _ in },
+            { error in
+                receivedError = error
+                failed.fulfill()
+            },
+            { state in states.append(state) }
+        )
+
+        wait(for: [failed], timeout: 10)
+        XCTAssertNotEqual(receivedError, .IENONE)
+        XCTAssertEqual(states.last, .error)
+    }
+
+    // MARK: Lifecycle
+
+    func testStopDuringActiveRunReachesFinishedWithoutError() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port)]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // A long run that stop() must cut short well before it would end on
+        // its own.
+        var configuration = IperfConfiguration()
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.mode = .upload
+        configuration.duration = 60
+        configuration.reporterInterval = 0.25
+
+        let running = expectation(description: "engine is transferring")
+        let finished = expectation(description: "run finishes after stop()")
+        var didRequestStop = false
+        var didFinish = false
+        var sawStopping = false
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { result in
+                // Stop only once the engine is genuinely mid-transfer: the
+                // .running state fires before iperf_run_client begins, so a
+                // stop issued then could be cleared by the engine's own reset.
+                if result.state == .TEST_RUNNING && !didRequestStop {
+                    didRequestStop = true
+                    running.fulfill()
+                    client.stop()
+                }
+            },
+            { error in
+                XCTFail("stopped run must not report an error: \(error.debugDescription)")
+            },
+            { state in
+                if state == .stopping {
+                    sawStopping = true
+                }
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [running], timeout: 5)
+        wait(for: [finished], timeout: 5)
+        XCTAssertTrue(sawStopping, "a stopped run should pass through the .stopping state")
+    }
+
+    func testRunnerCanBeReusedAfterFinishing() throws {
+        let tools = try TestTools()
+
+        func runOnce(_ client: IperfRunner, label: String) throws {
+            let port = try TestTools.freePort()
+            let cliServer = Process()
+            let serverOutput = Pipe()
+            cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+            cliServer.arguments = ["-s", "-p", String(port), "-1"]
+            cliServer.standardOutput = serverOutput
+            cliServer.standardError = serverOutput
+            try cliServer.run()
+            addTeardownBlock {
+                if cliServer.isRunning {
+                    cliServer.terminate()
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.3)
+
+            var configuration = IperfConfiguration()
+            configuration.address = "127.0.0.1"
+            configuration.port = port
+            configuration.mode = .upload
+            configuration.duration = 1
+            configuration.reporterInterval = 0.25
+
+            let finished = expectation(description: "\(label) finished")
+            var didFinish = false
+            client.start(
+                with: configuration,
+                { _ in },
+                { error in
+                    XCTFail("\(label) failed: \(error.debugDescription)")
+                    if !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                },
+                { state in
+                    if state == .finished && !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                }
+            )
+            wait(for: [finished], timeout: 8)
+        }
+
+        let client = IperfRunner(with: IperfConfiguration())
+        addTeardownBlock {
+            client.stop()
+        }
+        try runOnce(client, label: "first run")
+        try runOnce(client, label: "reused run")
+    }
+
+    func testRunnerDeallocatesAfterFinishing() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.mode = .upload
+        configuration.duration = 1
+        configuration.reporterInterval = 0.25
+
+        weak var weakClient: IperfRunner?
+        do {
+            let client = IperfRunner(with: configuration)
+            weakClient = client
+            let finished = expectation(description: "run finished before release")
+            var didFinish = false
+            client.start(
+                { _ in },
+                { error in
+                    XCTFail("run failed: \(error.debugDescription)")
+                    if !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                },
+                { state in
+                    if state == .finished && !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                }
+            )
+            wait(for: [finished], timeout: 8)
+        }
+
+        // The runner retains itself only for the duration of the async run, so
+        // once the run finishes and the last strong reference is dropped it must
+        // deallocate — no retain cycle through the callback registry.
+        let released = expectation(
+            for: NSPredicate { _, _ in weakClient == nil },
+            evaluatedWith: nil
+        )
+        wait(for: [released], timeout: 3)
+    }
+
+    // MARK: Additional configuration options
+
+    func testSwiftClientStopsAfterNumberOfBytes() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        let byteCap: UInt64 = 5_000_000
+        var configuration = IperfConfiguration()
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.mode = .upload
+        configuration.numStreams = 1
+        // A byte-limited run has no duration; iperf3 accepts only one end
+        // condition, so leave duration unset.
+        configuration.numberOfBytes = byteCap
+        configuration.reporterInterval = 0.25
+
+        let finished = expectation(description: "byte-limited client finished")
+        var didFinish = false
+        var totalBytes = 0
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { result in
+                if result.state == .TEST_RUNNING {
+                    totalBytes += result.totalBytes
+                }
+            },
+            { error in
+                XCTFail("byte-limited client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 10)
+        // The transfer terminates on the byte count, so it must move at least
+        // the requested amount and not run open-endedly toward a time limit.
+        XCTAssertGreaterThanOrEqual(totalBytes, Int(byteCap),
+                                    "a --bytes run should transmit at least the requested byte count")
+    }
+
+    func testSwiftClientWithConnectTimeoutFailsUnreachableHost() throws {
+        // Wiring check for --connect-timeout against a documentation-range
+        // address (RFC 5737 TEST-NET-1) that does not accept connections. The
+        // run must terminate with a terminal error and reach .error instead of
+        // hanging. The exact error code depends on how the host's routing
+        // rejects the address, so this pins the failure, not a specific code or
+        // the precise timeout duration.
+        _ = try TestTools()
+
+        var configuration = IperfConfiguration()
+        configuration.address = "192.0.2.1"
+        configuration.port = 5201
+        configuration.mode = .upload
+        configuration.duration = 1
+        configuration.timeout = 1
+
+        let failed = expectation(description: "unreachable client fails")
+        var receivedError: IperfError?
+        var states: [IperfRunnerState] = []
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { _ in },
+            { error in
+                receivedError = error
+                failed.fulfill()
+            },
+            { state in states.append(state) }
+        )
+
+        wait(for: [failed], timeout: 15)
+        XCTAssertNotNil(receivedError)
+        XCTAssertNotEqual(receivedError, .IENONE)
+        XCTAssertEqual(states.last, .error)
+    }
+
+    func testSwiftClientRunsDownloadMode() throws {
+        // Upload and bidirectional modes have interop coverage, but a pure
+        // reverse/download client (server sends, client receives) does not.
+        // The client is the receiver, so its streams must report the download
+        // direction and the download aggregate must accumulate bytes.
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.mode = .download
+        configuration.numStreams = 1
+        configuration.duration = 1
+        configuration.reporterInterval = 0.25
+
+        let reportedDownload = expectation(description: "download direction is reported")
+        let finished = expectation(description: "download client finished")
+        var didReportDownload = false
+        var didFinish = false
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { result in
+                if !didReportDownload,
+                   result.state == .TEST_RUNNING,
+                   result.mode == .download,
+                   result.download.totalBytes > 0,
+                   !result.streams.isEmpty,
+                   result.streams.allSatisfy({ $0.direction == .download }) {
+                    didReportDownload = true
+                    reportedDownload.fulfill()
+                }
+            },
+            { error in
+                XCTFail("download client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [reportedDownload, finished], timeout: 8)
+    }
+
+    func testSwiftClientWritesLogfile() throws {
+        // The logfile option redirects the engine's output to a file. libiperf
+        // opens it on start and closes it when the test is freed, which the
+        // wrapper does before reporting .finished, so the file is complete by
+        // the time the run settles.
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        let logfileURL = tools.directory.appendingPathComponent("client-\(port).log")
+
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.mode = .upload
+        configuration.numStreams = 1
+        configuration.duration = 1
+        configuration.reporterInterval = 0.25
+        configuration.logfile = logfileURL.path
+
+        let finished = expectation(description: "logging client finished")
+        var didFinish = false
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { _ in },
+            { error in
+                XCTFail("logging client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 8)
+        let contents = try XCTUnwrap(
+            try? String(contentsOf: logfileURL, encoding: .utf8),
+            "logfile was never written"
+        )
+        XCTAssertFalse(contents.isEmpty, "logfile should capture engine output")
+        XCTAssertTrue(contents.contains("127.0.0.1"),
+                      "logfile should contain the client's connection output: \(contents)")
+    }
+
+    func testStoppingRunningServerReachesFinished() throws {
+        // stop() on an active server takes a server-specific path that shuts
+        // down and closes the listener socket. Assert it reaches .finished
+        // without an error, distinct from the one-off server that ends on its
+        // own. No CLI is required — the server is pure Swift.
+        let port = try TestTools.freePort()
+
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+
+        let running = expectation(description: "server reaches running state")
+        let finished = expectation(description: "server finishes after stop()")
+        var didStop = false
+        var didFinish = false
+        var sawStopping = false
+        let server = IperfRunner(with: configuration)
+        addTeardownBlock {
+            server.stop()
+        }
+        server.start(
+            { _ in },
+            { error in
+                XCTFail("stopped server must not report an error: \(error.debugDescription)")
+            },
+            { state in
+                if state == .running && !didStop {
+                    didStop = true
+                    running.fulfill()
+                }
+                if state == .stopping {
+                    sawStopping = true
+                }
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [running], timeout: 5)
+        // Let the listener socket bind before stop() shuts it down.
+        Thread.sleep(forTimeInterval: 0.5)
+        server.stop()
+        wait(for: [finished], timeout: 5)
+        XCTAssertTrue(sawStopping, "a stopped server should pass through the .stopping state")
+    }
+
+    func testSwiftClientOmitsInitialIntervals() throws {
+        // With --omit set, the engine marks the first seconds' interval results
+        // as omitted; the wrapper filters omitted streams, so those intervals
+        // arrive with no streams. Assert both an omitted (empty) interval and a
+        // later measured interval are observed.
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.mode = .upload
+        configuration.numStreams = 1
+        configuration.duration = 2
+        configuration.omit = 1
+        configuration.reporterInterval = 0.25
+
+        let finished = expectation(description: "omitting client finished")
+        var didFinish = false
+        var sawOmittedInterval = false
+        var sawMeasuredInterval = false
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { result in
+                if result.state == .TEST_RUNNING {
+                    if result.streams.isEmpty {
+                        sawOmittedInterval = true
+                    } else if result.totalBytes > 0 {
+                        sawMeasuredInterval = true
+                    }
+                }
+            },
+            { error in
+                XCTFail("omitting client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 10)
+        XCTAssertTrue(sawMeasuredInterval, "expected measured intervals after the omit period")
+        XCTAssertTrue(sawOmittedInterval, "expected omitted intervals during the first second")
+    }
 }
 
 private struct ProcessResult {
@@ -1373,12 +2359,18 @@ private struct Credentials {
     let privateKeyBase64: String
     let publicKeyURL: URL
     let authorizedUsers: String
+
+    /// The PEM public key encoded as Base64, the form a Swift client expects in
+    /// ``IperfConfiguration/publicKey``.
+    func publicKeyBase64() throws -> String {
+        try Data(contentsOf: publicKeyURL).base64EncodedString()
+    }
 }
 
 private final class TestTools {
     let directory: URL
     let iperf3: String
-    let openssl: String
+    private let openssl: String?
 
     init() throws {
         guard let iperf3 = ["/opt/homebrew/bin/iperf3", "/usr/local/bin/iperf3"]
@@ -1386,15 +2378,12 @@ private final class TestTools {
             throw XCTSkip("iperf3 is not installed")
         }
         self.iperf3 = iperf3
-        guard let openssl = [
+        openssl = [
             "/opt/homebrew/bin/openssl",
             "/opt/homebrew/opt/openssl@3/bin/openssl",
             "/usr/local/opt/openssl@3/bin/openssl",
             "/usr/local/bin/openssl",
-        ].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-            throw XCTSkip("OpenSSL is not installed")
-        }
-        self.openssl = openssl
+        ].first(where: { FileManager.default.isExecutableFile(atPath: $0) })
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("iperf-swift-integration-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -1405,6 +2394,9 @@ private final class TestTools {
     }
 
     func makeCredentials() throws -> Credentials {
+        guard let openssl else {
+            throw XCTSkip("OpenSSL is not installed")
+        }
         let privateKeyURL = directory.appendingPathComponent("private.pem")
         let publicKeyURL = directory.appendingPathComponent("public.pem")
 
@@ -1424,6 +2416,58 @@ private final class TestTools {
             publicKeyURL: publicKeyURL,
             authorizedUsers: "iperf-test-user,\(hash)\n"
         )
+    }
+
+    func makeEncryptedPrivateKeyBase64() throws -> String {
+        guard let openssl else {
+            throw XCTSkip("OpenSSL is not installed")
+        }
+        let privateKeyURL = directory.appendingPathComponent("encrypted-private.pem")
+        _ = try run(openssl, arguments: [
+            "genrsa", "-traditional", "-aes256",
+            "-passout", "pass:iperf-test-passphrase",
+            "-out", privateKeyURL.path, "2048",
+        ])
+        return try Data(contentsOf: privateKeyURL).base64EncodedString()
+    }
+
+    /// Starts an official iperf3 server configured to authenticate clients,
+    /// writing the private key and authorized-users list into the test's
+    /// temporary directory. The returned process is running.
+    func startAuthenticatedCLIServer(
+        port: Int,
+        credentials: Credentials,
+        usePkcs1Padding: Bool,
+        oneOff: Bool = true
+    ) throws -> Process {
+        let privateKeyURL = directory.appendingPathComponent("cli-server-\(port).pem")
+        guard let privateKeyData = Data(base64Encoded: credentials.privateKeyBase64) else {
+            throw XCTSkip("could not decode the generated private key")
+        }
+        try privateKeyData.write(to: privateKeyURL)
+        let authorizedUsersURL = directory.appendingPathComponent("cli-server-\(port)-users.csv")
+        try credentials.authorizedUsers.write(to: authorizedUsersURL, atomically: true, encoding: .utf8)
+
+        var arguments = [
+            "-s", "-p", String(port),
+            "--rsa-private-key-path", privateKeyURL.path,
+            "--authorized-users-path", authorizedUsersURL.path,
+        ]
+        if oneOff {
+            arguments.append("-1")
+        }
+        if usePkcs1Padding {
+            arguments.append("--use-pkcs1-padding")
+        }
+
+        let server = Process()
+        let serverOutput = Pipe()
+        server.executableURL = URL(fileURLWithPath: iperf3)
+        server.arguments = arguments
+        server.standardOutput = serverOutput
+        server.standardError = serverOutput
+        try server.run()
+        return server
     }
 
     func run(

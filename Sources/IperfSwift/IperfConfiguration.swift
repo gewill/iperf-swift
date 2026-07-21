@@ -12,7 +12,6 @@ import IperfCLib
 public enum IperfProtocol: String, Codable {
     case tcp
     case udp
-    case sctp
 
     /// The protocol identifier expected by libiperf.
     public var iperfConfigValue: Int32 {
@@ -21,8 +20,6 @@ public enum IperfProtocol: String, Codable {
             return Ptcp
         case .udp:
             return Pudp
-        case .sctp:
-            return Psctp
         }
     }
 }
@@ -79,8 +76,19 @@ public enum IperfTestMode: String, Codable {
 ///
 /// Values generally correspond to the options in the
 /// [official iperf3 manual](https://software.es.net/iperf/invoking.html).
-/// Options that are not applicable to the selected role or protocol are ignored.
+/// Explicitly set options that do not apply to the selected role, transport,
+/// or forced address family are rejected before the run starts.
 public struct IperfConfiguration {
+    private enum Field: Hashable {
+        case numStreams
+        case mode
+        case prot
+        case omit
+        case timeSkewThreshold
+    }
+
+    private var explicitlySet: Set<Field> = []
+
     /// The remote server hostname/address for a client, or local bind address for a server.
     public var address: String? = "127.0.0.1"
     /// The interface used for socket binding, equivalent to `--bind-dev`.
@@ -88,12 +96,16 @@ public struct IperfConfiguration {
     /// For example, use `lo0` for the loopback interface on macOS. Binding may
     /// require additional privileges on some platforms.
     public var bindDevice: String?
-    /// The number of parallel client streams, equivalent to `--parallel`.
-    public var numStreams = 2
+    /// The number of parallel client streams in `1...128`, equivalent to `--parallel`.
+    public var numStreams = 2 {
+        didSet { explicitlySet.insert(.numStreams) }
+    }
     /// Whether the local endpoint runs as a client or server.
     public var role = IperfRole.client
     /// The data-flow mode for a client run.
-    public var mode = IperfTestMode.download
+    public var mode = IperfTestMode.download {
+        didSet { explicitlySet.insert(.mode) }
+    }
     /// Compatibility access to the unidirectional client mode.
     ///
     /// Setting this property selects upload or download mode. In bidirectional
@@ -104,7 +116,7 @@ public struct IperfConfiguration {
     public var reverse: IperfDirection {
         get { mode == .download ? .download : .upload }
         set {
-            if newValue == reverse { return }
+            if mode == .bidirectional && newValue == .upload { return }
             mode = newValue == .download ? .download : .upload
         }
     }
@@ -114,41 +126,50 @@ public struct IperfConfiguration {
     /// The server port to listen on or connect to. The iperf3 default is `5201`.
     public var port = 5201
     /// The transport protocol used by the data streams.
-    public var prot = IperfProtocol.tcp
+    public var prot = IperfProtocol.tcp {
+        didSet { explicitlySet.insert(.prot) }
+    }
 
     /// The target bitrate in bits per second, equivalent to `--bitrate`.
     ///
     /// Applies application-level pacing to any protocol. Leave unset for the
-    /// CLI defaults: unlimited for TCP/SCTP and 1 Mbit/s for UDP, which the
+    /// CLI defaults: unlimited for TCP and 1 Mbit/s for UDP, which the
     /// wrapper enforces explicitly because the engine's own default is
     /// unlimited for every protocol.
     public var rate: UInt64?
     /// The read/write block size in bytes, equivalent to `--length`.
     ///
-    /// For UDP this is the exact datagram payload size. Leave unset to use the
-    /// iperf3 defaults: 128 KB for TCP, a dynamic MSS-based size for UDP, and
-    /// 64 KB for SCTP.
+    /// This option applies to both transports. For UDP it is the exact datagram
+    /// payload size. Leave unset or use a non-positive value for the iperf3
+    /// defaults: 128 KB for TCP and a dynamic MSS-based size for UDP.
     public var blockSize: Int?
-    /// The socket buffer size in bytes, equivalent to `--window`.
+    /// The socket buffer size in `0...512 MiB`, equivalent to `--window`.
+    /// Zero keeps socket autotuning/default behavior.
     public var socketBufferSize: Int?
     /// Disables Nagle's algorithm on TCP streams, equivalent to `--no-delay`.
+    /// Enabling this for UDP fails with ``IperfError/IETCPONLY``.
     public var noDelay: Bool = false
-    /// The TCP maximum segment size, equivalent to `--set-mss`.
+    /// The TCP maximum segment size in `0...32,767`, equivalent to `--set-mss`.
     ///
-    /// Support depends on the platform and route; macOS rejects it on loopback
+    /// Zero keeps the engine default. Support depends on the platform and route;
+    /// macOS rejects nonzero values on loopback
     /// connections, and the run then fails with ``IperfError/IESETMSS`` exactly
-    /// like the official CLI.
+    /// like the official CLI. Setting this for UDP fails with
+    /// ``IperfError/IETCPONLY``.
     public var mss: Int?
 
     /// The client test duration in seconds, equivalent to `--time`.
     ///
-    /// Leave either this value or ``numberOfBytes`` unset because iperf3 accepts
-    /// only one test end condition.
+    /// Combining any explicitly set duration (including zero) with a nonzero
+    /// ``numberOfBytes`` fails with ``IperfError/IEENDCONDITIONS``.
     public var duration: TimeInterval?
     /// The number of bytes the client should transmit before ending the test,
-    /// equivalent to `--bytes`.
+    /// equivalent to `--bytes`. Zero does not select a byte end condition.
     public var numberOfBytes: UInt64?
     /// The client connection timeout in seconds, equivalent to `--connect-timeout`.
+    ///
+    /// Zero keeps the engine default. Positive values are truncated to whole
+    /// milliseconds and must fit in a signed 32-bit millisecond value.
     public var timeout: TimeInterval?
     /// The client DSCP value in the range `0...63`, equivalent to `--dscp`.
     public var dscp: Int?
@@ -159,12 +180,14 @@ public struct IperfConfiguration {
     public var tos: Int?
     /// The local port the client binds to, equivalent to `--cport`.
     ///
-    /// Leave unset to use an ephemeral port.
+    /// Leave unset to use ephemeral ports. Parallel streams use consecutive
+    /// ports; bidirectional tests reserve a second consecutive range.
     public var clientPort: Int?
     /// Uses 64-bit packet counters in UDP test packets, equivalent to
     /// `--udp-counters-64bit`.
     ///
     /// Prevents 32-bit counter wrap-around in long or high-rate UDP tests.
+    /// Enabling this for TCP fails with ``IperfError/IEUDPONLY``.
     public var udpCounters64Bit: Bool = false
     /// Fills payloads with a repeating pattern instead of random data,
     /// equivalent to `--repeating-payload`.
@@ -177,11 +200,14 @@ public struct IperfConfiguration {
     ///
     /// The text becomes available through ``IperfRunner/serverOutput``.
     public var getServerOutput: Bool = false
-    /// Sets the IP Do-Not-Fragment flag on UDP packets, equivalent to
-    /// `--dont-fragment`.
+    /// Sets the IPv4 Do-Not-Fragment flag on UDP packets, equivalent to
+    /// `--dont-fragment`. Enabling this for TCP or forced IPv6 fails with
+    /// ``IperfError/IEUDPONLY`` or ``IperfError/IEIPV4ONLY`` respectively.
     ///
     /// Datagrams larger than the path MTU then fail to send, matching the
-    /// CLI: the run completes with zero transferred packets.
+    /// CLI: the run completes with zero transferred packets. With
+    /// ``addressFamily`` set to ``IperfAddressFamily/any``, the flag takes
+    /// effect only when resolution selects IPv4.
     public var dontFragment: Bool = false
 
     // MARK: Server behavior
@@ -192,16 +218,22 @@ public struct IperfConfiguration {
     public var oneOff: Bool = false
     /// The number of seconds after which an idle server restarts, equivalent
     /// to `--idle-timeout`.
+    ///
+    /// Positive values are rounded up to whole seconds in `1...86,400`.
     public var idleTimeout: TimeInterval?
     /// The timeout in seconds for receiving data in an active test,
     /// equivalent to `--rcv-timeout` (which the CLI expresses in
-    /// milliseconds). The iperf3 default is 120 seconds.
+    /// milliseconds). Valid values are `0.1...86_400`; the iperf3 default is
+    /// 120 seconds.
     public var rcvTimeout: TimeInterval?
 
     /// The interval in seconds between reporter callbacks, equivalent to `--interval`.
     ///
     /// The wrapper uses this value for both libiperf's reporter and statistics
-    /// intervals.
+    /// intervals. Zero disables periodic callbacks; nonzero values must be in
+    /// `0.1...60`, matching iperf3's `MIN_INTERVAL`/`MAX_INTERVAL`. Values below
+    /// `MIN_INTERVAL` are rejected because they drive the embedded timer to fire
+    /// on nearly every loop iteration, flooding the reporter with empty results.
     public var reporterInterval: TimeInterval?
     /// Unused: statistics always sample at ``reporterInterval``.
     ///
@@ -211,7 +243,9 @@ public struct IperfConfiguration {
     /// keeps both intervals in sync and ignores this property.
     public var statsInterval: TimeInterval?
     /// The number of initial seconds omitted from measurements, equivalent to `--omit`.
-    public var omit: Int = 0
+    public var omit: Int = 0 {
+        didSet { explicitlySet.insert(.omit) }
+    }
     /// The path used for libiperf log output, equivalent to `--logfile`.
     public var logfile: String?
     /// Enables verbose libiperf output.
@@ -220,30 +254,135 @@ public struct IperfConfiguration {
     // MARK: Authentication
 
     /// Enables iperf3 RSA authentication for this endpoint.
+    ///
+    /// Clients must also provide ``username``, ``password``, and a decodable
+    /// ``publicKey``. Servers must provide a decodable ``privateKey``, nonempty
+    /// ``authorizedUsers``, and a positive ``timeSkewThreshold``.
     public var isAuth: Bool = false
     /// Uses legacy PKCS#1 v1.5 padding for compatibility with iperf3 versions before 3.17.
     ///
     /// Keep this disabled to use the official OAEP default. PKCS#1 v1.5 is less secure.
+    /// Enabling this while ``isAuth`` is false fails authentication preflight.
     public var usePkcs1Padding: Bool = false
     
     // MARK: Client authentication
 
-    /// A PEM public key encoded as Base64 for client credential encryption.
+    /// A PEM public key encoded as Base64 for authenticated client encryption.
     public var publicKey: String = ""
-    /// The username sent by an authenticated client.
+    /// The nonempty username sent by an authenticated client.
     public var username: String = ""
-    /// The password sent by an authenticated client.
+    /// The nonempty password sent by an authenticated client.
     public var password: String = ""
 
     // MARK: Server authentication
 
-    /// An unencrypted PEM private key encoded as Base64 for server-side decryption.
+    /// An unencrypted PEM private key encoded as Base64 for authenticated server decryption.
     public var privateKey: String = ""
-    /// Authorized-user content or a file path using iperf3's `username,sha256` format.
+    /// Nonempty authorized-user content or a file path using iperf3's
+    /// `username,sha256` format.
     public var authorizedUsers: String = ""
-    /// The allowed client/server clock difference in seconds during authentication.
-    public var timeSkewThreshold: Int32 = 10
+    /// The positive client/server clock-difference limit in seconds during server authentication.
+    public var timeSkewThreshold: Int32 = 10 {
+        didSet { explicitlySet.insert(.timeSkewThreshold) }
+    }
     
     /// Creates a configuration using the wrapper's defaults.
     public init() {}
+}
+
+extension IperfConfiguration {
+    func hasAuthenticationOptionForSelectedRole() -> Bool {
+        switch role {
+        case .client:
+            return usePkcs1Padding
+                || !username.isEmpty
+                || !password.isEmpty
+                || !publicKey.isEmpty
+        case .server:
+            return usePkcs1Padding
+                || !privateKey.isEmpty
+                || !authorizedUsers.isEmpty
+                || explicitlySet.contains(.timeSkewThreshold)
+        }
+    }
+
+    /// Returns the iperf3-compatible error for an explicitly configured option
+    /// that does not apply to the selected role or mode.
+    func roleApplicabilityError() -> IperfError? {
+        switch role {
+        case .client:
+            let hasServerOnlyOption = oneOff
+                || idleTimeout != nil
+                || !privateKey.isEmpty
+                || !authorizedUsers.isEmpty
+                || explicitlySet.contains(.timeSkewThreshold)
+            if hasServerOnlyOption {
+                return .IESERVERONLY
+            }
+
+            if mode == .upload, rcvTimeout != nil {
+                return .IERVRSONLYRCVTIMEOUT
+            }
+
+        case .server:
+            let hasTrackedClientOnlyOption = explicitlySet.contains(.numStreams)
+                || explicitlySet.contains(.mode)
+                || explicitlySet.contains(.prot)
+                || explicitlySet.contains(.omit)
+            let hasOptionalClientOnlyOption = rate != nil
+                || duration != nil
+                || numberOfBytes != nil
+                || blockSize != nil
+                || socketBufferSize != nil
+                || mss != nil
+                || tos != nil
+                || dscp != nil
+                || timeout != nil
+                || clientPort != nil
+            let hasBooleanClientOnlyOption = noDelay
+                || repeatingPayload
+                || getServerOutput
+                || udpCounters64Bit
+                || dontFragment
+            let hasClientAuthenticationOption = !username.isEmpty
+                || !publicKey.isEmpty
+                || !password.isEmpty
+
+            if hasTrackedClientOnlyOption
+                || hasOptionalClientOnlyOption
+                || hasBooleanClientOnlyOption
+                || hasClientAuthenticationOption {
+                return .IECLIENTONLY
+            }
+        }
+
+        // The CLI classifies usePkcs1Padding as server-only, but the wrapper
+        // uses it for client encryption as well as server decryption.
+        return nil
+    }
+
+    /// Returns a wrapper-defined error for an enabled option that the selected
+    /// transport or forced address family cannot honor.
+    func protocolApplicabilityError() -> IperfError? {
+        guard role == .client else {
+            return nil
+        }
+
+        switch prot {
+        case .tcp:
+            if udpCounters64Bit || dontFragment {
+                return .IEUDPONLY
+            }
+
+        case .udp:
+            if noDelay || mss != nil {
+                return .IETCPONLY
+            }
+            if dontFragment, addressFamily == .ipv6 {
+                return .IEIPV4ONLY
+            }
+        }
+
+        return nil
+    }
 }
