@@ -35,9 +35,9 @@ var configuration = IperfConfiguration()
 configuration.address = "192.0.2.1"
 configuration.port = 5201
 configuration.addressFamily = .any
-configuration.bindDevice = interfaceName
+configuration.bindDevice = "en0"
 configuration.reporterInterval = 1
-configuration.logfile = logFilePath
+configuration.logfile = "/tmp/iperf3.log"
 configuration.verbose = true
 configuration.rcvTimeout = 30
 ```

@@ -278,8 +278,12 @@ public struct IperfConfiguration {
 
     /// An unencrypted PEM private key encoded as Base64 for authenticated server decryption.
     public var privateKey: String = ""
-    /// Nonempty authorized-user content or a file path using iperf3's
-    /// `username,sha256` format.
+    /// Nonempty authorized-user content in iperf3's `username,sha256` format.
+    ///
+    /// This must be the content itself, not a file path. The wrapper configures
+    /// the engine directly instead of going through the CLI argument parser that
+    /// would open a path, so the value is tokenized as text during
+    /// authentication and a path never matches a user.
     public var authorizedUsers: String = ""
     /// The positive client/server clock-difference limit in seconds during server authentication.
     public var timeSkewThreshold: Int32 = 10 {

@@ -35,6 +35,7 @@ the main actor or main queue, and keep terminal-state handling idempotent.
 ### Results
 
 - ``IperfIntervalResult``
+- ``IperfDirectionalIntervalResult``
 - ``IperfStreamIntervalResult``
 - ``IperfThroughput``
 
