@@ -23,8 +23,46 @@ configuration that sets *every* property at once. The scenarios below are
 therefore independent, and **each starts from a fresh call to
 ``IperfConfiguration/init()``**.
 This matters: the configuration records which options you assign, so reusing one
-instance across roles keeps that history and still fails with
-``IperfError/IECLIENTONLY``.
+instance across roles keeps that history. Depending on which role-specific option
+remains, preflight fails with ``IperfError/IECLIENTONLY`` or
+``IperfError/IESERVERONLY``.
+
+## Quick start
+
+This minimal client reports periodic throughput and writes engine output to the
+application's temporary directory:
+
+```swift
+import Foundation
+import IperfSwift
+
+var configuration = IperfConfiguration()
+configuration.role = .client
+configuration.address = "192.0.2.1"
+configuration.port = 5201
+configuration.duration = 10
+configuration.reporterInterval = 1
+configuration.logfile = FileManager.default.temporaryDirectory
+    .appendingPathComponent("iperf3.log")
+    .path
+
+let runner = IperfRunner(with: configuration)
+runner.start(
+    { result in
+        guard result.state == .TEST_RUNNING else { return }
+        print("\(result.throughput.Mbps) Mbit/s")
+    },
+    { error in
+        print("iperf3 failed: \(error.debugDescription)")
+    },
+    { state in
+        print("state: \(state)")
+    }
+)
+```
+
+Callbacks are delivered from the runner's background work rather than a guaranteed
+queue. See *Running a test* for lifecycle and UI-update guidance.
 
 ## Shared base
 
@@ -52,6 +90,11 @@ configuration.rcvTimeout = 30
 - ``IperfConfiguration/rcvTimeout`` — `--rcv-timeout`; applies to a **server and a
   receiving client** (download or bidirectional). A client upload run instead
   fails with ``IperfError/IERVRSONLYRCVTIMEOUT``.
+
+Interface names such as `en0` vary by device and runtime, and binding may require
+additional privileges. Omit ``IperfConfiguration/bindDevice`` when no specific
+interface is required. For application log files, prefer a sandbox-owned URL such
+as `FileManager.default.temporaryDirectory` over a fixed system path.
 
 ## Building a configuration
 
@@ -148,6 +191,13 @@ Authentication uses iperf3's RSA scheme. Supply real credentials from your app �
 the placeholders below stand for values you provide, not literals to copy, since
 an undecodable key fails preflight with ``IperfError/IESETCLIENTAUTH``.
 
+Each authorized-user entry is one line of `username,sha256`, where `sha256` is the
+lowercase hexadecimal SHA-256 digest of the UTF-8 string `{username}password`.
+For example, the password `example-password` for user `alice` hashes the literal
+`{alice}example-password` to
+`34fdc09b3521751e48538d092b39c7c5c66bb9004cc69cc875e98643476ade37`.
+Separate multiple users with newlines.
+
 ```swift
 var configuration = IperfConfiguration()
 configuration.role = .client
@@ -174,7 +224,8 @@ configuration.role = .server
 configuration.address = "0.0.0.0"
 configuration.isAuth = true
 configuration.privateKey = base64PEMPrivateKey // Base64-encoded unencrypted PEM
-configuration.authorizedUsers = "alice,<sha256-hash>"
+let aliceHash = "34fdc09b3521751e48538d092b39c7c5c66bb9004cc69cc875e98643476ade37"
+configuration.authorizedUsers = "alice,\(aliceHash)\n"
 configuration.timeSkewThreshold = 10           // positive seconds
 ```
 
@@ -264,11 +315,23 @@ Each reporter callback delivers an ``IperfIntervalResult``:
 Aggregates are derived from the streams; ``IperfIntervalResult/evaluate()``
 recomputes them and is safe to call repeatedly.
 
+Use ``IperfState/TEST_RUNNING`` to identify periodic reporter samples. Completion
+can also produce callbacks in ``IperfState/TEST_END`` or
+``IperfState/DISPLAY_RESULTS`` while the endpoints finalize and display their
+results. ``IperfState/EXCHANGE_RESULTS`` and ``IperfState/IPERF_DONE`` are later
+completion states; the exact callback sequence depends on the local role and run
+outcome, so do not require one particular final state or assume it appears only
+once.
+
 Each ``IperfStreamIntervalResult`` exposes its ``IperfStreamIntervalResult/direction``
 and, where the platform provides TCP info, ``IperfStreamIntervalResult/rtt``,
 ``IperfStreamIntervalResult/rttvar``, ``IperfStreamIntervalResult/sndCwnd``,
 ``IperfStreamIntervalResult/snd_wnd``, ``IperfStreamIntervalResult/pmtu``, and
 ``IperfStreamIntervalResult/intervalRetrans``.
+
+Per-stream byte counts, interval timing, UDP packet counters, and jitter are not
+public API. Read those measurements from the direction-specific or top-level
+aggregates instead.
 
 ### Bidirectional results
 
@@ -282,6 +345,20 @@ With ``IperfTestMode/bidirectional``, read the direction-specific aggregates
     print("Download: \(result.download.throughput.Mbps) Mbit/s")
 }
 ```
+
+Each directional aggregate exposes:
+
+- ``IperfDirectionalIntervalResult/direction`` and
+  ``IperfDirectionalIntervalResult/streams`` — the direction and its contributing streams
+- ``IperfDirectionalIntervalResult/totalBytes`` and
+  ``IperfDirectionalIntervalResult/throughput`` — transferred bytes and aggregate rate
+- ``IperfDirectionalIntervalResult/totalPackets``,
+  ``IperfDirectionalIntervalResult/totalLostPackets``, and
+  ``IperfDirectionalIntervalResult/totalOutoforderPackets`` — UDP counters
+- ``IperfDirectionalIntervalResult/averageJitter`` — mean UDP jitter in seconds
+- ``IperfDirectionalIntervalResult/startTime``,
+  ``IperfDirectionalIntervalResult/endTime``, and
+  ``IperfDirectionalIntervalResult/duration`` — interval timing
 
 Directions are named from the client's point of view, so a server's receiving
 side is ``IperfDirection/upload``.
@@ -316,10 +393,11 @@ English message:
 ## Server output
 
 When ``IperfConfiguration/getServerOutput`` is `true`, the server's textual result
-is exchanged just before completion and made available on
-``IperfRunner/serverOutput``. Read it after the runner reports
-``IperfRunnerState/finished``. It is client-only, may be `nil` even when requested,
-and is cleared at the start of each run.
+is exchanged during final reporting and made available on
+``IperfRunner/serverOutput``. It can arrive just after
+``IperfRunnerState/finished`` is emitted, so read it after the final reporter
+callback or poll with a bounded timeout. It is client-only, may remain `nil` even
+when requested, and is cleared at the start of each run.
 
 ## Coverage note
 
