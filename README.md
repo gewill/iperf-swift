@@ -269,7 +269,7 @@ remain higher priority than same-role credential completeness.
 | `password` | `IPERF3_PASSWORD` / prompt replacement | Authenticated Client | Must be nonempty and is supplied directly by the host app; Server use fails with `IECLIENTONLY` |
 | `publicKey` | `--rsa-public-key-path` content | Authenticated Client | Must be a decodable Base64-encoded PEM public key, not a file path; invalid or incomplete Client credentials fail with `IESETCLIENTAUTH`, while Server use fails with `IECLIENTONLY` |
 | `privateKey` | `--rsa-private-key-path` content | Authenticated Server | Must be a decodable Base64-encoded unencrypted PEM private key; invalid or incomplete Server credentials fail with `IESETSERVERAUTH`, while Client use fails with `IESERVERONLY` |
-| `authorizedUsers` | `--authorized-users-path` extension | Authenticated Server | Must be nonempty and accepts `username,sha256` content or a file path; Client use fails with `IESERVERONLY` |
+| `authorizedUsers` | `--authorized-users-path` extension | Authenticated Server | Must be nonempty `username,sha256` content, not a file path, because the wrapper bypasses the CLI parser that would open one; Client use fails with `IESERVERONLY` |
 | `timeSkewThreshold` | `--time-skew-threshold` | Authenticated Server | Defaults to `10` seconds and must be positive; an explicit Client assignment fails with `IESERVERONLY` |
 
 ### Cross-field rules

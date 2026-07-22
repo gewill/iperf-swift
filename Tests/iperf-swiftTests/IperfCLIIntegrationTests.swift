@@ -606,6 +606,64 @@ final class IperfCLIIntegrationTests: XCTestCase {
         XCTAssertEqual(result.status, 0, result.output)
     }
 
+    func testSwiftServerDoesNotOpenAuthorizedUsersPath() throws {
+        let tools = try TestTools()
+        let credentials = try tools.makeCredentials()
+        let authorizedUsersURL = tools.directory.appendingPathComponent("authorized-users.csv")
+        try credentials.authorizedUsers.write(
+            to: authorizedUsersURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        let port = try TestTools.freePort()
+
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "127.0.0.1"
+        configuration.bindDevice = "lo0"
+        configuration.port = port
+        configuration.isAuth = true
+        configuration.privateKey = credentials.privateKeyBase64
+        configuration.authorizedUsers = authorizedUsersURL.path
+
+        let server = IperfRunner(with: configuration)
+        addTeardownBlock {
+            server.stop()
+        }
+
+        let serverRunning = expectation(description: "Swift server is running")
+        let serverFailed = expectation(description: "Swift server rejects an authorized-users path")
+        server.start(
+            { _ in },
+            { error in
+                XCTAssertEqual(error, .IEAUTHTEST)
+                serverFailed.fulfill()
+            },
+            { state in
+                if state == .running {
+                    serverRunning.fulfill()
+                }
+            }
+        )
+        wait(for: [serverRunning], timeout: 3)
+
+        let result = try tools.run(
+            tools.iperf3,
+            arguments: [
+                "-c", "127.0.0.1",
+                "-p", String(port),
+                "-t", "1",
+                "--username", credentials.username,
+                "--rsa-public-key-path", credentials.publicKeyURL.path,
+                "-J"
+            ],
+            environment: ["IPERF3_PASSWORD": credentials.password]
+        )
+
+        XCTAssertNotEqual(result.status, 0, result.output)
+        wait(for: [serverFailed], timeout: 3)
+    }
+
     func testSwiftServerAcceptsUDPCLIClient() throws {
         let tools = try TestTools()
         let port = try TestTools.freePort()
@@ -834,6 +892,17 @@ final class IperfCLIIntegrationTests: XCTestCase {
             { result in
                 if !didReportBothDirections,
                    resultMatchesExpectation(result) {
+                    // Pins the documented reporter-result semantics: a healthy
+                    // interval still reports hasError, because the runner leaves
+                    // error at .UNKNOWN rather than .IENONE, and it never
+                    // populates runnerState. Failures arrive through the error
+                    // callback instead. This is current behavior, not a defect
+                    // to "fix" here — changing it means updating the warning in
+                    // UsingIperfSwift.md.
+                    XCTAssertEqual(result.error, .UNKNOWN)
+                    XCTAssertTrue(result.hasError)
+                    XCTAssertEqual(result.debugDescription, "OK")
+                    XCTAssertEqual(result.runnerState, .unknown)
                     didReportBothDirections = true
                     reportedBothDirections.fulfill()
                 }
