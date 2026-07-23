@@ -244,11 +244,6 @@ final class IperfCLIIntegrationTests: XCTestCase {
             )
 
             wait(for: [finished], timeout: 8)
-            let outputDelivered = expectation(
-                for: NSPredicate { _, _ in client.serverOutput != nil },
-                evaluatedWith: nil
-            )
-            wait(for: [outputDelivered], timeout: 3)
             let text = try XCTUnwrap(client.serverOutput)
             let json = try XCTUnwrap(
                 JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
@@ -465,14 +460,6 @@ final class IperfCLIIntegrationTests: XCTestCase {
         }
 
         wait(for: finishedExpectations, timeout: 15)
-
-        for index in 0..<runnerCount {
-            let outputDelivered = expectation(
-                for: NSPredicate { _, _ in runners[index].serverOutput != nil },
-                evaluatedWith: nil
-            )
-            wait(for: [outputDelivered], timeout: 3)
-        }
 
         var outputs: [String] = []
         for index in 0..<runnerCount {
@@ -1144,6 +1131,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
         let finished = expectation(description: "Client requesting server output finished")
         var didFinish = false
+        var outputWasReadableAtFinish = false
         let client = IperfRunner(with: configuration)
         addTeardownBlock {
             client.stop()
@@ -1157,8 +1145,11 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     finished.fulfill()
                 }
             },
-            { state in
+            { [weak client] state in
                 if state == .finished && !didFinish {
+                    // The runner captures the server text before the run's last
+                    // reporter callback, so it is already readable here.
+                    outputWasReadableAtFinish = client?.serverOutput != nil
                     didFinish = true
                     finished.fulfill()
                 }
@@ -1166,13 +1157,10 @@ final class IperfCLIIntegrationTests: XCTestCase {
         )
 
         wait(for: [finished], timeout: 8)
-        // The output notification can be queued behind the state change that
-        // fulfilled `finished`, so wait on the run loop instead of sleeping.
-        let outputDelivered = expectation(
-            for: NSPredicate { _, _ in client.serverOutput != nil },
-            evaluatedWith: nil
+        XCTAssertTrue(
+            outputWasReadableAtFinish,
+            "server output must be readable by the time the runner reports finished"
         )
-        wait(for: [outputDelivered], timeout: 3)
         let text = try XCTUnwrap(client.serverOutput, "server output was never delivered")
         XCTAssertTrue(text.contains("receiver"), text)
     }
@@ -1456,6 +1444,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
         let finished = expectation(description: "Client against JSON server finished")
         var didFinish = false
+        var outputWasReadableAtFinish = false
         let client = IperfRunner(with: configuration)
         addTeardownBlock {
             client.stop()
@@ -1469,8 +1458,11 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     finished.fulfill()
                 }
             },
-            { state in
+            { [weak client] state in
                 if state == .finished && !didFinish {
+                    // The JSON variant is captured on the same path as the text
+                    // one, before the run's last reporter callback.
+                    outputWasReadableAtFinish = client?.serverOutput != nil
                     didFinish = true
                     finished.fulfill()
                 }
@@ -1478,11 +1470,10 @@ final class IperfCLIIntegrationTests: XCTestCase {
         )
 
         wait(for: [finished], timeout: 8)
-        let outputDelivered = expectation(
-            for: NSPredicate { _, _ in client.serverOutput != nil },
-            evaluatedWith: nil
+        XCTAssertTrue(
+            outputWasReadableAtFinish,
+            "JSON server output must be readable by the time the runner reports finished"
         )
-        wait(for: [outputDelivered], timeout: 3)
         let text = try XCTUnwrap(client.serverOutput, "JSON server output was never delivered")
         XCTAssertTrue(text.contains("\"start\""), text)
     }
