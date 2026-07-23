@@ -342,6 +342,9 @@ runner.
 
 ## Documentation
 
+The API reference is hosted on the
+[Swift Package Index](https://swiftpackageindex.com/gewill/iperf-swift/documentation/iperfswift).
+
 API documentation is built with the official
 [`swift-docc-plugin`](https://github.com/swiftlang/swift-docc-plugin). Generate
 the `IperfSwift` documentation archive with:
