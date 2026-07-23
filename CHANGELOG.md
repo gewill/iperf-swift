@@ -9,6 +9,41 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.7] - 2026-07-23
+
+A documentation, test, and CI release. The library's observable behavior is
+unchanged from 3.21.6.
+
+### Added
+
+- A DocC usage guide covering the full public API ([#59], [#61]): a copyable
+  Quick Start, self-contained configuration scenarios, the authentication
+  `username,sha256` hash format, the reporter states that mark a run's closing
+  summary, and the client-oriented directional aggregates.
+- Doc comments on every `IperfProtocol`, `IperfRunnerState`, `IperfState`, and
+  `IperfError` case, and topic groups organizing the configuration, error, and
+  interval-result symbol pages ([#65]).
+- A README link to the hosted API reference on Swift Package Index ([#69]).
+
+### Changed
+
+- CI now builds the documentation with `--warnings-as-errors` ([#67]). A rename
+  that leaves a DocC symbol link unresolved fails the build instead of silently
+  degrading the published reference.
+
+### Fixed
+
+- Corrected the `authorizedUsers` documentation: the value must be the
+  `username,sha256` content itself, not a file path. The wrapper configures the
+  engine directly instead of going through the CLI argument parser that would
+  open a path, so a path is tokenized as text and never matches a user.
+- Corrected the `IperfRunner.serverOutput` documentation: the text is captured
+  before a run's last reporter callback, so it is readable from that callback
+  onward and always by the time the runner reports `finished`, and `nil` is a
+  valid outcome when the server returns no output. The interoperability tests
+  now read the value directly at `finished` instead of polling, so a regression
+  back to asynchronous delivery fails the suite ([#63]).
+
 ## [3.21.6] - 2026-07-21
 
 ### Removed
@@ -242,7 +277,8 @@ package release number.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.6...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.7...HEAD
+[3.21.7]: https://github.com/gewill/iperf-swift/compare/v3.21.6...v3.21.7
 [3.21.6]: https://github.com/gewill/iperf-swift/compare/v3.21.5...v3.21.6
 [3.21.5]: https://github.com/gewill/iperf-swift/compare/v3.21.4...v3.21.5
 [3.21.4]: https://github.com/gewill/iperf-swift/compare/v3.21.3...v3.21.4
@@ -279,3 +315,9 @@ package release number.
 [#49]: https://github.com/gewill/iperf-swift/issues/49
 [#50]: https://github.com/gewill/iperf-swift/issues/50
 [#51]: https://github.com/gewill/iperf-swift/issues/51
+[#59]: https://github.com/gewill/iperf-swift/issues/59
+[#61]: https://github.com/gewill/iperf-swift/issues/61
+[#63]: https://github.com/gewill/iperf-swift/issues/63
+[#65]: https://github.com/gewill/iperf-swift/issues/65
+[#67]: https://github.com/gewill/iperf-swift/issues/67
+[#69]: https://github.com/gewill/iperf-swift/issues/69
