@@ -10,31 +10,54 @@ import IperfCLib
 
 /// High-level lifecycle states emitted by ``IperfRunner``.
 public enum IperfRunnerState {
+    /// A default value that the runner's state machine does not produce.
     case unknown
+    /// The runner exists and no run has started yet.
     case ready
+    /// The runner is validating the configuration and preparing the engine.
     case initialising
+    /// The engine is executing the test and delivering interval results.
     case running
+    /// The run failed; the error callback carries the ``IperfError``.
     case error
+    /// ``IperfRunner/stop()`` was called and the run is shutting down.
     case stopping
+    /// The run ended, after delivering the interval results of a completed run.
     case finished
 }
 
 /// Low-level states reported by the embedded libiperf engine.
 public enum IperfState: Int8 {
+    /// The engine has started the test.
     case TEST_START = 1
+    /// The test is transferring data; periodic interval results carry this state.
     case TEST_RUNNING = 2
+    /// The data transfer has ended; a server's closing summary interval
+    /// carries this state.
     case TEST_END = 4
+    /// The endpoints are exchanging test parameters.
     case PARAM_EXCHANGE = 9
+    /// The endpoints are creating the test streams.
     case CREATE_STREAMS = 10
+    /// The server ended the session.
     case SERVER_TERMINATE = 11
+    /// The client ended the session.
     case CLIENT_TERMINATE = 12
+    /// The endpoints are exchanging final results.
     case EXCHANGE_RESULTS = 13
+    /// The engine is presenting final results; a client's closing summary
+    /// interval carries this state.
     case DISPLAY_RESULTS = 14
+    /// The engine is setting up before the test begins.
     case IPERF_START = 15
+    /// The engine has completed the session.
     case IPERF_DONE = 16
+    /// The server refused the connection because another test is active.
     case ACCESS_DENIED = -1
+    /// The server reported an error to the client.
     case SERVER_ERROR = -2
-    
+
+    /// A state value the wrapper does not recognize.
     case UNKNOWN = 0
 }
 
@@ -67,14 +90,17 @@ public class IperfRunner {
         }
     }
 
+    private var storedServerOutput: String?
+
     /// The remote server's textual results from the most recent client run.
     ///
     /// Populated at the end of a run that enabled
-    /// ``IperfConfiguration/getServerOutput``; `nil` otherwise. Because the
-    /// text is exchanged right before completion, read it after the runner
-    /// reports ``IperfRunnerState/finished``.
-    private var storedServerOutput: String?
-
+    /// ``IperfConfiguration/getServerOutput`` when the server returns output;
+    /// `nil` otherwise. The text is exchanged during final reporting and
+    /// captured before the run's last reporter callback, so it is readable from
+    /// that callback onward and always by the time the runner reports
+    /// ``IperfRunnerState/finished``. Treat `nil` as a valid outcome. Starting
+    /// another run clears the previous value.
     public var serverOutput: String? {
         withState { storedServerOutput }
     }

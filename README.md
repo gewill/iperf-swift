@@ -48,7 +48,7 @@ Or add the package to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/gewill/iperf-swift.git",
-        from: "3.21.4"
+        from: "3.21.7"
     )
 ]
 ```
@@ -269,7 +269,7 @@ remain higher priority than same-role credential completeness.
 | `password` | `IPERF3_PASSWORD` / prompt replacement | Authenticated Client | Must be nonempty and is supplied directly by the host app; Server use fails with `IECLIENTONLY` |
 | `publicKey` | `--rsa-public-key-path` content | Authenticated Client | Must be a decodable Base64-encoded PEM public key, not a file path; invalid or incomplete Client credentials fail with `IESETCLIENTAUTH`, while Server use fails with `IECLIENTONLY` |
 | `privateKey` | `--rsa-private-key-path` content | Authenticated Server | Must be a decodable Base64-encoded unencrypted PEM private key; invalid or incomplete Server credentials fail with `IESETSERVERAUTH`, while Client use fails with `IESERVERONLY` |
-| `authorizedUsers` | `--authorized-users-path` extension | Authenticated Server | Must be nonempty and accepts `username,sha256` content or a file path; Client use fails with `IESERVERONLY` |
+| `authorizedUsers` | `--authorized-users-path` extension | Authenticated Server | Must be nonempty `username,sha256` content, not a file path, because the wrapper bypasses the CLI parser that would open one; Client use fails with `IESERVERONLY` |
 | `timeSkewThreshold` | `--time-skew-threshold` | Authenticated Server | Defaults to `10` seconds and must be positive; an explicit Client assignment fails with `IESERVERONLY` |
 
 ### Cross-field rules
@@ -342,6 +342,9 @@ runner.
 
 ## Documentation
 
+The API reference is hosted on the
+[Swift Package Index](https://swiftpackageindex.com/gewill/iperf-swift/documentation/iperfswift).
+
 API documentation is built with the official
 [`swift-docc-plugin`](https://github.com/swiftlang/swift-docc-plugin). Generate
 the `IperfSwift` documentation archive with:
@@ -376,7 +379,7 @@ will overwrite them.
 ## Versioning
 
 The Swift package and embedded engine have separate versions. For example,
-package release `3.21.4` embeds the official iperf3 `3.21` engine. See
+package release `3.21.7` embeds the official iperf3 `3.21` engine. See
 [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## Roadmap

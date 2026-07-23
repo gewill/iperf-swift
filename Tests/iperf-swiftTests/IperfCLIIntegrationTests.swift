@@ -244,11 +244,6 @@ final class IperfCLIIntegrationTests: XCTestCase {
             )
 
             wait(for: [finished], timeout: 8)
-            let outputDelivered = expectation(
-                for: NSPredicate { _, _ in client.serverOutput != nil },
-                evaluatedWith: nil
-            )
-            wait(for: [outputDelivered], timeout: 3)
             let text = try XCTUnwrap(client.serverOutput)
             let json = try XCTUnwrap(
                 JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
@@ -466,14 +461,6 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
         wait(for: finishedExpectations, timeout: 15)
 
-        for index in 0..<runnerCount {
-            let outputDelivered = expectation(
-                for: NSPredicate { _, _ in runners[index].serverOutput != nil },
-                evaluatedWith: nil
-            )
-            wait(for: [outputDelivered], timeout: 3)
-        }
-
         var outputs: [String] = []
         for index in 0..<runnerCount {
             let output = try XCTUnwrap(
@@ -604,6 +591,64 @@ final class IperfCLIIntegrationTests: XCTestCase {
         )
 
         XCTAssertEqual(result.status, 0, result.output)
+    }
+
+    func testSwiftServerDoesNotOpenAuthorizedUsersPath() throws {
+        let tools = try TestTools()
+        let credentials = try tools.makeCredentials()
+        let authorizedUsersURL = tools.directory.appendingPathComponent("authorized-users.csv")
+        try credentials.authorizedUsers.write(
+            to: authorizedUsersURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        let port = try TestTools.freePort()
+
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "127.0.0.1"
+        configuration.bindDevice = "lo0"
+        configuration.port = port
+        configuration.isAuth = true
+        configuration.privateKey = credentials.privateKeyBase64
+        configuration.authorizedUsers = authorizedUsersURL.path
+
+        let server = IperfRunner(with: configuration)
+        addTeardownBlock {
+            server.stop()
+        }
+
+        let serverRunning = expectation(description: "Swift server is running")
+        let serverFailed = expectation(description: "Swift server rejects an authorized-users path")
+        server.start(
+            { _ in },
+            { error in
+                XCTAssertEqual(error, .IEAUTHTEST)
+                serverFailed.fulfill()
+            },
+            { state in
+                if state == .running {
+                    serverRunning.fulfill()
+                }
+            }
+        )
+        wait(for: [serverRunning], timeout: 3)
+
+        let result = try tools.run(
+            tools.iperf3,
+            arguments: [
+                "-c", "127.0.0.1",
+                "-p", String(port),
+                "-t", "1",
+                "--username", credentials.username,
+                "--rsa-public-key-path", credentials.publicKeyURL.path,
+                "-J"
+            ],
+            environment: ["IPERF3_PASSWORD": credentials.password]
+        )
+
+        XCTAssertNotEqual(result.status, 0, result.output)
+        wait(for: [serverFailed], timeout: 3)
     }
 
     func testSwiftServerAcceptsUDPCLIClient() throws {
@@ -834,6 +879,17 @@ final class IperfCLIIntegrationTests: XCTestCase {
             { result in
                 if !didReportBothDirections,
                    resultMatchesExpectation(result) {
+                    // Pins the documented reporter-result semantics: a healthy
+                    // interval still reports hasError, because the runner leaves
+                    // error at .UNKNOWN rather than .IENONE, and it never
+                    // populates runnerState. Failures arrive through the error
+                    // callback instead. This is current behavior, not a defect
+                    // to "fix" here — changing it means updating the warning in
+                    // UsingIperfSwift.md.
+                    XCTAssertEqual(result.error, .UNKNOWN)
+                    XCTAssertTrue(result.hasError)
+                    XCTAssertEqual(result.debugDescription, "OK")
+                    XCTAssertEqual(result.runnerState, .unknown)
                     didReportBothDirections = true
                     reportedBothDirections.fulfill()
                 }
@@ -1075,6 +1131,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
         let finished = expectation(description: "Client requesting server output finished")
         var didFinish = false
+        var outputWasReadableAtFinish = false
         let client = IperfRunner(with: configuration)
         addTeardownBlock {
             client.stop()
@@ -1088,8 +1145,11 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     finished.fulfill()
                 }
             },
-            { state in
+            { [weak client] state in
                 if state == .finished && !didFinish {
+                    // The runner captures the server text before the run's last
+                    // reporter callback, so it is already readable here.
+                    outputWasReadableAtFinish = client?.serverOutput != nil
                     didFinish = true
                     finished.fulfill()
                 }
@@ -1097,13 +1157,10 @@ final class IperfCLIIntegrationTests: XCTestCase {
         )
 
         wait(for: [finished], timeout: 8)
-        // The output notification can be queued behind the state change that
-        // fulfilled `finished`, so wait on the run loop instead of sleeping.
-        let outputDelivered = expectation(
-            for: NSPredicate { _, _ in client.serverOutput != nil },
-            evaluatedWith: nil
+        XCTAssertTrue(
+            outputWasReadableAtFinish,
+            "server output must be readable by the time the runner reports finished"
         )
-        wait(for: [outputDelivered], timeout: 3)
         let text = try XCTUnwrap(client.serverOutput, "server output was never delivered")
         XCTAssertTrue(text.contains("receiver"), text)
     }
@@ -1387,6 +1444,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
         let finished = expectation(description: "Client against JSON server finished")
         var didFinish = false
+        var outputWasReadableAtFinish = false
         let client = IperfRunner(with: configuration)
         addTeardownBlock {
             client.stop()
@@ -1400,8 +1458,11 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     finished.fulfill()
                 }
             },
-            { state in
+            { [weak client] state in
                 if state == .finished && !didFinish {
+                    // The JSON variant is captured on the same path as the text
+                    // one, before the run's last reporter callback.
+                    outputWasReadableAtFinish = client?.serverOutput != nil
                     didFinish = true
                     finished.fulfill()
                 }
@@ -1409,11 +1470,10 @@ final class IperfCLIIntegrationTests: XCTestCase {
         )
 
         wait(for: [finished], timeout: 8)
-        let outputDelivered = expectation(
-            for: NSPredicate { _, _ in client.serverOutput != nil },
-            evaluatedWith: nil
+        XCTAssertTrue(
+            outputWasReadableAtFinish,
+            "JSON server output must be readable by the time the runner reports finished"
         )
-        wait(for: [outputDelivered], timeout: 3)
         let text = try XCTUnwrap(client.serverOutput, "JSON server output was never delivered")
         XCTAssertTrue(text.contains("\"start\""), text)
     }

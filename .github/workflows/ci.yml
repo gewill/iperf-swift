@@ -20,6 +20,10 @@ jobs:
         run: brew install iperf3 openssl@3
       - name: Build
         run: swift build
+      # The DocC catalog and doc comments contain many ``symbol`` links that a
+      # rename breaks silently; fail the build on any unresolved link.
+      - name: Build documentation
+        run: swift package generate-documentation --target IperfSwift --warnings-as-errors
       - name: Run tests
         run: swift test
       # HAVE_SSL is hardcoded on, so the no-SSL fallback in custom.c is never

@@ -14,21 +14,34 @@ the main actor or main queue, and keep terminal-state handling idempotent.
 
 ## Topics
 
+### Examples
+
+- <doc:UsingIperfSwift>
+
 ### Running a Test
 
 - ``IperfConfiguration``
 - ``IperfRunner``
 - ``IperfRunnerState``
 
+### Callbacks
+
+- ``reporterFunctionType``
+- ``errorFunctionType``
+- ``runnerStateFunctionType``
+
 ### Protocol Configuration
 
 - ``IperfProtocol``
 - ``IperfRole``
+- ``IperfTestMode``
 - ``IperfDirection``
+- ``IperfAddressFamily``
 
 ### Results
 
 - ``IperfIntervalResult``
+- ``IperfDirectionalIntervalResult``
 - ``IperfStreamIntervalResult``
 - ``IperfThroughput``
 
