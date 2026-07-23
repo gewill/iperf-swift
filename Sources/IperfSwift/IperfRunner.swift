@@ -67,14 +67,17 @@ public class IperfRunner {
         }
     }
 
+    private var storedServerOutput: String?
+
     /// The remote server's textual results from the most recent client run.
     ///
     /// Populated at the end of a run that enabled
-    /// ``IperfConfiguration/getServerOutput``; `nil` otherwise. Because the
-    /// text is exchanged right before completion, read it after the runner
-    /// reports ``IperfRunnerState/finished``.
-    private var storedServerOutput: String?
-
+    /// ``IperfConfiguration/getServerOutput`` when the server returns output;
+    /// `nil` otherwise. The text is exchanged during final reporting and
+    /// captured before the run's last reporter callback, so it is readable from
+    /// that callback onward and always by the time the runner reports
+    /// ``IperfRunnerState/finished``. Treat `nil` as a valid outcome. Starting
+    /// another run clears the previous value.
     public var serverOutput: String? {
         withState { storedServerOutput }
     }
