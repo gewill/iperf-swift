@@ -10,7 +10,9 @@ import IperfCLib
 
 /// The transport protocol used by the iperf3 data streams.
 public enum IperfProtocol: String, Codable {
+    /// Streams data over TCP, which is iperf3's default transport.
     case tcp
+    /// Sends datagrams over UDP, equivalent to `iperf3 --udp`.
     case udp
 
     /// The protocol identifier expected by libiperf.

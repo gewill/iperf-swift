@@ -24,6 +24,12 @@ the main actor or main queue, and keep terminal-state handling idempotent.
 - ``IperfRunner``
 - ``IperfRunnerState``
 
+### Callbacks
+
+- ``reporterFunctionType``
+- ``errorFunctionType``
+- ``runnerStateFunctionType``
+
 ### Protocol Configuration
 
 - ``IperfProtocol``
