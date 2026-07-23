@@ -40,6 +40,7 @@ var configuration = IperfConfiguration()
 configuration.role = .client
 configuration.address = "192.0.2.1"
 configuration.port = 5201
+configuration.mode = .upload            // the wrapper's default is .download
 configuration.duration = 10
 configuration.reporterInterval = 1
 configuration.logfile = FileManager.default.temporaryDirectory
@@ -196,7 +197,8 @@ lowercase hexadecimal SHA-256 digest of the UTF-8 string `{username}password`.
 For example, the password `example-password` for user `alice` hashes the literal
 `{alice}example-password` to
 `34fdc09b3521751e48538d092b39c7c5c66bb9004cc69cc875e98643476ade37`.
-Separate multiple users with newlines.
+Newlines separate entries, so they are needed only between users; a trailing
+newline is optional and empty lines are skipped.
 
 ```swift
 var configuration = IperfConfiguration()
@@ -225,7 +227,7 @@ configuration.address = "0.0.0.0"
 configuration.isAuth = true
 configuration.privateKey = base64PEMPrivateKey // Base64-encoded unencrypted PEM
 let aliceHash = "34fdc09b3521751e48538d092b39c7c5c66bb9004cc69cc875e98643476ade37"
-configuration.authorizedUsers = "alice,\(aliceHash)\n"
+configuration.authorizedUsers = "alice,\(aliceHash)"
 configuration.timeSkewThreshold = 10           // positive seconds
 ```
 
@@ -283,10 +285,9 @@ the engine can report a terminal state more than once.
 - **Cancellation:** ``IperfRunnerState/stopping`` → ``IperfRunnerState/finished``
 
 ``IperfRunnerState/ready`` is the state before the callbacks are installed, and
-``IperfRunnerState/unknown`` is not produced by the runner's state machine. Note
-that ``IperfRunnerState/finished`` can be reported *before* the final reporter
-callback, because the engine marks completion while it is still assembling the
-last interval, so do not treat `finished` as "all results delivered."
+``IperfRunnerState/unknown`` is not produced by the runner's state machine.
+``IperfRunnerState/finished`` follows the run's last reporter callback, so the
+interval results of a completed run are all delivered by the time it arrives.
 
 ## Reading interval results
 
@@ -315,13 +316,10 @@ Each reporter callback delivers an ``IperfIntervalResult``:
 Aggregates are derived from the streams; ``IperfIntervalResult/evaluate()``
 recomputes them and is safe to call repeatedly.
 
-Use ``IperfState/TEST_RUNNING`` to identify periodic reporter samples. Completion
-can also produce callbacks in ``IperfState/TEST_END`` or
-``IperfState/DISPLAY_RESULTS`` while the endpoints finalize and display their
-results. ``IperfState/EXCHANGE_RESULTS`` and ``IperfState/IPERF_DONE`` are later
-completion states; the exact callback sequence depends on the local role and run
-outcome, so do not require one particular final state or assume it appears only
-once.
+Periodic samples arrive in ``IperfState/TEST_RUNNING``, so filter on that state
+when you only want interval throughput. A run's last reporter callback carries the
+closing summary interval and reports ``IperfState/DISPLAY_RESULTS`` on a client and
+``IperfState/TEST_END`` on a server.
 
 Each ``IperfStreamIntervalResult`` exposes its ``IperfStreamIntervalResult/direction``
 and, where the platform provides TCP info, ``IperfStreamIntervalResult/rtt``,
@@ -394,10 +392,10 @@ English message:
 
 When ``IperfConfiguration/getServerOutput`` is `true`, the server's textual result
 is exchanged during final reporting and made available on
-``IperfRunner/serverOutput``. It can arrive just after
-``IperfRunnerState/finished`` is emitted, so read it after the final reporter
-callback or poll with a bounded timeout. It is client-only, may remain `nil` even
-when requested, and is cleared at the start of each run.
+``IperfRunner/serverOutput``. The text is captured before the run's last reporter
+callback, so it is readable from that callback onward — and always by the time the
+runner reports ``IperfRunnerState/finished``. It is client-only, may remain `nil`
+even when requested, and is cleared at the start of each run.
 
 ## Coverage note
 
