@@ -894,6 +894,40 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertEqual(throughput.Gbps, 0.004)
     }
 
+    func testThroughputOverNonPositiveDurationIsZero() {
+        // An interval whose start and end times are equal reaches this
+        // initializer; iperf3's per-stream report answers the same division
+        // with zero rather than infinity.
+        XCTAssertEqual(IperfThroughput(bytes: 901_644_288, seconds: 0).rawValue, 0)
+        XCTAssertEqual(IperfThroughput(bytes: 0, seconds: 0).rawValue, 0)
+        XCTAssertEqual(IperfThroughput(bytes: 1_000, seconds: -1).rawValue, 0)
+        XCTAssertEqual(IperfThroughput(bytes: 1_000, seconds: .nan).rawValue, 0)
+    }
+
+    func testIntervalAggregationOverZeroDurationReportsZeroThroughput() {
+        var first = IperfStreamIntervalResult()
+        first.bytesTransferred = 450_822_144
+        first.intervalDuration = 0
+        first.startTime = 6.005
+        first.endTime = 6.005
+
+        var second = IperfStreamIntervalResult()
+        second.bytesTransferred = 450_822_144
+        second.intervalDuration = 0
+        second.startTime = 6.005
+        second.endTime = 6.005
+
+        var result = IperfIntervalResult(prot: .tcp)
+        result.streams = [first, second]
+        result.evaulate()
+
+        XCTAssertEqual(result.totalBytes, 901_644_288)
+        XCTAssertEqual(result.duration, 0)
+        XCTAssertEqual(result.throughput.rawValue, 0)
+        XCTAssertTrue(result.throughput.bps.isFinite)
+        XCTAssertTrue(result.throughput.Mbps.isFinite)
+    }
+
     func testTCPIntervalAggregationIsRepeatable() {
         var first = IperfStreamIntervalResult()
         first.bytesTransferred = 1_000

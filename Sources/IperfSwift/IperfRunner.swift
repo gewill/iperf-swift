@@ -62,6 +62,19 @@ public enum IperfState: Int8 {
 }
 
 /// Receives one interval result from libiperf.
+///
+/// - Important: The closure runs synchronously on the engine's own thread,
+///   inside the loop that drives the measurement timers. Return promptly and
+///   hand any slow work — UI updates, disk writes, anything that can block on
+///   a lock — to another queue.
+///
+///   Time spent in the closure is time the engine is not measuring. A closure
+///   that blocks for a whole reporting interval stretches the intervals that
+///   follow, and one that blocks for several delivers the backlog as a burst:
+///   the engine advances each timer by exactly one period per firing, so a
+///   3-second stall on a 1-second interval yields one result spanning the
+///   stall and then several near-zero-duration results in the same instant,
+///   whose throughput is arithmetically correct and practically meaningless.
 public typealias reporterFunctionType = (_ result: IperfIntervalResult) -> Void
 /// Receives a terminal libiperf or wrapper error.
 public typealias errorFunctionType = (_ error: IperfError) -> Void
@@ -73,6 +86,10 @@ public typealias runnerStateFunctionType = (_ state: IperfRunnerState) -> Void
 /// A runner performs its work on a background queue. Callback delivery is not
 /// guaranteed on a specific queue, so callers must dispatch UI updates to the
 /// main actor or main queue. Use one runner for one active test at a time.
+///
+/// Dispatching is not only a thread-safety requirement: the reporter closure
+/// runs inside the engine's timing loop, so a slow one distorts the
+/// measurement it is reporting. See ``reporterFunctionType``.
 public class IperfRunner {
     private let stateQueue = DispatchQueue(label: "com.gewill.IperfSwift.runner-state")
     private let stateQueueKey = DispatchSpecificKey<Void>()
@@ -708,7 +725,8 @@ public class IperfRunner {
     /// starting another run.
     /// - Parameters:
     ///   - configuration: The client or server options for this run.
-    ///   - onReporter: Called when an interval result is available.
+    ///   - onReporter: Called when an interval result is available. Runs on the
+///     engine's thread and must return promptly; see ``reporterFunctionType``.
     ///   - onError: Called when the run fails.
     ///   - onRunnerState: Called when the high-level lifecycle state changes.
     public func start(
@@ -733,7 +751,8 @@ public class IperfRunner {
     /// untouched. Wait for ``IperfRunnerState/finished`` or ``stop()`` before
     /// starting another run.
     /// - Parameters:
-    ///   - onReporter: Called when an interval result is available.
+    ///   - onReporter: Called when an interval result is available. Runs on the
+///     engine's thread and must return promptly; see ``reporterFunctionType``.
     ///   - onError: Called when the run fails.
     ///   - onRunnerState: Called when the high-level lifecycle state changes.
     public func start(

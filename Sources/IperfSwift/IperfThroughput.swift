@@ -35,7 +35,17 @@ public struct IperfThroughput {
     }
     
     /// Creates a throughput value from a byte count and duration.
+    ///
+    /// A duration that is not greater than zero yields a rate of zero. The
+    /// engine can report an interval whose start and end times are equal, and
+    /// dividing by it would produce infinity or NaN — values that trap the
+    /// moment a caller converts the rate to an integer. Zero matches the rate
+    /// iperf3 reports for the same interval in its per-stream output.
     public init(bytes initValue: Int, seconds: TimeInterval) {
+        guard seconds > 0 else {
+            self.init(bytesPerSecond: 0)
+            return
+        }
         self.init(bytesPerSecond: Double(initValue) / seconds)
     }
 }

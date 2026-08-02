@@ -9,6 +9,32 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.8] - 2026-08-02
+
+A bug-fix release. A zero-duration reporting interval no longer produces a
+non-finite throughput, and the reporter closure's threading contract is now
+documented.
+
+### Changed
+
+- Documented the reporter closure's threading contract ([#75]): it runs
+  synchronously on the engine's thread, inside the loop that drives the
+  measurement timers, so slow work in it distorts the measurement it reports. A
+  closure blocking for about one reporting interval stretches the intervals that
+  follow; one blocking for several delivers the backlog as a burst of
+  near-zero-duration results, because the engine advances each timer by one
+  period per firing. No behavior change.
+
+### Fixed
+
+- `IperfThroughput(bytes:seconds:)` now reports zero for a duration that is not
+  greater than zero instead of dividing by it ([#73]). The engine can deliver an
+  interval whose start and end times are equal — observed on a loopback TCP run
+  with five streams and a one-second reporting interval — and the resulting
+  infinity trapped as soon as a caller converted the rate to an integer. Zero
+  matches the rate iperf3 reports for the same interval in its per-stream
+  output.
+
 ## [3.21.7] - 2026-07-23
 
 A documentation, test, and CI release. The library's observable behavior is
@@ -277,7 +303,8 @@ unchanged from 3.21.6.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.7...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.8...HEAD
+[3.21.8]: https://github.com/gewill/iperf-swift/compare/v3.21.7...v3.21.8
 [3.21.7]: https://github.com/gewill/iperf-swift/compare/v3.21.6...v3.21.7
 [3.21.6]: https://github.com/gewill/iperf-swift/compare/v3.21.5...v3.21.6
 [3.21.5]: https://github.com/gewill/iperf-swift/compare/v3.21.4...v3.21.5
@@ -321,3 +348,5 @@ unchanged from 3.21.6.
 [#65]: https://github.com/gewill/iperf-swift/issues/65
 [#67]: https://github.com/gewill/iperf-swift/issues/67
 [#69]: https://github.com/gewill/iperf-swift/issues/69
+[#73]: https://github.com/gewill/iperf-swift/issues/73
+[#75]: https://github.com/gewill/iperf-swift/issues/75
