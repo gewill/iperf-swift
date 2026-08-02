@@ -9,6 +9,16 @@ package release number.
 
 ## [Unreleased]
 
+### Fixed
+
+- `IperfThroughput(bytes:seconds:)` now reports zero for a duration that is not
+  greater than zero instead of dividing by it ([#73]). The engine can deliver an
+  interval whose start and end times are equal — observed on a loopback TCP run
+  with five streams and a one-second reporting interval — and the resulting
+  infinity trapped as soon as a caller converted the rate to an integer. Zero
+  matches the rate iperf3 reports for the same interval in its per-stream
+  output.
+
 ## [3.21.7] - 2026-07-23
 
 A documentation, test, and CI release. The library's observable behavior is
@@ -321,3 +331,4 @@ unchanged from 3.21.6.
 [#65]: https://github.com/gewill/iperf-swift/issues/65
 [#67]: https://github.com/gewill/iperf-swift/issues/67
 [#69]: https://github.com/gewill/iperf-swift/issues/69
+[#73]: https://github.com/gewill/iperf-swift/issues/73
