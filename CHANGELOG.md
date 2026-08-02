@@ -9,6 +9,12 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.8] - 2026-08-02
+
+A bug-fix release. A zero-duration reporting interval no longer produces a
+non-finite throughput, and the reporter closure's threading contract is now
+documented.
+
 ### Changed
 
 - Documented the reporter closure's threading contract ([#75]): it runs
@@ -297,7 +303,8 @@ unchanged from 3.21.6.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.7...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.8...HEAD
+[3.21.8]: https://github.com/gewill/iperf-swift/compare/v3.21.7...v3.21.8
 [3.21.7]: https://github.com/gewill/iperf-swift/compare/v3.21.6...v3.21.7
 [3.21.6]: https://github.com/gewill/iperf-swift/compare/v3.21.5...v3.21.6
 [3.21.5]: https://github.com/gewill/iperf-swift/compare/v3.21.4...v3.21.5
