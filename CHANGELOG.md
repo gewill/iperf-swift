@@ -9,6 +9,16 @@ package release number.
 
 ## [Unreleased]
 
+### Changed
+
+- Documented the reporter closure's threading contract ([#75]): it runs
+  synchronously on the engine's thread, inside the loop that drives the
+  measurement timers, so slow work in it distorts the measurement it reports. A
+  closure blocking for about one reporting interval stretches the intervals that
+  follow; one blocking for several delivers the backlog as a burst of
+  near-zero-duration results, because the engine advances each timer by one
+  period per firing. No behavior change.
+
 ### Fixed
 
 - `IperfThroughput(bytes:seconds:)` now reports zero for a duration that is not
@@ -332,3 +342,4 @@ unchanged from 3.21.6.
 [#67]: https://github.com/gewill/iperf-swift/issues/67
 [#69]: https://github.com/gewill/iperf-swift/issues/69
 [#73]: https://github.com/gewill/iperf-swift/issues/73
+[#75]: https://github.com/gewill/iperf-swift/issues/75

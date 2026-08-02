@@ -273,6 +273,32 @@ Callbacks are not guaranteed to run on a specific queue, so dispatch UI updates 
 the main actor or main queue, and keep terminal-state handling idempotent because
 the engine can report a terminal state more than once.
 
+### Keep the reporter closure fast
+
+The reporter closure runs synchronously on the engine's thread, inside the loop
+that drives the measurement timers. Time spent in it is time the engine is not
+measuring, so slow work belongs on another queue:
+
+```swift
+runner.start(
+    { result in
+        let mbps = result.throughput.Mbps          // cheap, on the engine's thread
+        DispatchQueue.main.async { label.text = "\(mbps) Mbit/s" }
+    },
+    { error in print("failed: \(error.debugDescription)") },
+    { state in print("state: \(state)") }
+)
+```
+
+A closure that blocks for about one reporting interval stretches the intervals
+that follow — with a 1-second interval and a closure that sleeps 1.5 seconds,
+every subsequent result reports a 1.5-second duration. A closure that blocks for
+several intervals produces a burst instead: the engine advances each timer by one
+period per firing, so the backlog is delivered as one result spanning the stall
+followed by several near-zero-duration results arriving in the same instant.
+Their throughput is what the arithmetic says and nothing an application should
+display.
+
 ### Lifecycle states
 
 ``IperfRunnerState`` reports high-level progress. In practice the transitions are:
