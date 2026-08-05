@@ -9,6 +9,18 @@ package release number.
 
 ## [Unreleased]
 
+### Changed
+
+- The reporter no longer delivers a very short interval that moved no bytes
+  ([#81]), matching what the engine reports. `iperf_print_intermediate` returns
+  without printing when no stream reaches a tenth of the statistics interval or
+  carries any bytes — the case its own comment describes, where a test ends
+  with a brief interval that moved nothing because the control messages
+  stopping the run queued behind the data. The wrapper had no equivalent check
+  and delivered a result the CLI prints nothing for; a client ending on
+  `numberOfBytes` produced one on every run. **Behavior change:** such a run
+  now delivers one fewer reporter callback.
+
 ### Fixed
 
 - The reporter no longer delivers the same interval twice ([#79]). The engine
@@ -364,3 +376,4 @@ unchanged from 3.21.6.
 [#73]: https://github.com/gewill/iperf-swift/issues/73
 [#75]: https://github.com/gewill/iperf-swift/issues/75
 [#79]: https://github.com/gewill/iperf-swift/issues/79
+[#81]: https://github.com/gewill/iperf-swift/issues/81
