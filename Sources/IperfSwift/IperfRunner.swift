@@ -84,8 +84,18 @@ public typealias runnerStateFunctionType = (_ state: IperfRunnerState) -> Void
 ///
 /// With ``IperfConfiguration/jsonStreamFullOutput`` enabled, the callback first
 /// receives the `start`, `interval`, and `end` event objects, then receives the
-/// complete summary document as its final value. The closure runs synchronously
-/// with the engine and must return promptly.
+/// complete summary document as its final value.
+///
+/// - Important: The closure runs under the same contract as
+///   ``reporterFunctionType`` — synchronously on the engine's own thread,
+///   inside the loop that drives the measurement timers — so blocking it
+///   distorts the measurement it is reporting, in the way described there.
+///
+///   It additionally runs while the runner holds its internal state, so a
+///   closure that blocks also stalls any other thread reading
+///   ``IperfRunner/serverOutput`` or ``IperfRunner/jsonOutput``, or calling
+///   ``IperfRunner/stop()`` or `start`. Reading those two properties from
+///   inside the closure itself is safe and does not deadlock.
 public typealias jsonStreamFunctionType = (_ json: String) -> Void
 
 /// Runs the embedded iperf3 engine as a client or server.

@@ -9,6 +9,19 @@ package release number.
 
 ## [Unreleased]
 
+### Added
+
+- JSON streaming support ([#83]). `IperfConfiguration.jsonStream` enables
+  iperf3's `--json-stream`, and a new `onJSONStream` closure on `IperfRunner`
+  receives each raw event — `start`, then one per interval, then `end` — as it
+  is emitted. `jsonStreamFullOutput` appends the complete summary document as
+  the closure's final value and retains it on `IperfRunner.jsonOutput`, which
+  is readable from that final invocation onward. Setting `jsonStreamFullOutput`
+  without `jsonStream` does nothing, matching the CLI, where
+  `--json-stream-full-output` alone is ignored rather than rejected. The
+  existing three-argument `start` overloads are unchanged, so callers that do
+  not want the events need no edit.
+
 ### Fixed
 
 - The reporter no longer delivers the same interval twice ([#79]). The engine
@@ -364,3 +377,4 @@ unchanged from 3.21.6.
 [#73]: https://github.com/gewill/iperf-swift/issues/73
 [#75]: https://github.com/gewill/iperf-swift/issues/75
 [#79]: https://github.com/gewill/iperf-swift/issues/79
+[#83]: https://github.com/gewill/iperf-swift/pull/83
