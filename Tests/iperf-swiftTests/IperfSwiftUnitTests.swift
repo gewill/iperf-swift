@@ -583,6 +583,8 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertFalse(configuration.oneOff)
         XCTAssertNil(configuration.idleTimeout)
         XCTAssertNil(configuration.rcvTimeout)
+        XCTAssertFalse(configuration.jsonStream)
+        XCTAssertFalse(configuration.jsonStreamFullOutput)
 
         configuration.clientPort = 24_001
         configuration.tos = 32
@@ -592,6 +594,8 @@ final class IperfSwiftUnitTests: XCTestCase {
         configuration.oneOff = true
         configuration.idleTimeout = 30
         configuration.rcvTimeout = 10
+        configuration.jsonStream = true
+        configuration.jsonStreamFullOutput = true
 
         XCTAssertEqual(configuration.clientPort, 24_001)
         XCTAssertEqual(configuration.tos, 32)
@@ -601,6 +605,8 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertTrue(configuration.oneOff)
         XCTAssertEqual(configuration.idleTimeout, 30)
         XCTAssertEqual(configuration.rcvTimeout, 10)
+        XCTAssertTrue(configuration.jsonStream)
+        XCTAssertTrue(configuration.jsonStreamFullOutput)
     }
 
     func testConfigurationAddressFamilyAndDontFragmentDefaults() {

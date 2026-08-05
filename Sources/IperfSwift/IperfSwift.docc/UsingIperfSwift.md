@@ -250,7 +250,7 @@ configuration.timeSkewThreshold = 10           // positive seconds
 ## Running a test
 
 Create an ``IperfRunner`` with ``IperfRunner/init(with:)`` and start it. The three
-trailing closures are the reporter (``reporterFunctionType``), error
+closures are the reporter (``reporterFunctionType``), error
 (``errorFunctionType``), and runner-state (``runnerStateFunctionType``) callbacks.
 
 ```swift
@@ -267,6 +267,7 @@ runner.start(
   ``IperfRunner/init(with:)``
 - ``IperfRunner/start(with:_:_:_:)`` — replaces the configuration first, for
   reusing a runner after a completed run
+- The corresponding `onJSONStream` overloads install a raw JSON callback.
 - ``IperfRunner/stop()`` — requests cancellation of the active run
 
 Callbacks are not guaranteed to run on a specific queue, so dispatch UI updates to
@@ -298,6 +299,33 @@ period per firing, so the backlog is delivered as one result spanning the stall
 followed by several near-zero-duration results arriving in the same instant.
 Their throughput is what the arithmetic says and nothing an application should
 display.
+
+### JSON streaming and full output
+
+Enable both JSON streaming options to match
+`--json-stream --json-stream-full-output`. The JSON callback receives each raw
+event immediately, followed by the complete summary document as its final value.
+The runner also retains that final document in ``IperfRunner/jsonOutput``.
+
+```swift
+configuration.jsonStream = true
+configuration.jsonStreamFullOutput = true
+
+var events: [String] = []
+runner.start(
+    { result in print(result.throughput.Mbps) },
+    { error in print(error.debugDescription) },
+    { state in print(state) },
+    onJSONStream: { json in
+        events.append(json)
+        // The last callback is the complete document in full-output mode.
+    }
+)
+```
+
+Without ``IperfConfiguration/jsonStreamFullOutput``, the callback still receives
+the `start`, `interval`, and `end` events, but no monolithic document is built or
+stored. Keep this callback fast for the same reason as the reporter callback.
 
 ### Lifecycle states
 

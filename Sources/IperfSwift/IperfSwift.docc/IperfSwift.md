@@ -29,6 +29,7 @@ the main actor or main queue, and keep terminal-state handling idempotent.
 - ``reporterFunctionType``
 - ``errorFunctionType``
 - ``runnerStateFunctionType``
+- ``jsonStreamFunctionType``
 
 ### Protocol Configuration
 

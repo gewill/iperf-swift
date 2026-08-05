@@ -25,6 +25,7 @@ maintained. Development continues here without upstream involvement.
 - iperf3 RSA authentication with OAEP and optional legacy PKCS#1 v1.5 padding
 - DSCP marking and network-interface binding
 - Per-interval callbacks with per-stream results
+- JSON streaming with optional complete final output
 - macOS TCP statistics
 - Self-contained package: the iperf3 engine is bundled and OpenSSL ships as an
   XCFramework, so no machine-specific library paths leak into consuming apps
@@ -163,7 +164,7 @@ record both the checks enforced today and known gaps that still have follow-up
 work, so planned validation is not mistaken for shipped behavior:
 
 1. **No value on Apple platforms → not exposed.** CLI-only conveniences (daemon
-   mode, JSON-to-stdout, file-based data source) are intentionally omitted.
+   mode and file-based data source) are intentionally omitted.
    Results arrive as structured Swift values through callbacks, so a small API
    is a feature rather than a gap.
 2. **Invalid and knowable up front → made unrepresentable.** Where the type
@@ -283,6 +284,26 @@ remain higher priority than same-role credential completeness.
 | `dontFragment` + `addressFamily == .any` | Allowed; the flag takes effect only if resolution produces an IPv4 UDP socket | Runtime by design |
 | `clientPort` + parallel/bidirectional streams | Highest port is `clientPort + numStreams - 1` for unidirectional tests and `clientPort + 2 × numStreams - 1` for bidirectional tests | Implemented; the highest port may equal `65,535` |
 
+### JSON streaming
+
+Set `jsonStream = true` and `jsonStreamFullOutput = true` to match
+`--json-stream --json-stream-full-output`. `onJSONStream` receives the raw
+`start`, `interval`, and `end` event objects, then the complete JSON document.
+The final document is also available as `runner.jsonOutput`.
+
+```swift
+configuration.jsonStream = true
+configuration.jsonStreamFullOutput = true
+
+var events: [String] = []
+runner.start(
+    { _ in },
+    { error in print(error.debugDescription) },
+    { state in print(state) },
+    onJSONStream: { events.append($0) }
+)
+```
+
 ### Unsupported options
 
 These iperf3 capabilities are intentionally not exposed. See
@@ -292,7 +313,7 @@ These iperf3 capabilities are intentionally not exposed. See
 | --- | --- | --- |
 | SCTP transport (`--sctp`) | Not supported | Apple platform builds of iperf3 are not compiled with SCTP, so `IperfProtocol` offers only `.tcp` and `.udp` — selecting SCTP is a compile-time error rather than a runtime failure. The `IperfError.IENOSCTP` code is retained for callers mirroring the engine's error set. No plan to support it while Apple platforms lack SCTP. |
 | Daemon / server persistence (`--daemon`) | Not exposed | The runner is an in-process object with an explicit lifecycle; background daemonization has no meaning inside a host app. Use `oneOff` or `idleTimeout` to bound a server's lifetime. |
-| JSON output (`--json`) | Not exposed | Results are delivered as typed `IperfIntervalResult` values through callbacks, so there is no need to parse the engine's JSON. Raw engine text logging is still available through `logfile` and `verbose`. |
+| Monolithic-only JSON output (`--json`) | Not exposed | Use typed `IperfIntervalResult` callbacks, or enable `jsonStream` plus `jsonStreamFullOutput` when both live events and the complete JSON document are required. |
 | File-based data source (`--file`) | Not exposed | Streaming a file as the payload is a CLI convenience with no library use case; block size and payload shape are controlled through `blockSize` and `repeatingPayload`. |
 
 ## Authentication
