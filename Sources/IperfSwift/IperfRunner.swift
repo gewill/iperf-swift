@@ -109,6 +109,10 @@ public class IperfRunner {
 
     private var storedServerOutput: String?
 
+    // The stream measurements behind the most recent delivered interval
+    // result, used to recognize a re-read of the engine's unchanged entry.
+    private var previousDeliveredStreams: [IperfStreamIntervalResult]?
+
     /// The remote server's textual results from the most recent client run.
     ///
     /// Populated at the end of a run that enabled
@@ -236,8 +240,41 @@ public class IperfRunner {
         
         // Calculate sum/average over streams
         result.evaluate()
-        
+
+        // The engine keeps one interval entry per stream and overwrites it in
+        // place (add_to_interval_list), and every reporter call site reads that
+        // one entry — the periodic timer and the run's closing summary alike.
+        // A reporter call with no intervening statistics gathering therefore
+        // re-reads what was already delivered, which a consumer summing
+        // interval bytes counts twice. Identical start, end and byte count
+        // across every stream means no measurement was added, so there is
+        // nothing to deliver.
+        if IperfRunner.isRepeatDelivery(previousDeliveredStreams, result.streams) {
+            return
+        }
+        previousDeliveredStreams = result.streams
+
         onReporterFunction(result)
+    }
+
+    // Exact equality only: a re-read of an unchanged entry matches in every
+    // identity field. Two genuinely distinct intervals cannot, because a new
+    // entry starts where the previous one ended and its byte counter is reset
+    // on append — so a match means either a re-read or an empty zero-length
+    // interval, neither of which carries information.
+    static func isRepeatDelivery(
+        _ previous: [IperfStreamIntervalResult]?,
+        _ current: [IperfStreamIntervalResult]
+    ) -> Bool {
+        guard let previous = previous, previous.count == current.count, !current.isEmpty else {
+            return false
+        }
+        return zip(previous, current).allSatisfy { previous, current in
+            previous.direction == current.direction
+                && previous.startTime == current.startTime
+                && previous.endTime == current.endTime
+                && previous.bytesTransferred == current.bytesTransferred
+        }
     }
     
     // MARK: Private methods
@@ -777,6 +814,7 @@ public class IperfRunner {
         
         cleanState(isExit: false)
         storedServerOutput = nil
+        previousDeliveredStreams = nil
         state = .initialising
 
         if let error = configurationError() {

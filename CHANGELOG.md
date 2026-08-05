@@ -9,6 +9,19 @@ package release number.
 
 ## [Unreleased]
 
+### Fixed
+
+- The reporter no longer delivers the same interval twice ([#79]). The engine
+  keeps one interval entry per stream and overwrites it in place, and every
+  reporter call site reads that one entry — the periodic timer and the run's
+  closing summary alike — so a reporter call with no intervening statistics
+  gathering re-read what had already been delivered. A consumer summing
+  interval bytes counted the repeat; the reported run came out 14.5% high. A
+  delivery whose streams all match the previous one in direction, start time,
+  end time and byte count is now suppressed. The comparison is exact equality,
+  which no genuinely distinct interval can satisfy: a new entry starts where
+  the previous one ended, and its byte counter is reset when it is appended.
+
 ## [3.21.8] - 2026-08-02
 
 A bug-fix release. A zero-duration reporting interval no longer produces a
@@ -350,3 +363,4 @@ unchanged from 3.21.6.
 [#69]: https://github.com/gewill/iperf-swift/issues/69
 [#73]: https://github.com/gewill/iperf-swift/issues/73
 [#75]: https://github.com/gewill/iperf-swift/issues/75
+[#79]: https://github.com/gewill/iperf-swift/issues/79
