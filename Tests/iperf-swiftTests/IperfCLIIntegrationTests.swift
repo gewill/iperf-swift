@@ -1592,20 +1592,56 @@ final class IperfCLIIntegrationTests: XCTestCase {
     }
 
     func testJSONStreamingPreservesEventsAndAppendsFullOutput() throws {
-        // CLI baseline for `--json-stream --json-stream-full-output`: start,
-        // interval, and end event objects are followed by one complete JSON
-        // document whose intervals array retains the streamed measurements.
+        // Measured CLI baseline for `--json-stream --json-stream-full-output`:
+        // one JSON object per line for the start, interval, and end events,
+        // then the complete document pretty-printed across the remaining
+        // lines. The wrapper delivers the same sequence through its callback,
+        // one value per event and the document as the final value.
         let tools = try TestTools()
-        let port = try TestTools.freePort()
+
+        let cliPort = try TestTools.freePort()
         let cliServer = Process()
         cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
-        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.arguments = ["-s", "-p", String(cliPort), "-1"]
         cliServer.standardOutput = FileHandle.nullDevice
         cliServer.standardError = FileHandle.nullDevice
         try cliServer.run()
         addTeardownBlock {
             if cliServer.isRunning {
                 cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        let cliResult = try tools.run(
+            tools.iperf3,
+            arguments: [
+                "-c", "127.0.0.1", "-p", String(cliPort),
+                "-P", "1", "-t", "1", "-i", "0.25",
+                "--json-stream", "--json-stream-full-output",
+            ]
+        )
+        let (cliEventNames, cliSummary) = try Self.splitJSONStream(cliResult.output)
+        XCTAssertEqual(cliEventNames.first, "start", cliResult.output)
+        XCTAssertEqual(cliEventNames.last, "end", cliResult.output)
+        XCTAssertGreaterThan(cliEventNames.filter { $0 == "interval" }.count, 0)
+        let cliIntervals = try XCTUnwrap(cliSummary["intervals"] as? [[String: Any]])
+        XCTAssertEqual(
+            cliIntervals.count,
+            cliEventNames.filter { $0 == "interval" }.count,
+            "the CLI's summary should retain one entry per streamed interval"
+        )
+
+        let port = try TestTools.freePort()
+        let wrapperServer = Process()
+        wrapperServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        wrapperServer.arguments = ["-s", "-p", String(port), "-1"]
+        wrapperServer.standardOutput = FileHandle.nullDevice
+        wrapperServer.standardError = FileHandle.nullDevice
+        try wrapperServer.run()
+        addTeardownBlock {
+            if wrapperServer.isRunning {
+                wrapperServer.terminate()
             }
         }
         Thread.sleep(forTimeInterval: 0.3)
@@ -1675,6 +1711,55 @@ final class IperfCLIIntegrationTests: XCTestCase {
         )
         XCTAssertEqual(client.jsonOutput, outputs.last)
         XCTAssertTrue(outputWasReadableFromFinalCallback)
+
+        // The wrapper's sequence matches the CLI's for the same run: the same
+        // event names in the same order, and a summary carrying the same keys.
+        // Interval counts are left out of the comparison because the two runs
+        // are independent and either can land on one interval more.
+        XCTAssertEqual(
+            Array(NSOrderedSet(array: eventNames)) as? [String],
+            Array(NSOrderedSet(array: cliEventNames)) as? [String]
+        )
+        XCTAssertEqual(eventNames.first, cliEventNames.first)
+        XCTAssertEqual(eventNames.last, cliEventNames.last)
+        XCTAssertEqual(
+            Set(summary.keys), Set(cliSummary.keys),
+            "the wrapper's final document should carry the same top-level keys as the CLI's"
+        )
+    }
+
+    /// Splits `--json-stream` output into its per-line event names and the
+    /// complete document that `--json-stream-full-output` pretty-prints after
+    /// them.
+    private static func splitJSONStream(
+        _ output: String
+    ) throws -> (eventNames: [String], summary: [String: Any]) {
+        var eventNames: [String] = []
+        var documentLines: [String] = []
+
+        for line in output.components(separatedBy: "\n") {
+            if documentLines.isEmpty {
+                if let data = line.data(using: .utf8),
+                   let object = try? JSONSerialization.jsonObject(with: data),
+                   let event = (object as? [String: Any])?["event"] as? String {
+                    eventNames.append(event)
+                    continue
+                }
+                // The document begins at the first line the engine indents.
+                guard line.trimmingCharacters(in: .whitespaces) == "{" else {
+                    continue
+                }
+            }
+            documentLines.append(line)
+        }
+
+        let summary = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(documentLines.joined(separator: "\n").utf8)
+            ) as? [String: Any],
+            "could not parse the complete document out of:\n\(output)"
+        )
+        return (eventNames, summary)
     }
 
     func testSwiftClientDontFragmentDropsOversizedLoopbackDatagrams() throws {
