@@ -241,6 +241,20 @@ public class IperfRunner {
         // Calculate sum/average over streams
         result.evaluate()
 
+        // The engine declines to report an interval that is both very short
+        // and empty — iperf_print_intermediate returns before printing when no
+        // stream reaches a tenth of the statistics interval or carries any
+        // bytes. Its comment names the case: a test can end with a brief
+        // interval that moved nothing, because the control messages stopping
+        // the run queue behind the data. Matching that keeps the wrapper's
+        // deliveries aligned with what the CLI reports.
+        if IperfRunner.isUnreportedShortInterval(
+            result.streams,
+            statsInterval: runningTest.stats_interval
+        ) {
+            return
+        }
+
         // The engine keeps one interval entry per stream and overwrites it in
         // place (add_to_interval_list), and every reporter call site reads that
         // one entry — the periodic timer and the run's closing summary alike.
@@ -255,6 +269,27 @@ public class IperfRunner {
         previousDeliveredStreams = result.streams
 
         onReporterFunction(result)
+    }
+
+    // Mirrors iperf_print_intermediate's own test: one stream reaching a tenth
+    // of the statistics interval, or carrying any bytes, makes the interval
+    // worth reporting. The length comes from the entry's own start and end
+    // times, as it does in the engine, rather than from the duration field.
+    //
+    // An empty stream list is reported rather than suppressed. The engine
+    // always has streams here; the wrapper's list is empty only while the
+    // engine is omitting, which it filters out separately, and suppressing
+    // those deliveries would change omit behavior rather than align it.
+    static func isUnreportedShortInterval(
+        _ streams: [IperfStreamIntervalResult],
+        statsInterval: TimeInterval
+    ) -> Bool {
+        guard !streams.isEmpty else {
+            return false
+        }
+        return !streams.contains { stream in
+            stream.intervalTimeDiff >= statsInterval * 0.10 || stream.bytesTransferred > 0
+        }
     }
 
     // Exact equality only: a re-read of an unchanged entry matches in every

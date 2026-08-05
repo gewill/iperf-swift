@@ -389,6 +389,119 @@ final class IperfCLIIntegrationTests: XCTestCase {
     // distinct source port (`--cport`), which the server names in its output,
     // so a crossed delivery would leave a runner holding another's output —
     // missing its own client port.
+    func testByteCountRunOmitsTheShortEmptyIntervalTheCLIOmits() throws {
+        // A run that ends on a byte count stops mid-interval, leaving a very
+        // short interval that moved nothing. iperf_print_intermediate declines
+        // to report it, and the wrapper must not deliver it either.
+        let tools = try TestTools()
+        let arguments = ["-R", "-P", "5", "-i", "1", "-n", "200M"]
+
+        let cliPort = try TestTools.freePort()
+        let cliServer = Process()
+        let cliServerOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(cliPort), "-1"]
+        cliServer.standardOutput = cliServerOutput
+        cliServer.standardError = cliServerOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        let cliResult = try tools.run(
+            tools.iperf3,
+            arguments: ["-c", "127.0.0.1", "-p", String(cliPort), "-J"] + arguments
+        )
+        let cliJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(cliResult.output.utf8)
+            ) as? [String: Any]
+        )
+        let cliIntervals = try XCTUnwrap(cliJSON["intervals"] as? [[String: Any]])
+        let cliShortEmptyIntervals = cliIntervals.filter { interval in
+            guard let sum = interval["sum"] as? [String: Any],
+                  let seconds = sum["seconds"] as? Double,
+                  let bytes = sum["bytes"] as? Int else {
+                return false
+            }
+            return bytes == 0 && seconds < 0.1
+        }
+        XCTAssertTrue(cliIntervals.count > 0, "the CLI reported no intervals")
+        XCTAssertEqual(
+            cliShortEmptyIntervals.count, 0,
+            "the CLI reported a short empty interval, so the wrapper has nothing to match"
+        )
+
+        let port = try TestTools.freePort()
+        let wrapperServer = Process()
+        let wrapperServerOutput = Pipe()
+        wrapperServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        wrapperServer.arguments = ["-s", "-p", String(port), "-1"]
+        wrapperServer.standardOutput = wrapperServerOutput
+        wrapperServer.standardError = wrapperServerOutput
+        try wrapperServer.run()
+        addTeardownBlock {
+            if wrapperServer.isRunning {
+                wrapperServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.prot = .tcp
+        configuration.mode = .download
+        configuration.numStreams = 5
+        configuration.numberOfBytes = 200 * 1_024 * 1_024
+        configuration.reporterInterval = 1
+
+        let finished = expectation(description: "byte-count client finished")
+        var didFinish = false
+        var delivered: [(duration: TimeInterval, bytes: Int)] = []
+        let lock = NSLock()
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { result in
+                lock.lock()
+                delivered.append((result.duration, result.totalBytes))
+                lock.unlock()
+            },
+            { error in
+                XCTFail("byte-count client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 30)
+        lock.lock()
+        let results = delivered
+        lock.unlock()
+
+        XCTAssertGreaterThan(results.count, 0, "the wrapper delivered no intervals")
+        let shortEmpty = results.filter { $0.bytes == 0 && $0.duration < 0.1 }
+        XCTAssertEqual(
+            shortEmpty.count, 0,
+            "delivered a short empty interval the CLI omits: \(shortEmpty)"
+        )
+    }
+
     func testIndependentConcurrentRunnersDoNotCrossCallbacks() throws {
         let tools = try TestTools()
         let runnerCount = 3
