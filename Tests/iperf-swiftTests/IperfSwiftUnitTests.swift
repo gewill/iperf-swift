@@ -928,6 +928,71 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertTrue(result.throughput.Mbps.isFinite)
     }
 
+    func testRepeatDeliveryDetectionMatchesReReadEntries() {
+        // The engine keeps one interval entry per stream, so a reporter call
+        // with no intervening statistics gathering re-reads what was already
+        // delivered. The two rows are identical in every identity field.
+        func stream(
+            _ direction: IperfDirection,
+            start: TimeInterval,
+            end: TimeInterval,
+            bytes: Int
+        ) -> IperfStreamIntervalResult {
+            var result = IperfStreamIntervalResult()
+            result.direction = direction
+            result.startTime = start
+            result.endTime = end
+            result.bytesTransferred = bytes
+            result.intervalDuration = end - start
+            return result
+        }
+
+        // Sequences 0/1 of the reported table: a full-length interval repeated.
+        let delivered = [
+            stream(.download, start: 0, end: 1.0035, bytes: 2_483_290_112),
+            stream(.download, start: 0, end: 1.0035, bytes: 2_483_290_112),
+        ]
+        XCTAssertTrue(IperfRunner.isRepeatDelivery(delivered, delivered))
+
+        // Sequences 6/7: the zero-duration pair repeats the same way.
+        let zeroDuration = [stream(.download, start: 6.005, end: 6.005, bytes: 901_644_288)]
+        XCTAssertTrue(IperfRunner.isRepeatDelivery(zeroDuration, zeroDuration))
+
+        // The first delivery of a run has nothing to compare against.
+        XCTAssertFalse(IperfRunner.isRepeatDelivery(nil, delivered))
+        XCTAssertFalse(IperfRunner.isRepeatDelivery([], []))
+
+        // A genuinely new interval starts where the previous one ended.
+        let next = [
+            stream(.download, start: 1.0035, end: 2.0030, bytes: 2_417_164_288),
+            stream(.download, start: 1.0035, end: 2.0030, bytes: 2_417_164_288),
+        ]
+        XCTAssertFalse(IperfRunner.isRepeatDelivery(delivered, next))
+
+        // A difference in any single identity field is a distinct delivery,
+        // including one stream out of several disagreeing.
+        let oneStreamDiffers = [
+            delivered[0],
+            stream(.download, start: 0, end: 1.0035, bytes: 2_483_290_113),
+        ]
+        XCTAssertFalse(IperfRunner.isRepeatDelivery(delivered, oneStreamDiffers))
+        XCTAssertFalse(
+            IperfRunner.isRepeatDelivery(
+                zeroDuration,
+                [stream(.upload, start: 6.005, end: 6.005, bytes: 901_644_288)]
+            )
+        )
+        XCTAssertFalse(
+            IperfRunner.isRepeatDelivery(
+                zeroDuration,
+                [stream(.download, start: 6.005, end: 6.006, bytes: 901_644_288)]
+            )
+        )
+
+        // A stream count change is never a repeat.
+        XCTAssertFalse(IperfRunner.isRepeatDelivery(delivered, [delivered[0]]))
+    }
+
     func testTCPIntervalAggregationIsRepeatable() {
         var first = IperfStreamIntervalResult()
         first.bytesTransferred = 1_000
