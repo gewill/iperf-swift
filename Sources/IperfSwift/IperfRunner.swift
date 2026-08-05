@@ -80,6 +80,13 @@ public typealias reporterFunctionType = (_ result: IperfIntervalResult) -> Void
 public typealias errorFunctionType = (_ error: IperfError) -> Void
 /// Receives a high-level runner lifecycle change.
 public typealias runnerStateFunctionType = (_ state: IperfRunnerState) -> Void
+/// Receives one raw JSON value emitted by libiperf's JSON streaming mode.
+///
+/// With ``IperfConfiguration/jsonStreamFullOutput`` enabled, the callback first
+/// receives the `start`, `interval`, and `end` event objects, then receives the
+/// complete summary document as its final value. The closure runs synchronously
+/// with the engine and must return promptly.
+public typealias jsonStreamFunctionType = (_ json: String) -> Void
 
 /// Runs the embedded iperf3 engine as a client or server.
 ///
@@ -97,6 +104,7 @@ public class IperfRunner {
     private var onReporterFunction: reporterFunctionType = {result in }
     private var onErrorFunction: errorFunctionType = {error in }
     private var onRunnerStateFunction: runnerStateFunctionType = {state in }
+    private var onJSONStreamFunction: jsonStreamFunctionType = {json in }
     
     private var configuration: IperfConfiguration? = nil
     private var currentTest: UnsafeMutablePointer<iperf_test>? = nil
@@ -108,6 +116,7 @@ public class IperfRunner {
     }
 
     private var storedServerOutput: String?
+    private var storedJSONOutput: String?
 
     // The stream measurements behind the most recent delivered interval
     // result, used to recognize a re-read of the engine's unchanged entry.
@@ -124,6 +133,16 @@ public class IperfRunner {
     /// another run clears the previous value.
     public var serverOutput: String? {
         withState { storedServerOutput }
+    }
+
+    /// The complete JSON document from the most recent JSON streaming run.
+    ///
+    /// This is populated when both ``IperfConfiguration/jsonStream`` and
+    /// ``IperfConfiguration/jsonStreamFullOutput`` are enabled. It becomes
+    /// readable before the final invocation of the JSON stream callback and is
+    /// cleared when another run starts.
+    public var jsonOutput: String? {
+        withState { storedJSONOutput }
     }
     
     // MARK: Initializers
@@ -151,6 +170,35 @@ public class IperfRunner {
         // Process the interval status after the engine has updated the test.
         if let testPointer = refTest {
             runner?.handleReporterStatus(testPointer)
+        }
+    }
+
+    private let jsonStreamCallback: @convention(c) (
+        UnsafeMutablePointer<iperf_test>?,
+        UnsafeMutablePointer<CChar>?
+    ) -> Void = { refTest, refJSON in
+        guard let testPointer = refTest,
+              let jsonPointer = refJSON,
+              let runner = IperfRunnerRegistry.shared.runner(for: testPointer) else {
+            return
+        }
+        runner.handleJSONStreamOutput(jsonPointer, from: testPointer)
+    }
+
+    fileprivate func handleJSONStreamOutput(
+        _ jsonPointer: UnsafeMutablePointer<CChar>,
+        from testPointer: UnsafeMutablePointer<iperf_test>
+    ) {
+        let json = String(cString: jsonPointer)
+        withState {
+            guard currentTest == testPointer else {
+                return
+            }
+            if let finalOutput = iperf_get_test_json_output_string(testPointer),
+               finalOutput == jsonPointer {
+                storedJSONOutput = json
+            }
+            onJSONStreamFunction(json)
         }
     }
 
@@ -549,6 +597,13 @@ public class IperfRunner {
             iperf_set_test_logfile(currentTest, logfile)
         }
         iperf_set_verbose(currentTest, configuration.verbose ? 1 : 0)
+        if configuration.jsonStream {
+            iperf_set_test_json_output(currentTest, 1)
+            iperf_set_test_json_stream(currentTest, 1)
+        }
+        if configuration.jsonStreamFullOutput {
+            iperf_set_test_json_stream_full_output(currentTest, 1)
+        }
         
         if let rcvTimeout = configuration.rcvTimeout, rcvTimeout.isFinite, rcvTimeout > 0 {
             let seconds = min(rcvTimeout, Double(UInt32.max))
@@ -763,21 +818,53 @@ public class IperfRunner {
     /// - Parameters:
     ///   - configuration: The client or server options for this run.
     ///   - onReporter: Called when an interval result is available. Runs on the
-///     engine's thread and must return promptly; see ``reporterFunctionType``.
+    ///     engine's thread and must return promptly; see ``reporterFunctionType``.
     ///   - onError: Called when the run fails.
     ///   - onRunnerState: Called when the high-level lifecycle state changes.
     public func start(
         with configuration: IperfConfiguration,
         _ onReporter: @escaping reporterFunctionType,
         _ onError: @escaping errorFunctionType,
-        _ onRunnerState: @escaping runnerStateFunctionType)
+        _ onRunnerState: @escaping runnerStateFunctionType
+    ) {
+        start(
+            with: configuration,
+            onReporter,
+            onError,
+            onRunnerState,
+            onJSONStream: { _ in }
+        )
+    }
+
+    /// Starts a run after replacing the runner's configuration and installs a
+    /// raw JSON streaming callback.
+    ///
+    /// If a run is already active, this call is silently ignored.
+    /// - Parameters:
+    ///   - configuration: The client or server options for this run.
+    ///   - onReporter: Called when an interval result is available.
+    ///   - onError: Called when the run fails.
+    ///   - onRunnerState: Called when the high-level lifecycle state changes.
+    ///   - onJSONStream: Called for each raw JSON value emitted by JSON
+    ///     streaming mode; see ``jsonStreamFunctionType``.
+    public func start(
+        with configuration: IperfConfiguration,
+        _ onReporter: @escaping reporterFunctionType,
+        _ onError: @escaping errorFunctionType,
+        _ onRunnerState: @escaping runnerStateFunctionType,
+        onJSONStream: @escaping jsonStreamFunctionType)
     {
         stateQueue.async {
             guard self.currentTest == nil else {
                 return
             }
             self.configuration = configuration
-            self.start(onReporter, onError, onRunnerState)
+            self.start(
+                onReporter,
+                onError,
+                onRunnerState,
+                onJSONStream: onJSONStream
+            )
         }
     }
     
@@ -789,7 +876,7 @@ public class IperfRunner {
     /// starting another run.
     /// - Parameters:
     ///   - onReporter: Called when an interval result is available. Runs on the
-///     engine's thread and must return promptly; see ``reporterFunctionType``.
+    ///     engine's thread and must return promptly; see ``reporterFunctionType``.
     ///   - onError: Called when the run fails.
     ///   - onRunnerState: Called when the high-level lifecycle state changes.
     public func start(
@@ -797,9 +884,38 @@ public class IperfRunner {
         _ onError: @escaping errorFunctionType,
         _ onRunnerState: @escaping runnerStateFunctionType
     ) {
+        start(
+            onReporter,
+            onError,
+            onRunnerState,
+            onJSONStream: { _ in }
+        )
+    }
+
+    /// Starts a run with the configuration supplied at initialization and
+    /// installs a raw JSON streaming callback.
+    ///
+    /// If a run is already active, this call is silently ignored.
+    /// - Parameters:
+    ///   - onReporter: Called when an interval result is available.
+    ///   - onError: Called when the run fails.
+    ///   - onRunnerState: Called when the high-level lifecycle state changes.
+    ///   - onJSONStream: Called for each raw JSON value emitted by JSON
+    ///     streaming mode; see ``jsonStreamFunctionType``.
+    public func start(
+        _ onReporter: @escaping reporterFunctionType,
+        _ onError: @escaping errorFunctionType,
+        _ onRunnerState: @escaping runnerStateFunctionType,
+        onJSONStream: @escaping jsonStreamFunctionType
+    ) {
         if DispatchQueue.getSpecific(key: stateQueueKey) == nil {
             stateQueue.async {
-                self.start(onReporter, onError, onRunnerState)
+                self.start(
+                    onReporter,
+                    onError,
+                    onRunnerState,
+                    onJSONStream: onJSONStream
+                )
             }
             return
         }
@@ -811,10 +927,12 @@ public class IperfRunner {
         onReporterFunction = onReporter
         onErrorFunction = onError
         onRunnerStateFunction = onRunnerState
+        onJSONStreamFunction = onJSONStream
         
         cleanState(isExit: false)
         storedServerOutput = nil
         previousDeliveredStreams = nil
+        storedJSONOutput = nil
         state = .initialising
 
         if let error = configurationError() {
@@ -839,6 +957,9 @@ public class IperfRunner {
         // address (see IperfRunnerRegistry).
         testPointer.pointee.reporter_callback = reporterCallback
         IperfRunnerRegistry.shared.register(self, for: testPointer)
+        if configuration?.jsonStream == true {
+            iperf_set_test_json_callback(testPointer, jsonStreamCallback)
+        }
 
         guard let configuration = configuration else {
             return onError(.INIT_ERROR)

@@ -53,6 +53,8 @@
 - ``getServerOutput``
 - ``logfile``
 - ``verbose``
+- ``jsonStream``
+- ``jsonStreamFullOutput``
 
 ### Authentication
 

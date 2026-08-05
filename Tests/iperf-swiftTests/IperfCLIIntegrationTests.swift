@@ -1478,6 +1478,92 @@ final class IperfCLIIntegrationTests: XCTestCase {
         XCTAssertTrue(text.contains("\"start\""), text)
     }
 
+    func testJSONStreamingPreservesEventsAndAppendsFullOutput() throws {
+        // CLI baseline for `--json-stream --json-stream-full-output`: start,
+        // interval, and end event objects are followed by one complete JSON
+        // document whose intervals array retains the streamed measurements.
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = FileHandle.nullDevice
+        cliServer.standardError = FileHandle.nullDevice
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        var configuration = IperfConfiguration()
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.mode = .upload
+        configuration.numStreams = 1
+        configuration.duration = 1
+        configuration.reporterInterval = 0.25
+        configuration.jsonStream = true
+        configuration.jsonStreamFullOutput = true
+
+        let finished = expectation(description: "JSON streaming client finished")
+        var outputs: [String] = []
+        var outputWasReadableFromFinalCallback = false
+        var didFinish = false
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { _ in },
+            { error in
+                XCTFail("JSON streaming client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            onJSONStream: { [weak client] json in
+                outputs.append(json)
+                let object = try? JSONSerialization.jsonObject(with: Data(json.utf8))
+                if (object as? [String: Any])?["event"] == nil {
+                    outputWasReadableFromFinalCallback = client?.jsonOutput == json
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 8)
+
+        let objects = try outputs.map {
+            try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
+            )
+        }
+        let eventNames = objects.compactMap { $0["event"] as? String }
+        XCTAssertEqual(eventNames.first, "start")
+        XCTAssertEqual(eventNames.last, "end")
+        XCTAssertGreaterThan(eventNames.filter { $0 == "interval" }.count, 0)
+
+        let summary = try XCTUnwrap(objects.last)
+        XCTAssertNil(summary["event"])
+        XCTAssertNotNil(summary["start"])
+        XCTAssertNotNil(summary["end"])
+        let summaryIntervals = try XCTUnwrap(summary["intervals"] as? [[String: Any]])
+        XCTAssertEqual(
+            summaryIntervals.count,
+            eventNames.filter { $0 == "interval" }.count
+        )
+        XCTAssertEqual(client.jsonOutput, outputs.last)
+        XCTAssertTrue(outputWasReadableFromFinalCallback)
+    }
+
     func testSwiftClientDontFragmentDropsOversizedLoopbackDatagrams() throws {
         // CLI-verified baseline: a 20000-byte UDP payload exceeds the loopback
         // MTU. Without DF it fragments and flows; with DF every send fails and
