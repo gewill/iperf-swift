@@ -43,7 +43,43 @@ public struct IperfStreamIntervalResult {
     var intervalTimeDiff = TimeInterval(0.0)
 
     init() {}
-    
+
+    /// Creates a synthetic stream measurement.
+    ///
+    /// The engine builds its own results from `iperf_interval_results`. This
+    /// initializer exists for consumers that must produce results the library
+    /// did not measure — SwiftUI previews, and test doubles that deliver
+    /// through the real ``reporterFunctionType`` callback instead of reaching
+    /// past a consumer's own receiving path.
+    ///
+    /// Only the fields that feed the aggregates are parameters. The cumulative
+    /// counters the wrapper carries but never reads are left at zero, and the
+    /// interval's own length is derived rather than accepted: the engine
+    /// computes it from the same two timestamps, so taking it separately would
+    /// only allow a stream whose length contradicts its own start and end.
+    public init(
+        direction: IperfDirection = .upload,
+        bytesTransferred: Int = 0,
+        intervalDuration: Double = 0,
+        startTime: Double = 0,
+        endTime: Double = 0,
+        intervalPacketCount: Int64 = 0,
+        intervalCntError: Int64 = 0,
+        intervalOutoforderPackets: Int64 = 0,
+        jitter: Double = 0
+    ) {
+        self.direction = direction
+        self.bytesTransferred = bytesTransferred
+        self.intervalDuration = intervalDuration
+        self.startTime = startTime
+        self.endTime = endTime
+        self.intervalPacketCount = intervalPacketCount
+        self.intervalCntError = intervalCntError
+        self.intervalOutoforderPackets = intervalOutoforderPackets
+        self.jitter = jitter
+        intervalTimeDiff = max(endTime - startTime, 0)
+    }
+
     init(_ results: iperf_interval_results) {
         var diff = iperf_time()
         var time1Pointer: UnsafeMutablePointer<iperf_time>?
