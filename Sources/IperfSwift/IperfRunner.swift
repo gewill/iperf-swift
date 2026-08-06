@@ -243,7 +243,16 @@ public class IperfRunner {
     }
 
     private func handleReporterStatusLocked(_ pointer: UnsafeMutablePointer<iperf_test>) {
-        if state != .running {
+        // A stopped run is still a run until the engine says otherwise.
+        // `stop()` sets the engine's `done` flag and moves the runner to
+        // `.stopping`, but the engine then gathers one final measurement and
+        // reports it under DISPLAY_RESULTS — the same closing delivery a run
+        // that reaches its duration makes. Ignoring reporter calls while
+        // stopping dropped that interval, so the bytes measured since the
+        // previous one never reached the consumer: up to a full reporting
+        // period, which a summary built by summing intervals reports as
+        // missing traffic.
+        if state != .running && state != .stopping {
             return
         }
         guard pointer == currentTest,
