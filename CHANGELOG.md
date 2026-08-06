@@ -9,6 +9,31 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.11] - 2026-08-06
+
+A bug-fix release for server mode. A client going away no longer looks like a
+failure, so a server that keeps listening is no longer interrupted by the most
+ordinary way its run can end.
+
+### Fixed
+
+- A server whose client terminated no longer reports a failure ([#90]). The
+  engine reports failure through its return code; `i_errno` is a global it also
+  writes on paths that succeed. `CLIENT_TERMINATE` prints the run's summary,
+  sets `IECLIENTTERM` and returns 0 — the engine's way of saying this run is
+  over, which is why the CLI prints that line and goes back to listening. The
+  wrapper read `i_errno` as the verdict and turned the completed run into
+  `IperfRunnerState/error`; because `i_errno` is not thread-local, a receiver
+  thread ending on the closed socket could overwrite it first, so the delivered
+  code was usually `IESTREAMREAD` rather than anything describing the outcome.
+  Such a run now reports `IperfRunnerState/finished` with no error callback,
+  and the intervals measured before the client left are unaffected.
+
+  A client that loses its server is unchanged: the engine returns -1 there, so
+  it still reports `IESERVERTERM`. The asymmetry is the engine's own — a client
+  has a duration to fall short of, while a server's run only ever ends when its
+  client ends it.
+
 ## [3.21.10] - 2026-08-06
 
 An API release. The library's measurement behavior is unchanged from 3.21.9;
@@ -376,7 +401,8 @@ unchanged from 3.21.6.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.10...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.11...HEAD
+[3.21.11]: https://github.com/gewill/iperf-swift/compare/v3.21.10...v3.21.11
 [3.21.10]: https://github.com/gewill/iperf-swift/compare/v3.21.9...v3.21.10
 [3.21.9]: https://github.com/gewill/iperf-swift/compare/v3.21.8...v3.21.9
 [3.21.8]: https://github.com/gewill/iperf-swift/compare/v3.21.7...v3.21.8
@@ -429,3 +455,4 @@ unchanged from 3.21.6.
 [#81]: https://github.com/gewill/iperf-swift/issues/81
 [#83]: https://github.com/gewill/iperf-swift/pull/83
 [#86]: https://github.com/gewill/iperf-swift/issues/86
+[#90]: https://github.com/gewill/iperf-swift/issues/90
