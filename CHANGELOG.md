@@ -9,6 +9,12 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.11] - 2026-08-06
+
+A bug-fix release for server mode. A client going away no longer looks like a
+failure, so a server that keeps listening is no longer interrupted by the most
+ordinary way its run can end.
+
 ### Fixed
 
 - A server whose client terminated no longer reports a failure ([#90]). The
@@ -395,7 +401,8 @@ unchanged from 3.21.6.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.10...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.11...HEAD
+[3.21.11]: https://github.com/gewill/iperf-swift/compare/v3.21.10...v3.21.11
 [3.21.10]: https://github.com/gewill/iperf-swift/compare/v3.21.9...v3.21.10
 [3.21.9]: https://github.com/gewill/iperf-swift/compare/v3.21.8...v3.21.9
 [3.21.8]: https://github.com/gewill/iperf-swift/compare/v3.21.7...v3.21.8
