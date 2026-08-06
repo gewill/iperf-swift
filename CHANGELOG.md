@@ -9,6 +9,22 @@ package release number.
 
 ## [Unreleased]
 
+### Added
+
+- A public initializer for `IperfStreamIntervalResult` ([#86]). Consumers can
+  now build synthetic stream measurements and let `IperfIntervalResult`'s
+  existing `evaluate()` derive the aggregates, so a result assembled outside
+  the engine carries the same totals, throughput and UDP statistics the engine
+  would have computed from the same streams. Only the fields feeding those
+  aggregates are parameters; the interval's own length is derived from the
+  supplied start and end, as the engine derives it from the same two
+  timestamps.
+
+  This unblocks delivering results through the real `reporterFunctionType`
+  callback — SwiftUI previews, and test doubles that would otherwise have to
+  reach past a consumer's own receiving path to place data. The engine's own
+  construction is unchanged.
+
 ## [3.21.9] - 2026-08-06
 
 A reporting-correctness and JSON streaming release. Interval callbacks now
@@ -405,3 +421,4 @@ unchanged from 3.21.6.
 [#79]: https://github.com/gewill/iperf-swift/issues/79
 [#81]: https://github.com/gewill/iperf-swift/issues/81
 [#83]: https://github.com/gewill/iperf-swift/pull/83
+[#86]: https://github.com/gewill/iperf-swift/issues/86
