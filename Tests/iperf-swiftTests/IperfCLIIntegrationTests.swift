@@ -2690,6 +2690,87 @@ final class IperfCLIIntegrationTests: XCTestCase {
         XCTAssertTrue(sawMeasuredInterval, "expected measured intervals after the omit period")
         XCTAssertTrue(sawOmittedInterval, "expected omitted intervals during the first second")
     }
+
+    /// A server's run only ever ends when its client ends it, and the CLI
+    /// treats a client going away as that run finishing: it prints the summary
+    /// and returns to listening. The engine agrees — `CLIENT_TERMINATE` returns
+    /// 0 and leaves `IECLIENTTERM` behind only as a description.
+    func testServerTreatsATerminatedClientAsACompletedRun() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.reporterInterval = 0.25
+
+        let lock = NSLock()
+        var receivedErrors = [IperfError]()
+        var terminalState: IperfRunnerState?
+        var intervalCount = 0
+
+        let finished = expectation(description: "the server reaches a terminal state")
+        var didFinish = false
+
+        let server = IperfRunner(with: configuration)
+        addTeardownBlock { server.stop() }
+
+        server.start(
+            { _ in
+                lock.lock()
+                intervalCount += 1
+                lock.unlock()
+            },
+            { error in
+                lock.lock()
+                receivedErrors.append(error)
+                lock.unlock()
+            },
+            { state in
+                guard state == .finished || state == .error else { return }
+                lock.lock()
+                defer { lock.unlock() }
+                guard didFinish == false else { return }
+                terminalState = state
+                didFinish = true
+                finished.fulfill()
+            }
+        )
+
+        Thread.sleep(forTimeInterval: 0.5)
+
+        let cliClient = Process()
+        cliClient.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliClient.arguments = [
+            "-c", "127.0.0.1", "-p", String(port), "-t", "30", "-i", "0.25",
+        ]
+        cliClient.standardOutput = FileHandle.nullDevice
+        cliClient.standardError = FileHandle.nullDevice
+        try cliClient.run()
+        addTeardownBlock {
+            if cliClient.isRunning {
+                cliClient.terminate()
+            }
+        }
+
+        // Long enough for the transfer to produce intervals, so the assertion
+        // below distinguishes a completed run from one that never measured.
+        Thread.sleep(forTimeInterval: 1.5)
+        cliClient.interrupt()
+
+        wait(for: [finished], timeout: 20)
+
+        lock.lock()
+        let errors = receivedErrors
+        let state = terminalState
+        let intervals = intervalCount
+        lock.unlock()
+
+        XCTAssertEqual(state, .finished, "A client going away ends the server's run, it does not fail it")
+        XCTAssertEqual(errors, [], "No error describes this outcome; the run produced results")
+        XCTAssertGreaterThan(intervals, 0, "The measurements taken before the client left must still reach the consumer")
+    }
 }
 
 private struct ProcessResult {

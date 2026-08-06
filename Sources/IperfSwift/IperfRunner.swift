@@ -811,7 +811,22 @@ public class IperfRunner {
                     return
                 }
 
-                if (code < 0 || error != .IENONE) && !wasStopped {
+                // The engine reports failure through the return code alone.
+                // `i_errno` is a global it also writes on paths that succeed:
+                // a server whose client terminated takes the CLIENT_TERMINATE
+                // branch, which prints the run's summary, sets IECLIENTTERM and
+                // returns 0 — the engine's own way of saying this run is over,
+                // not that it failed. Reading `i_errno` as the verdict turned
+                // that completed run into an error, and since `i_errno` is not
+                // thread-local, a receiver thread ending on the closed socket
+                // could overwrite it first, so the reported code was whichever
+                // landed last rather than the one describing the outcome.
+                //
+                // The asymmetry is the engine's: a client that loses its server
+                // returns -1 (IESERVERTERM), because a client has a duration to
+                // fall short of, while a server's run only ever ends when its
+                // client ends it.
+                if code < 0 && !wasStopped {
                     self.onError(error)
                 } else {
                     self.cleanState(expectedTest: testPointer)
