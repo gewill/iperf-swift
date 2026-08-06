@@ -9,6 +9,12 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.10] - 2026-08-06
+
+An API release. The library's measurement behavior is unchanged from 3.21.9;
+what changes is that a consumer can now build interval results the engine did
+not produce.
+
 ### Added
 
 - A public initializer for `IperfStreamIntervalResult` ([#86]). Consumers can
@@ -370,7 +376,8 @@ unchanged from 3.21.6.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.9...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.10...HEAD
+[3.21.10]: https://github.com/gewill/iperf-swift/compare/v3.21.9...v3.21.10
 [3.21.9]: https://github.com/gewill/iperf-swift/compare/v3.21.8...v3.21.9
 [3.21.8]: https://github.com/gewill/iperf-swift/compare/v3.21.7...v3.21.8
 [3.21.7]: https://github.com/gewill/iperf-swift/compare/v3.21.6...v3.21.7
