@@ -9,6 +9,16 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.12] - 2026-08-06
+
+A bug-fix release for stopped runs. The traffic measured between a run's last
+periodic interval and the moment it was stopped now reaches the consumer, so a
+summary built by summing intervals no longer reads low.
+
+**Behavior change:** a stopped run delivers one more reporter callback than it
+did in 3.21.11. Code counting callbacks to count intervals should read each
+result's own duration and byte count.
+
 ### Fixed
 
 - A stopped run now delivers its closing interval ([#84]). Every run ends with
@@ -415,7 +425,8 @@ unchanged from 3.21.6.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.11...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.12...HEAD
+[3.21.12]: https://github.com/gewill/iperf-swift/compare/v3.21.11...v3.21.12
 [3.21.11]: https://github.com/gewill/iperf-swift/compare/v3.21.10...v3.21.11
 [3.21.10]: https://github.com/gewill/iperf-swift/compare/v3.21.9...v3.21.10
 [3.21.9]: https://github.com/gewill/iperf-swift/compare/v3.21.8...v3.21.9
