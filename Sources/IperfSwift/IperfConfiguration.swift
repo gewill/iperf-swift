@@ -252,6 +252,18 @@ public struct IperfConfiguration {
     public var logfile: String?
     /// Enables verbose libiperf output.
     public var verbose: Bool = false
+    /// Emits line-delimited JSON events, equivalent to `--json-stream`.
+    ///
+    /// Receive each event through the `onJSONStream` callback passed to
+    /// ``IperfRunner/start(_:_:_:onJSONStream:)``.
+    public var jsonStream: Bool = false
+    /// Appends the complete JSON document after the streaming events,
+    /// equivalent to `--json-stream-full-output`.
+    ///
+    /// This has an effect only when ``jsonStream`` is enabled, matching the
+    /// iperf3 CLI. The complete document is also retained in
+    /// ``IperfRunner/jsonOutput``.
+    public var jsonStreamFullOutput: Bool = false
     
     // MARK: Authentication
 

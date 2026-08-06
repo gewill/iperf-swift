@@ -583,6 +583,8 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertFalse(configuration.oneOff)
         XCTAssertNil(configuration.idleTimeout)
         XCTAssertNil(configuration.rcvTimeout)
+        XCTAssertFalse(configuration.jsonStream)
+        XCTAssertFalse(configuration.jsonStreamFullOutput)
 
         configuration.clientPort = 24_001
         configuration.tos = 32
@@ -592,6 +594,8 @@ final class IperfSwiftUnitTests: XCTestCase {
         configuration.oneOff = true
         configuration.idleTimeout = 30
         configuration.rcvTimeout = 10
+        configuration.jsonStream = true
+        configuration.jsonStreamFullOutput = true
 
         XCTAssertEqual(configuration.clientPort, 24_001)
         XCTAssertEqual(configuration.tos, 32)
@@ -601,6 +605,8 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertTrue(configuration.oneOff)
         XCTAssertEqual(configuration.idleTimeout, 30)
         XCTAssertEqual(configuration.rcvTimeout, 10)
+        XCTAssertTrue(configuration.jsonStream)
+        XCTAssertTrue(configuration.jsonStreamFullOutput)
     }
 
     func testConfigurationAddressFamilyAndDontFragmentDefaults() {
@@ -926,6 +932,129 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertEqual(result.throughput.rawValue, 0)
         XCTAssertTrue(result.throughput.bps.isFinite)
         XCTAssertTrue(result.throughput.Mbps.isFinite)
+    }
+
+    func testShortEmptyIntervalIsSuppressedOnTheSameTermsAsTheCLI() {
+        // iperf_print_intermediate reports an interval when any stream reaches
+        // a tenth of the statistics interval or carries bytes, and returns
+        // without printing otherwise.
+        func stream(seconds: TimeInterval, bytes: Int) -> IperfStreamIntervalResult {
+            var result = IperfStreamIntervalResult()
+            result.startTime = 10
+            result.endTime = 10 + seconds
+            result.intervalTimeDiff = seconds
+            result.intervalDuration = seconds
+            result.bytesTransferred = bytes
+            return result
+        }
+
+        // Short and empty on every stream: the CLI prints nothing.
+        XCTAssertTrue(
+            IperfRunner.isUnreportedShortInterval(
+                [stream(seconds: 0.02, bytes: 0), stream(seconds: 0.02, bytes: 0)],
+                statsInterval: 1
+            )
+        )
+        XCTAssertTrue(
+            IperfRunner.isUnreportedShortInterval([stream(seconds: 0, bytes: 0)], statsInterval: 1)
+        )
+
+        // Either half of the engine's test is enough to keep the interval.
+        XCTAssertFalse(
+            IperfRunner.isUnreportedShortInterval([stream(seconds: 0.02, bytes: 1)], statsInterval: 1)
+        )
+        XCTAssertFalse(
+            IperfRunner.isUnreportedShortInterval([stream(seconds: 1, bytes: 0)], statsInterval: 1)
+        )
+
+        // One qualifying stream carries the whole delivery.
+        XCTAssertFalse(
+            IperfRunner.isUnreportedShortInterval(
+                [stream(seconds: 0.02, bytes: 0), stream(seconds: 0.02, bytes: 4_096)],
+                statsInterval: 1
+            )
+        )
+
+        // The threshold is a tenth of the statistics interval, inclusive, and
+        // tracks that interval rather than a fixed number of seconds.
+        XCTAssertFalse(
+            IperfRunner.isUnreportedShortInterval([stream(seconds: 0.1, bytes: 0)], statsInterval: 1)
+        )
+        XCTAssertTrue(
+            IperfRunner.isUnreportedShortInterval([stream(seconds: 0.099, bytes: 0)], statsInterval: 1)
+        )
+        XCTAssertFalse(
+            IperfRunner.isUnreportedShortInterval([stream(seconds: 0.099, bytes: 0)], statsInterval: 0.5)
+        )
+
+        // An empty list keeps today's delivery: it means the engine is
+        // omitting, not that the interval was short and empty.
+        XCTAssertFalse(IperfRunner.isUnreportedShortInterval([], statsInterval: 1))
+    }
+
+    func testRepeatDeliveryDetectionMatchesReReadEntries() {
+        // The engine keeps one interval entry per stream, so a reporter call
+        // with no intervening statistics gathering re-reads what was already
+        // delivered. The two rows are identical in every identity field.
+        func stream(
+            _ direction: IperfDirection,
+            start: TimeInterval,
+            end: TimeInterval,
+            bytes: Int
+        ) -> IperfStreamIntervalResult {
+            var result = IperfStreamIntervalResult()
+            result.direction = direction
+            result.startTime = start
+            result.endTime = end
+            result.bytesTransferred = bytes
+            result.intervalDuration = end - start
+            return result
+        }
+
+        // Sequences 0/1 of the reported table: a full-length interval repeated.
+        let delivered = [
+            stream(.download, start: 0, end: 1.0035, bytes: 2_483_290_112),
+            stream(.download, start: 0, end: 1.0035, bytes: 2_483_290_112),
+        ]
+        XCTAssertTrue(IperfRunner.isRepeatDelivery(delivered, delivered))
+
+        // Sequences 6/7: the zero-duration pair repeats the same way.
+        let zeroDuration = [stream(.download, start: 6.005, end: 6.005, bytes: 901_644_288)]
+        XCTAssertTrue(IperfRunner.isRepeatDelivery(zeroDuration, zeroDuration))
+
+        // The first delivery of a run has nothing to compare against.
+        XCTAssertFalse(IperfRunner.isRepeatDelivery(nil, delivered))
+        XCTAssertFalse(IperfRunner.isRepeatDelivery([], []))
+
+        // A genuinely new interval starts where the previous one ended.
+        let next = [
+            stream(.download, start: 1.0035, end: 2.0030, bytes: 2_417_164_288),
+            stream(.download, start: 1.0035, end: 2.0030, bytes: 2_417_164_288),
+        ]
+        XCTAssertFalse(IperfRunner.isRepeatDelivery(delivered, next))
+
+        // A difference in any single identity field is a distinct delivery,
+        // including one stream out of several disagreeing.
+        let oneStreamDiffers = [
+            delivered[0],
+            stream(.download, start: 0, end: 1.0035, bytes: 2_483_290_113),
+        ]
+        XCTAssertFalse(IperfRunner.isRepeatDelivery(delivered, oneStreamDiffers))
+        XCTAssertFalse(
+            IperfRunner.isRepeatDelivery(
+                zeroDuration,
+                [stream(.upload, start: 6.005, end: 6.005, bytes: 901_644_288)]
+            )
+        )
+        XCTAssertFalse(
+            IperfRunner.isRepeatDelivery(
+                zeroDuration,
+                [stream(.download, start: 6.005, end: 6.006, bytes: 901_644_288)]
+            )
+        )
+
+        // A stream count change is never a repeat.
+        XCTAssertFalse(IperfRunner.isRepeatDelivery(delivered, [delivered[0]]))
     }
 
     func testTCPIntervalAggregationIsRepeatable() {

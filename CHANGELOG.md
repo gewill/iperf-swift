@@ -9,6 +9,57 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.9] - 2026-08-06
+
+A reporting-correctness and JSON streaming release. Interval callbacks now
+match the engine's observable output more closely, and applications can consume
+the JSON stream events as they are emitted, followed by the complete summary
+document.
+
+Expect fewer reporter callbacks than 3.21.8 delivered: a duplicate is no longer
+repeated, and a run ending on a byte count no longer reports the empty trailing
+interval. Code that counts callbacks to count intervals should read each
+result's own duration and byte count, and code that treated the final short
+callback as an end-of-run signal should use the `finished` runner state.
+
+### Added
+
+- JSON streaming support ([#83]). `IperfConfiguration.jsonStream` enables
+  iperf3's `--json-stream`, and a new `onJSONStream` closure on `IperfRunner`
+  receives each raw event — `start`, then one per interval, then `end` — as it
+  is emitted. `jsonStreamFullOutput` appends the complete summary document as
+  the closure's final value and retains it on `IperfRunner.jsonOutput`, which
+  is readable from that final invocation onward. Setting `jsonStreamFullOutput`
+  without `jsonStream` does nothing, matching the CLI, where
+  `--json-stream-full-output` alone is ignored rather than rejected. The
+  existing three-argument `start` overloads are unchanged, so callers that do
+  not want the events need no edit.
+
+### Changed
+
+- The reporter no longer delivers a very short interval that moved no bytes
+  ([#81]), matching what the engine reports. `iperf_print_intermediate` returns
+  without printing when no stream reaches a tenth of the statistics interval or
+  carries any bytes — the case its own comment describes, where a test ends
+  with a brief interval that moved nothing because the control messages
+  stopping the run queued behind the data. The wrapper had no equivalent check
+  and delivered a result the CLI prints nothing for; a client ending on
+  `numberOfBytes` produced one on every run. **Behavior change:** such a run
+  now delivers one fewer reporter callback.
+
+### Fixed
+
+- The reporter no longer delivers the same interval twice ([#79]). The engine
+  keeps one interval entry per stream and overwrites it in place, and every
+  reporter call site reads that one entry — the periodic timer and the run's
+  closing summary alike — so a reporter call with no intervening statistics
+  gathering re-read what had already been delivered. A consumer summing
+  interval bytes counted the repeat; the reported run came out 14.5% high. A
+  delivery whose streams all match the previous one in direction, start time,
+  end time and byte count is now suppressed. The comparison is exact equality,
+  which no genuinely distinct interval can satisfy: a new entry starts where
+  the previous one ended, and its byte counter is reset when it is appended.
+
 ## [3.21.8] - 2026-08-02
 
 A bug-fix release. A zero-duration reporting interval no longer produces a
@@ -303,7 +354,8 @@ unchanged from 3.21.6.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.8...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.9...HEAD
+[3.21.9]: https://github.com/gewill/iperf-swift/compare/v3.21.8...v3.21.9
 [3.21.8]: https://github.com/gewill/iperf-swift/compare/v3.21.7...v3.21.8
 [3.21.7]: https://github.com/gewill/iperf-swift/compare/v3.21.6...v3.21.7
 [3.21.6]: https://github.com/gewill/iperf-swift/compare/v3.21.5...v3.21.6
@@ -350,3 +402,6 @@ unchanged from 3.21.6.
 [#69]: https://github.com/gewill/iperf-swift/issues/69
 [#73]: https://github.com/gewill/iperf-swift/issues/73
 [#75]: https://github.com/gewill/iperf-swift/issues/75
+[#79]: https://github.com/gewill/iperf-swift/issues/79
+[#81]: https://github.com/gewill/iperf-swift/issues/81
+[#83]: https://github.com/gewill/iperf-swift/pull/83
