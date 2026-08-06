@@ -9,6 +9,19 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.9] - 2026-08-06
+
+A reporting-correctness and JSON streaming release. Interval callbacks now
+match the engine's observable output more closely, and applications can consume
+the JSON stream events as they are emitted, followed by the complete summary
+document.
+
+Expect fewer reporter callbacks than 3.21.8 delivered: a duplicate is no longer
+repeated, and a run ending on a byte count no longer reports the empty trailing
+interval. Code that counts callbacks to count intervals should read each
+result's own duration and byte count, and code that treated the final short
+callback as an end-of-run signal should use the `finished` runner state.
+
 ### Added
 
 - JSON streaming support ([#83]). `IperfConfiguration.jsonStream` enables
@@ -341,7 +354,8 @@ unchanged from 3.21.6.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.8...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.9...HEAD
+[3.21.9]: https://github.com/gewill/iperf-swift/compare/v3.21.8...v3.21.9
 [3.21.8]: https://github.com/gewill/iperf-swift/compare/v3.21.7...v3.21.8
 [3.21.7]: https://github.com/gewill/iperf-swift/compare/v3.21.6...v3.21.7
 [3.21.6]: https://github.com/gewill/iperf-swift/compare/v3.21.5...v3.21.6
