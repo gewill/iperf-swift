@@ -2771,6 +2771,95 @@ final class IperfCLIIntegrationTests: XCTestCase {
         XCTAssertEqual(errors, [], "No error describes this outcome; the run produced results")
         XCTAssertGreaterThan(intervals, 0, "The measurements taken before the client left must still reach the consumer")
     }
+
+    /// Every run closes with one delivery carrying `DISPLAY_RESULTS`, holding
+    /// the bytes measured since the previous interval. A run reaching its
+    /// duration makes it, and so does one that is stopped — the engine gathers
+    /// that last measurement either way, so the two differ only in when they
+    /// end, not in what the consumer is told.
+    func testAStoppedRunDeliversItsClosingIntervalLikeACompletedOne() throws {
+        let tools = try TestTools()
+
+        /// The states of the intervals a run delivers, in order.
+        func deliveredStates(stoppingAfter stopDelay: TimeInterval?) throws -> [IperfState] {
+            let port = try TestTools.freePort()
+            let cliServer = Process()
+            cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+            cliServer.arguments = ["-s", "-p", String(port), "-1"]
+            cliServer.standardOutput = FileHandle.nullDevice
+            cliServer.standardError = FileHandle.nullDevice
+            try cliServer.run()
+            addTeardownBlock {
+                if cliServer.isRunning {
+                    cliServer.terminate()
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.3)
+
+            var configuration = IperfConfiguration()
+            configuration.address = "127.0.0.1"
+            configuration.port = port
+            configuration.numStreams = 1
+            configuration.reporterInterval = 0.5
+            // Long enough that stopping lands mid-interval, so the closing
+            // delivery carries a partial one rather than a whole period.
+            configuration.duration = stopDelay == nil ? 2 : 30
+
+            let lock = NSLock()
+            var states = [IperfState]()
+            let finished = expectation(description: "run reaches a terminal state")
+            var didFinish = false
+
+            let client = IperfRunner(with: configuration)
+            addTeardownBlock { client.stop() }
+
+            client.start(
+                { result in
+                    lock.lock()
+                    states.append(result.state)
+                    lock.unlock()
+                },
+                { error in
+                    XCTFail("Run failed: \(error.debugDescription)")
+                },
+                { state in
+                    guard state == .finished || state == .error else { return }
+                    lock.lock()
+                    defer { lock.unlock() }
+                    guard didFinish == false else { return }
+                    didFinish = true
+                    finished.fulfill()
+                }
+            )
+
+            if let stopDelay {
+                DispatchQueue.global().asyncAfter(deadline: .now() + stopDelay) {
+                    client.stop()
+                }
+            }
+
+            wait(for: [finished], timeout: 20)
+            lock.lock()
+            defer { lock.unlock() }
+            return states
+        }
+
+        let completed = try deliveredStates(stoppingAfter: nil)
+        let stopped = try deliveredStates(stoppingAfter: 1.75)
+
+        XCTAssertEqual(
+            completed.last, .DISPLAY_RESULTS,
+            "A run reaching its duration closes with the engine's final measurement"
+        )
+        XCTAssertEqual(
+            stopped.last, .DISPLAY_RESULTS,
+            "A stopped run closes the same way; dropping it loses the bytes measured since the previous interval"
+        )
+        XCTAssertGreaterThan(
+            stopped.count, 1,
+            "A stopped run delivers its periodic intervals as well as the closing one"
+        )
+    }
 }
 
 private struct ProcessResult {

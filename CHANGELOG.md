@@ -9,6 +9,20 @@ package release number.
 
 ## [Unreleased]
 
+### Fixed
+
+- A stopped run now delivers its closing interval ([#84]). Every run ends with
+  one delivery carrying `IperfState/DISPLAY_RESULTS`, holding the bytes
+  measured since the previous interval; the engine gathers it whether the run
+  reaches its duration or is stopped. `stop()` moves the runner to
+  `IperfRunnerState/stopping` before the engine finishes, and the reporter
+  ignored anything arriving outside `IperfRunnerState/running`, so that closing
+  delivery was dropped for stopped runs only. A consumer summing interval bytes
+  reported up to a full reporting period of traffic as missing — measured at
+  24% of a four-second run, since the shortfall is a fixed period and the
+  relative error grows as the run gets shorter. **Behavior change:** a stopped
+  run now delivers one more reporter callback than it used to.
+
 ## [3.21.11] - 2026-08-06
 
 A bug-fix release for server mode. A client going away no longer looks like a
@@ -456,3 +470,4 @@ unchanged from 3.21.6.
 [#83]: https://github.com/gewill/iperf-swift/pull/83
 [#86]: https://github.com/gewill/iperf-swift/issues/86
 [#90]: https://github.com/gewill/iperf-swift/issues/90
+[#84]: https://github.com/gewill/iperfman/issues/84
