@@ -13,7 +13,14 @@ package release number.
 
 A reporting-correctness and JSON streaming release. Interval callbacks now
 match the engine's observable output more closely, and applications can consume
-line-delimited JSON events followed by the complete summary document.
+the JSON stream events as they are emitted, followed by the complete summary
+document.
+
+Expect fewer reporter callbacks than 3.21.8 delivered: a duplicate is no longer
+repeated, and a run ending on a byte count no longer reports the empty trailing
+interval. Code that counts callbacks to count intervals should read each
+result's own duration and byte count, and code that treated the final short
+callback as an end-of-run signal should use the `finished` runner state.
 
 ### Added
 
