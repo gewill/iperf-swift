@@ -1412,6 +1412,127 @@ final class IperfCLIIntegrationTests: XCTestCase {
                              "64-bit counters and repeating payload must interoperate with the CLI")
     }
 
+    func testPersistentSwiftServerAcceptsClientAfterIdleRestart() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.oneOff = false
+        configuration.idleTimeout = 1
+
+        let running = expectation(description: "persistent server started")
+        let prematureTerminal = expectation(description: "persistent server ended before stop")
+        prematureTerminal.isInverted = true
+        let finished = expectation(description: "persistent server stopped")
+        let lock = NSLock()
+        var isStopping = false
+        var terminalError: IperfError?
+        let server = IperfRunner(with: configuration)
+        addTeardownBlock {
+            server.stop()
+        }
+        server.start(
+            { _ in },
+            { error in
+                lock.lock()
+                terminalError = error
+                let stopping = isStopping
+                lock.unlock()
+                (stopping ? finished : prematureTerminal).fulfill()
+            },
+            { state in
+                if state == .running {
+                    running.fulfill()
+                } else if state == .finished {
+                    lock.lock()
+                    let stopping = isStopping
+                    lock.unlock()
+                    (stopping ? finished : prematureTerminal).fulfill()
+                }
+            }
+        )
+
+        wait(for: [running], timeout: 3)
+        wait(for: [prematureTerminal], timeout: 1.5)
+
+        let clientResult = try tools.run(tools.iperf3, arguments: [
+            "-c", "127.0.0.1", "-p", String(port), "-n", "1M"
+        ])
+        XCTAssertEqual(clientResult.status, 0, clientResult.output)
+
+        lock.lock()
+        isStopping = true
+        lock.unlock()
+        server.stop()
+        wait(for: [finished], timeout: 5)
+        XCTAssertNil(terminalError)
+    }
+
+    func testPersistentSwiftServerAcceptsTwoSequentialClients() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.oneOff = false
+
+        let running = expectation(description: "persistent server started")
+        let prematureTerminal = expectation(description: "persistent server ended before stop")
+        prematureTerminal.isInverted = true
+        let finished = expectation(description: "persistent server stopped")
+        let lock = NSLock()
+        var isStopping = false
+        var terminalError: IperfError?
+        let server = IperfRunner(with: configuration)
+        addTeardownBlock {
+            server.stop()
+        }
+        server.start(
+            { _ in },
+            { error in
+                lock.lock()
+                terminalError = error
+                let stopping = isStopping
+                lock.unlock()
+                (stopping ? finished : prematureTerminal).fulfill()
+            },
+            { state in
+                if state == .running {
+                    running.fulfill()
+                } else if state == .finished {
+                    lock.lock()
+                    let stopping = isStopping
+                    lock.unlock()
+                    (stopping ? finished : prematureTerminal).fulfill()
+                }
+            }
+        )
+
+        wait(for: [running], timeout: 3)
+        Thread.sleep(forTimeInterval: 0.3)
+
+        for clientNumber in 1...2 {
+            let result = try tools.run(tools.iperf3, arguments: [
+                "-c", "127.0.0.1", "-p", String(port), "-n", "1M"
+            ])
+            XCTAssertEqual(result.status, 0, "client \(clientNumber): \(result.output)")
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        wait(for: [prematureTerminal], timeout: 0.1)
+
+        lock.lock()
+        isStopping = true
+        lock.unlock()
+        server.stop()
+        wait(for: [finished], timeout: 5)
+        XCTAssertNil(terminalError)
+    }
+
     func testSwiftServerOneOffFinishesAfterCLIClient() throws {
         let tools = try TestTools()
         let port = try TestTools.freePort()
@@ -2691,10 +2812,10 @@ final class IperfCLIIntegrationTests: XCTestCase {
         XCTAssertTrue(sawOmittedInterval, "expected omitted intervals during the first second")
     }
 
-    /// A server's run only ever ends when its client ends it, and the CLI
-    /// treats a client going away as that run finishing: it prints the summary
-    /// and returns to listening. The engine agrees — `CLIENT_TERMINATE` returns
-    /// 0 and leaves `IECLIENTTERM` behind only as a description.
+    /// A server's current test only ever ends when its client ends it. In
+    /// one-off mode the Runner then finishes; a persistent Server instead resets
+    /// and returns to listening. `CLIENT_TERMINATE` returns 0 and leaves
+    /// `IECLIENTTERM` behind only as a description of the completed test.
     func testServerTreatsATerminatedClientAsACompletedRun() throws {
         let tools = try TestTools()
         let port = try TestTools.freePort()
@@ -2704,6 +2825,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         configuration.address = "127.0.0.1"
         configuration.port = port
         configuration.reporterInterval = 0.25
+        configuration.oneOff = true
 
         let lock = NSLock()
         var receivedErrors = [IperfError]()

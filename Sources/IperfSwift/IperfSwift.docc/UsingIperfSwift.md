@@ -182,11 +182,12 @@ configuration.rcvTimeout = 30
 configuration.reporterInterval = 1
 ```
 
-- ``IperfConfiguration/oneOff`` — `--one-off`; Client use fails with
-  ``IperfError/IESERVERONLY``
+- ``IperfConfiguration/oneOff`` — `--one-off`; when disabled, the Server resets
+  after each client and keeps listening until ``IperfRunner/stop()``; Client use
+  fails with ``IperfError/IESERVERONLY``
 - ``IperfConfiguration/idleTimeout`` — `--idle-timeout`, `1...86,400` seconds
-  after which the current idle run reaches ``IperfRunnerState/finished``;
-  one-off timeout never terminates the host process
+  after which a persistent Server restarts; in one-off mode the current run
+  reaches ``IperfRunnerState/finished`` without terminating the host process
 
 ### Authenticated client
 

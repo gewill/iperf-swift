@@ -273,12 +273,15 @@ public class IperfRunner {
             result.mode = .upload
         }
         
-        if result.state == .EXCHANGE_RESULTS {
+        let testCompletesRunner = configuration.role == .client || configuration.oneOff
+        if result.state == .EXCHANGE_RESULTS && testCompletesRunner {
             state = .finished
         }
 
         if result.state == .IPERF_DONE {
-            state = .finished
+            if testCompletesRunner {
+                state = .finished
+            }
             if configuration.role == .server {
                 return
             }
@@ -803,17 +806,37 @@ public class IperfRunner {
     ) {
         state = .running
         DispatchQueue.global(qos: .userInitiated).async {
-            i_errno = IperfError.IENONE.rawValue
+            var code: Int32 = 0
+            var error = IperfError.IENONE
+            var wasStopped = false
 
-            var code: Int32
-            if configuration.role == .client {
-                code = iperf_run_client(testPointer)
-            } else {
-                code = iperf_run_server(testPointer)
-            }
-            let error = IperfError(rawValue: i_errno) ?? .UNKNOWN
-            let wasStopped = testPointer.pointee.done != 0
-            i_errno = IperfError.IENONE.rawValue
+            repeat {
+                i_errno = IperfError.IENONE.rawValue
+                if configuration.role == .client {
+                    code = iperf_run_client(testPointer)
+                } else {
+                    code = iperf_run_server(testPointer)
+                }
+                error = IperfError(rawValue: i_errno) ?? .UNKNOWN
+                wasStopped = testPointer.pointee.done != 0
+                i_errno = IperfError.IENONE.rawValue
+
+                let shouldRestartServer = self.withState {
+                    guard configuration.role == .server,
+                          !configuration.oneOff,
+                          code >= 0,
+                          self.currentTest == testPointer,
+                          self.state == .running else {
+                        return false
+                    }
+                    self.previousDeliveredStreams = nil
+                    iperf_reset_test(testPointer)
+                    return true
+                }
+                if !shouldRestartServer {
+                    break
+                }
+            } while true
 
             self.stateQueue.async {
                 guard self.currentTest == testPointer else {
