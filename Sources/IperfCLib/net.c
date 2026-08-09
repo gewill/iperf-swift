@@ -890,3 +890,4 @@ iperf_sync_close_socket(int sock)
 #endif // HAVE_SOCKET_SHUTDOWN_SHUT_WR
     close(sock);
 }
+

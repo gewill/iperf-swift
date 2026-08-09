@@ -9,6 +9,46 @@ package release number.
 
 ## [Unreleased]
 
+### Changed
+
+- `IperfError` now maps every error code the embedded engine defines ([#101]),
+  adding twenty-three cases that previously surfaced as `.UNKNOWN`. **Breaking:**
+  exhaustive switches over `IperfError` must handle the new cases.
+- Engine runs are serialized through one process-wide FIFO queue ([#114]). The
+  vendored libiperf keeps its timer list and `i_errno` at process scope, so
+  concurrent runners could race the timers and cross each other's errors. Only
+  one embedded client or server now executes per process; a later runner stays
+  in `IperfRunnerState/initialising` until the active one finishes or stops, and
+  `stop()` on a queued runner cancels it without it ever entering
+  `IperfRunnerState/running`. **Behavior change:** a persistent server blocks
+  later runners until it is stopped.
+- A server with `oneOff` disabled now keeps listening after a client finishes
+  and after an idle timeout, matching the CLI ([#98]). It previously ended the
+  run in both cases, so the persistent semantics the option describes were
+  unreachable. `idleTimeout` now restarts an idle server; in one-off mode it
+  still finishes the runner.
+
+### Fixed
+
+- A one-off server reaching its idle timeout no longer terminates the host
+  process ([#97]). The vendored engine called `exit(0)` on that path, taking
+  the embedding application down with it; it now returns control and the runner
+  reports `IperfRunnerState/finished`.
+- `stop()` no longer risks closing a file descriptor the host has since reused
+  ([#99]). The listener was closed while its descriptor stayed in the test, so a
+  second `stop()` or the engine's own cleanup could close whatever the process
+  had opened in its place. The descriptor is now invalidated atomically before
+  the close, and cancellation, cleanup, and listener rebuilding share that rule.
+- A failure to bind a socket to a device now reports `IEBINDDEV`, or
+  `IEBINDDEVNOSUPPORT` where the platform does not support it, instead of being
+  overwritten by the generic `IECONNECT`, `IELISTEN`, or `IESTREAMLISTEN` of the
+  calling path ([#101]).
+- Internal: the synchronization patch now records the engine-error changes
+  ([#101]) made to `iperf_client_api.c`, `iperf_server_api.c`, `iperf_udp.c`,
+  and `net.c`. They were present only in `Sources/IperfCLib/`, and `sync.sh`
+  applies the patch to a freshly downloaded upstream tree before replacing the
+  vendored sources, so the next run would have reverted them.
+
 ## [3.21.12] - 2026-08-06
 
 A bug-fix release for stopped runs. The traffic measured between a run's last
@@ -481,4 +521,9 @@ unchanged from 3.21.6.
 [#83]: https://github.com/gewill/iperf-swift/pull/83
 [#86]: https://github.com/gewill/iperf-swift/issues/86
 [#90]: https://github.com/gewill/iperf-swift/issues/90
+[#97]: https://github.com/gewill/iperf-swift/issues/97
+[#98]: https://github.com/gewill/iperf-swift/issues/98
+[#99]: https://github.com/gewill/iperf-swift/issues/99
+[#101]: https://github.com/gewill/iperf-swift/issues/101
+[#114]: https://github.com/gewill/iperf-swift/pull/114
 [#84]: https://github.com/gewill/iperfman/issues/84
