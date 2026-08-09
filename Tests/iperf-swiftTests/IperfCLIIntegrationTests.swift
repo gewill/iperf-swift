@@ -596,6 +596,224 @@ final class IperfCLIIntegrationTests: XCTestCase {
         )
     }
 
+    func testProcessGlobalEngineRunsOneRunnerAtATime() throws {
+        let tools = try TestTools()
+        let embeddedServerPort = try TestTools.freePort()
+        var cliServerPort = try TestTools.freePort()
+        while cliServerPort == embeddedServerPort {
+            cliServerPort = try TestTools.freePort()
+        }
+
+        let cliServer = Process()
+        let cliServerOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(cliServerPort), "-1"]
+        cliServer.standardOutput = cliServerOutput
+        cliServer.standardError = cliServerOutput
+        try cliServer.run()
+        Thread.sleep(forTimeInterval: 0.3)
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+
+        var serverConfiguration = IperfConfiguration()
+        serverConfiguration.role = .server
+        serverConfiguration.address = "127.0.0.1"
+        serverConfiguration.port = embeddedServerPort
+        let embeddedServer = IperfRunner(with: serverConfiguration)
+
+        var clientConfiguration = IperfConfiguration()
+        clientConfiguration.address = "127.0.0.1"
+        clientConfiguration.port = cliServerPort
+        clientConfiguration.numberOfBytes = 1_000_000
+        clientConfiguration.reporterInterval = 0.1
+        let queuedClient = IperfRunner(with: clientConfiguration)
+
+        addTeardownBlock {
+            embeddedServer.stop()
+            queuedClient.stop()
+        }
+
+        let serverRunning = expectation(description: "embedded server running")
+        let serverFinished = expectation(description: "embedded server finished")
+        embeddedServer.start(
+            { _ in },
+            { error in
+                XCTFail("embedded server failed: \(error.debugDescription)")
+                serverFinished.fulfill()
+            },
+            { state in
+                if state == .running {
+                    serverRunning.fulfill()
+                } else if state == .finished {
+                    serverFinished.fulfill()
+                }
+            }
+        )
+        wait(for: [serverRunning], timeout: 3)
+
+        let clientInitialising = expectation(description: "second runner queued")
+        let prematureClientRunning = expectation(description: "second runner ran concurrently")
+        prematureClientRunning.isInverted = true
+        let clientEventuallyRunning = expectation(description: "second runner eventually ran")
+        let clientFinished = expectation(description: "second runner finished")
+        let lock = NSLock()
+        var engineReleased = false
+        queuedClient.start(
+            { _ in },
+            { error in
+                XCTFail("queued client failed: \(error.debugDescription)")
+                clientFinished.fulfill()
+            },
+            { state in
+                if state == .initialising {
+                    clientInitialising.fulfill()
+                } else if state == .running {
+                    lock.lock()
+                    let released = engineReleased
+                    lock.unlock()
+                    (released ? clientEventuallyRunning : prematureClientRunning).fulfill()
+                } else if state == .finished {
+                    clientFinished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [clientInitialising], timeout: 3)
+        wait(for: [prematureClientRunning], timeout: 0.3)
+        lock.lock()
+        engineReleased = true
+        lock.unlock()
+        embeddedServer.stop()
+
+        wait(for: [serverFinished, clientEventuallyRunning, clientFinished], timeout: 8)
+    }
+
+    func testQueuedRunnerCanBeStoppedBeforeItUsesTheEngine() throws {
+        var serverConfiguration = IperfConfiguration()
+        serverConfiguration.role = .server
+        serverConfiguration.address = "127.0.0.1"
+        serverConfiguration.port = try TestTools.freePort()
+        let activeServer = IperfRunner(with: serverConfiguration)
+
+        var queuedConfiguration = IperfConfiguration()
+        queuedConfiguration.address = "127.0.0.1"
+        queuedConfiguration.port = try TestTools.freePort()
+        let queuedClient = IperfRunner(with: queuedConfiguration)
+
+        addTeardownBlock {
+            activeServer.stop()
+            queuedClient.stop()
+        }
+
+        let serverRunning = expectation(description: "active server running")
+        let serverFinished = expectation(description: "active server finished")
+        activeServer.start(
+            { _ in },
+            { error in
+                XCTFail("active server failed: \(error.debugDescription)")
+                serverFinished.fulfill()
+            },
+            { state in
+                if state == .running {
+                    serverRunning.fulfill()
+                } else if state == .finished {
+                    serverFinished.fulfill()
+                }
+            }
+        )
+        wait(for: [serverRunning], timeout: 3)
+
+        let queuedInitialising = expectation(description: "queued runner initialising")
+        let queuedStopping = expectation(description: "queued runner stopping")
+        let queuedFinished = expectation(description: "queued runner finished")
+        let queuedRunning = expectation(description: "queued runner never running")
+        queuedRunning.isInverted = true
+        let queuedError = expectation(description: "queued runner has no error")
+        queuedError.isInverted = true
+        queuedClient.start(
+            { _ in },
+            { _ in queuedError.fulfill() },
+            { state in
+                switch state {
+                case .initialising:
+                    queuedInitialising.fulfill()
+                case .running:
+                    queuedRunning.fulfill()
+                case .stopping:
+                    queuedStopping.fulfill()
+                case .finished:
+                    queuedFinished.fulfill()
+                default:
+                    break
+                }
+            }
+        )
+
+        wait(for: [queuedInitialising], timeout: 3)
+        queuedClient.stop()
+        wait(for: [queuedStopping, queuedFinished], timeout: 3)
+        wait(for: [queuedRunning, queuedError], timeout: 0.2)
+
+        activeServer.stop()
+        wait(for: [serverFinished], timeout: 3)
+    }
+
+    func testSerializedFailuresKeepTheirOwnTypedErrors() throws {
+        let occupied = try TestTools.boundListener()
+        defer { close(occupied.descriptor) }
+        let occupiedPort = occupied.port
+        var unusedPort = try TestTools.freePort()
+        while unusedPort == occupiedPort {
+            unusedPort = try TestTools.freePort()
+        }
+
+        var serverConfiguration = IperfConfiguration()
+        serverConfiguration.role = .server
+        serverConfiguration.address = "127.0.0.1"
+        serverConfiguration.port = occupiedPort
+        let failingServer = IperfRunner(with: serverConfiguration)
+
+        var clientConfiguration = IperfConfiguration()
+        clientConfiguration.role = .client
+        clientConfiguration.address = "127.0.0.1"
+        clientConfiguration.port = unusedPort
+        let failingClient = IperfRunner(with: clientConfiguration)
+
+        let serverFailed = expectation(description: "server bind fails")
+        let clientFailed = expectation(description: "client connect fails")
+        let lock = NSLock()
+        var serverError: IperfError?
+        var clientError: IperfError?
+
+        DispatchQueue.global().async {
+            failingServer.start({ _ in }, { error in
+                lock.lock()
+                serverError = error
+                lock.unlock()
+                serverFailed.fulfill()
+            }, { _ in })
+        }
+        DispatchQueue.global().async {
+            failingClient.start({ _ in }, { error in
+                lock.lock()
+                clientError = error
+                lock.unlock()
+                clientFailed.fulfill()
+            }, { _ in })
+        }
+
+        wait(for: [serverFailed, clientFailed], timeout: 5)
+        lock.lock()
+        let capturedServerError = serverError
+        let capturedClientError = clientError
+        lock.unlock()
+        XCTAssertEqual(capturedServerError, .IELISTEN)
+        XCTAssertEqual(capturedClientError, .IECONNECT)
+    }
+
     func testConcurrentStartWhileRunningIsIgnored() throws {
         let tools = try TestTools()
         let port = try TestTools.freePort()
@@ -3160,5 +3378,41 @@ private final class TestTools {
         }
         XCTAssertEqual(nameResult, 0)
         return Int(UInt16(bigEndian: boundAddress.sin_port))
+    }
+
+    static func boundListener() throws -> (descriptor: Int32, port: Int) {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            throw POSIXError(.EADDRNOTAVAIL)
+        }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr = in_addr(s_addr: in_addr_t(INADDR_LOOPBACK).bigEndian)
+
+        let bindResult = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bindResult == 0, listen(descriptor, 1) == 0 else {
+            close(descriptor)
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EADDRNOTAVAIL)
+        }
+
+        var boundAddress = sockaddr_in()
+        var addressLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let nameResult = withUnsafeMutablePointer(to: &boundAddress) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(descriptor, $0, &addressLength)
+            }
+        }
+        guard nameResult == 0 else {
+            close(descriptor)
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EADDRNOTAVAIL)
+        }
+        return (descriptor, Int(UInt16(bigEndian: boundAddress.sin_port)))
     }
 }

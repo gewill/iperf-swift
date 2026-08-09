@@ -271,11 +271,20 @@ runner.start(
 - ``IperfRunner/start(with:_:_:_:)`` — replaces the configuration first, for
   reusing a runner after a completed run
 - The corresponding `onJSONStream` overloads install a raw JSON callback.
-- ``IperfRunner/stop()`` — requests cancellation of the active run
+- ``IperfRunner/stop()`` — requests cancellation of the active or queued run
 
 Callbacks are not guaranteed to run on a specific queue, so dispatch UI updates to
 the main actor or main queue, and keep terminal-state handling idempotent because
 the engine can report a terminal state more than once.
+
+Vendored libiperf stores timers and errors at process scope. All runner instances
+therefore share one FIFO engine queue, and only one embedded client or server can
+execute in a process at a time. A later runner remains
+``IperfRunnerState/initialising`` until the active run finishes or stops. In
+particular, a persistent Server blocks later runners until ``IperfRunner/stop()``
+is called. Stopping a queued runner takes it through
+``IperfRunnerState/stopping`` to ``IperfRunnerState/finished`` without entering
+``IperfRunnerState/running``.
 
 ### Keep the reporter closure fast
 
