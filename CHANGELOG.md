@@ -11,6 +11,12 @@ package release number.
 
 ### Changed
 
+- The atomic compatibility header the Apple platform build relies on is now
+  project-owned and MIT-licensed ([#102]). It replaces a header derived from
+  FFmpeg and carrying the LGPL, which the package shipped without disclosing in
+  its license documentation. The replacement uses compiler atomic builtins
+  while keeping the fields integer-typed, so the public iperf structures stay
+  importable by Swift's Clang importer. No API or behavior change.
 - `IperfError` now maps every error code the embedded engine defines ([#101]),
   adding twenty-three cases that previously surfaced as `.UNKNOWN`. **Breaking:**
   exhaustive switches over `IperfError` must handle the new cases.
@@ -43,6 +49,13 @@ package release number.
   `IEBINDDEVNOSUPPORT` where the platform does not support it, instead of being
   overwritten by the generic `IECONNECT`, `IELISTEN`, or `IESTREAMLISTEN` of the
   calling path ([#101]).
+- Internal: `sync.sh` runs again and no longer loses the `flowlabel.h`
+  `__linux__` guard. It asserted `#include <File.h>` in `include/iperf.h`, which
+  that header does not contain, so the run aborted there; and the substitution
+  that inserts the guard was rewritten into one that only normalizes an existing
+  guard, which a pristine upstream checkout never has. The verification block
+  now also covers the engine-error edits, so a substitution that stops matching
+  fails the sync instead of passing silently ([#102]).
 - Internal: the synchronization patch now records the engine-error changes
   ([#101]) made to `iperf_client_api.c`, `iperf_server_api.c`, `iperf_udp.c`,
   and `net.c`. They were present only in `Sources/IperfCLib/`, and `sync.sh`
@@ -525,5 +538,6 @@ unchanged from 3.21.6.
 [#98]: https://github.com/gewill/iperf-swift/issues/98
 [#99]: https://github.com/gewill/iperf-swift/issues/99
 [#101]: https://github.com/gewill/iperf-swift/issues/101
+[#102]: https://github.com/gewill/iperf-swift/issues/102
 [#114]: https://github.com/gewill/iperf-swift/pull/114
 [#84]: https://github.com/gewill/iperfman/issues/84
