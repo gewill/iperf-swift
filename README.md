@@ -156,6 +156,13 @@ and callbacks are not guaranteed to use a specific queue. Dispatch UI updates
 to `MainActor` or the main queue. Terminal callback handling should be
 idempotent because libiperf can emit more than one terminal state notification.
 
+Vendored libiperf keeps timers and error state at process scope, so the package
+serializes all `IperfRunner` instances through one FIFO engine queue. Only one
+embedded client or server runs in a process at a time; later runners remain in
+`.initialising` until the active run finishes or stops. A persistent server
+therefore blocks later runners until `stop()` is called. Calling `stop()` on a
+queued runner cancels it without entering `.running`.
+
 ## Design philosophy
 
 The wrapper is a Swift library, not a re-export of the iperf3 CLI. Options are

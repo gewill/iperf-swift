@@ -14,7 +14,7 @@ public enum IperfRunnerState {
     case unknown
     /// The runner exists and no run has started yet.
     case ready
-    /// The runner is validating the configuration and preparing the engine.
+    /// The runner is validating the configuration or waiting for the shared engine.
     case initialising
     /// The engine is executing the test and delivering interval results.
     case running
@@ -104,10 +104,21 @@ public typealias jsonStreamFunctionType = (_ json: String) -> Void
 /// guaranteed on a specific queue, so callers must dispatch UI updates to the
 /// main actor or main queue. Use one runner for one active test at a time.
 ///
+/// Vendored libiperf uses process-global timers and error storage. Consequently,
+/// all ``IperfRunner`` instances share one FIFO engine queue: only one embedded
+/// client or server can execute in a process at a time. A later runner remains
+/// ``IperfRunnerState/initialising`` until the active run finishes or stops. A
+/// persistent server therefore blocks later runners until it is stopped.
+///
 /// Dispatching is not only a thread-safety requirement: the reporter closure
 /// runs inside the engine's timing loop, so a slow one distorts the
 /// measurement it is reporting. See ``reporterFunctionType``.
 public class IperfRunner {
+    private static let engineQueue = DispatchQueue(
+        label: "com.gewill.IperfSwift.libiperf-engine",
+        qos: .userInitiated
+    )
+
     private let stateQueue = DispatchQueue(label: "com.gewill.IperfSwift.runner-state")
     private let stateQueueKey = DispatchSpecificKey<Void>()
 
@@ -118,6 +129,7 @@ public class IperfRunner {
     
     private var configuration: IperfConfiguration? = nil
     private var currentTest: UnsafeMutablePointer<iperf_test>? = nil
+    private var pendingRunID: UUID?
     
     private var state: IperfRunnerState = .ready {
         willSet {
@@ -701,11 +713,8 @@ public class IperfRunner {
                 // silently continuing with the default protocol.
                 //
                 // set_protocol has set the process-global i_errno to IEPROTOCOL.
-                // We report the mapped error directly, so clear the global to
-                // avoid leaving it set: a concurrent runner resets i_errno
-                // before its run and reads it right after, and a value left here
-                // is a (narrow) opportunity to be misread as that runner's
-                // failure.
+                // We report the mapped error directly and clear it before the
+                // shared engine queue advances to its next run.
                 i_errno = IperfError.IENONE.rawValue
                 return .IEPROTOCOL
             }
@@ -800,69 +809,101 @@ public class IperfRunner {
         return nil
     }
 
-    private func startIperfProcess(
+    private func executeQueuedRun(runID: UUID) {
+        let preparedRun = stateQueue.sync { () -> (
+            UnsafeMutablePointer<iperf_test>,
+            IperfConfiguration
+        )? in
+            guard pendingRunID == runID else {
+                return nil
+            }
+            pendingRunID = nil
+
+            guard let configuration = configuration else {
+                onError(.INIT_ERROR)
+                return nil
+            }
+            currentTest = iperf_new_test()
+            guard let testPointer = currentTest else {
+                onError(.INIT_ERROR)
+                return nil
+            }
+            guard iperf_defaults(testPointer) >= 0 else {
+                onError(.INIT_ERROR_DEFAULTS)
+                return nil
+            }
+            if let applyError = applyConfiguration() {
+                onError(applyError)
+                return nil
+            }
+
+            // Route the C reporter callback back to this runner by the test's
+            // address (see IperfRunnerRegistry).
+            testPointer.pointee.reporter_callback = reporterCallback
+            IperfRunnerRegistry.shared.register(self, for: testPointer)
+            if configuration.jsonStream {
+                iperf_set_test_json_callback(testPointer, jsonStreamCallback)
+            }
+            state = .running
+            return (testPointer, configuration)
+        }
+
+        guard let (testPointer, configuration) = preparedRun else {
+            return
+        }
+        runIperfProcess(testPointer: testPointer, configuration: configuration)
+    }
+
+    private func runIperfProcess(
         testPointer: UnsafeMutablePointer<iperf_test>,
         configuration: IperfConfiguration
     ) {
-        state = .running
-        DispatchQueue.global(qos: .userInitiated).async {
-            var code: Int32 = 0
-            var error = IperfError.IENONE
-            var wasStopped = false
+        var code: Int32 = 0
+        var error = IperfError.IENONE
+        var wasStopped = false
 
-            repeat {
-                i_errno = IperfError.IENONE.rawValue
-                if configuration.role == .client {
-                    code = iperf_run_client(testPointer)
-                } else {
-                    code = iperf_run_server(testPointer)
-                }
-                error = IperfError(rawValue: i_errno) ?? .UNKNOWN
-                wasStopped = testPointer.pointee.done != 0
-                i_errno = IperfError.IENONE.rawValue
+        repeat {
+            i_errno = IperfError.IENONE.rawValue
+            if configuration.role == .client {
+                code = iperf_run_client(testPointer)
+            } else {
+                code = iperf_run_server(testPointer)
+            }
+            error = IperfError(rawValue: i_errno) ?? .UNKNOWN
+            wasStopped = testPointer.pointee.done != 0
+            i_errno = IperfError.IENONE.rawValue
 
-                let shouldRestartServer = self.withState {
-                    guard configuration.role == .server,
-                          !configuration.oneOff,
-                          code >= 0,
-                          self.currentTest == testPointer,
-                          self.state == .running else {
-                        return false
-                    }
-                    self.previousDeliveredStreams = nil
-                    iperf_reset_test(testPointer)
-                    return true
+            let shouldRestartServer = withState {
+                guard configuration.role == .server,
+                      !configuration.oneOff,
+                      code >= 0,
+                      currentTest == testPointer,
+                      state == .running else {
+                    return false
                 }
-                if !shouldRestartServer {
-                    break
-                }
-            } while true
+                previousDeliveredStreams = nil
+                iperf_reset_test(testPointer)
+                return true
+            }
+            if !shouldRestartServer {
+                break
+            }
+        } while true
 
-            self.stateQueue.async {
-                guard self.currentTest == testPointer else {
-                    return
-                }
+        stateQueue.sync {
+            guard currentTest == testPointer else {
+                return
+            }
 
-                // The engine reports failure through the return code alone.
-                // `i_errno` is a global it also writes on paths that succeed:
-                // a server whose client terminated takes the CLIENT_TERMINATE
-                // branch, which prints the run's summary, sets IECLIENTTERM and
-                // returns 0 — the engine's own way of saying this run is over,
-                // not that it failed. Reading `i_errno` as the verdict turned
-                // that completed run into an error, and since `i_errno` is not
-                // thread-local, a receiver thread ending on the closed socket
-                // could overwrite it first, so the reported code was whichever
-                // landed last rather than the one describing the outcome.
-                //
-                // The asymmetry is the engine's: a client that loses its server
-                // returns -1 (IESERVERTERM), because a client has a duration to
-                // fall short of, while a server's run only ever ends when its
-                // client ends it.
-                if code < 0 && !wasStopped {
-                    self.onError(error)
-                } else {
-                    self.cleanState(expectedTest: testPointer)
-                }
+            // The engine reports failure through the return code alone.
+            // `i_errno` is process-global and may also be written by the
+            // engine's worker threads, so this entire lifecycle remains on the
+            // shared engine queue until the error is captured and the test is
+            // freed.
+            if code < 0 && !wasStopped {
+                onError(error)
+            } else {
+                cleanState(expectedTest: testPointer)
             }
         }
     }
@@ -877,6 +918,9 @@ public class IperfRunner {
 
         if isExit && configuration != nil {
             configuration = nil
+        }
+        if isExit {
+            pendingRunID = nil
         }
         if let testPointer = currentTest {
             // Unregister before freeing so a reused address never resolves to
@@ -903,10 +947,10 @@ public class IperfRunner {
     ///
     /// Use this overload when reusing a runner after a completed run.
     ///
-    /// If a run is already active, this call is silently ignored: none of
-    /// the supplied callbacks are invoked and the in-flight run is left
-    /// untouched. Wait for ``IperfRunnerState/finished`` or ``stop()`` before
-    /// starting another run.
+    /// If a run is already active or waiting for the shared engine, this call
+    /// is silently ignored: none of the supplied callbacks are invoked and the
+    /// in-flight run is left untouched. Wait for
+    /// ``IperfRunnerState/finished`` or ``stop()`` before starting another run.
     /// - Parameters:
     ///   - configuration: The client or server options for this run.
     ///   - onReporter: Called when an interval result is available. Runs on the
@@ -931,7 +975,8 @@ public class IperfRunner {
     /// Starts a run after replacing the runner's configuration and installs a
     /// raw JSON streaming callback.
     ///
-    /// If a run is already active, this call is silently ignored.
+    /// If a run is already active or waiting for the shared engine, this call
+    /// is silently ignored.
     /// - Parameters:
     ///   - configuration: The client or server options for this run.
     ///   - onReporter: Called when an interval result is available.
@@ -947,7 +992,7 @@ public class IperfRunner {
         onJSONStream: @escaping jsonStreamFunctionType)
     {
         stateQueue.async {
-            guard self.currentTest == nil else {
+            guard self.currentTest == nil, self.pendingRunID == nil else {
                 return
             }
             self.configuration = configuration
@@ -962,10 +1007,10 @@ public class IperfRunner {
     
     /// Starts a run with the configuration supplied at initialization.
     ///
-    /// If a run is already active, this call is silently ignored: none of
-    /// the supplied callbacks are invoked and the in-flight run is left
-    /// untouched. Wait for ``IperfRunnerState/finished`` or ``stop()`` before
-    /// starting another run.
+    /// If a run is already active or waiting for the shared engine, this call
+    /// is silently ignored: none of the supplied callbacks are invoked and the
+    /// in-flight run is left untouched. Wait for
+    /// ``IperfRunnerState/finished`` or ``stop()`` before starting another run.
     /// - Parameters:
     ///   - onReporter: Called when an interval result is available. Runs on the
     ///     engine's thread and must return promptly; see ``reporterFunctionType``.
@@ -987,7 +1032,8 @@ public class IperfRunner {
     /// Starts a run with the configuration supplied at initialization and
     /// installs a raw JSON streaming callback.
     ///
-    /// If a run is already active, this call is silently ignored.
+    /// If a run is already active or waiting for the shared engine, this call
+    /// is silently ignored.
     /// - Parameters:
     ///   - onReporter: Called when an interval result is available.
     ///   - onError: Called when the run fails.
@@ -1012,7 +1058,7 @@ public class IperfRunner {
             return
         }
 
-        guard currentTest == nil else {
+        guard currentTest == nil, pendingRunID == nil else {
             return
         }
         signal(SIGPIPE, SIG_IGN)
@@ -1030,39 +1076,20 @@ public class IperfRunner {
         if let error = configurationError() {
             return self.onError(error)
         }
-        
-        currentTest = iperf_new_test()
-        guard let testPointer = currentTest else {
-            return self.onError(.INIT_ERROR)
-        }
-        
-        let code = iperf_defaults(currentTest)
-        if code < 0 {
-            return self.onError(.INIT_ERROR_DEFAULTS)
-        }
 
-        if let applyError = applyConfiguration() {
-            return self.onError(applyError)
+        let runID = UUID()
+        pendingRunID = runID
+        Self.engineQueue.async { [weak self] in
+            self?.executeQueuedRun(runID: runID)
         }
-
-        // Route the C reporter callback back to this runner by the test's
-        // address (see IperfRunnerRegistry).
-        testPointer.pointee.reporter_callback = reporterCallback
-        IperfRunnerRegistry.shared.register(self, for: testPointer)
-        if configuration?.jsonStream == true {
-            iperf_set_test_json_callback(testPointer, jsonStreamCallback)
-        }
-
-        guard let configuration = configuration else {
-            return onError(.INIT_ERROR)
-        }
-        startIperfProcess(testPointer: testPointer, configuration: configuration)
     }
     
-    /// Requests cancellation of the active run.
+    /// Requests cancellation of the active or queued run.
     ///
-    /// Calling this method when no test is active has no effect. State changes
-    /// are reported asynchronously through the runner-state callback.
+    /// Calling this method when no test is active or queued has no effect. A
+    /// queued run is cancelled without entering ``IperfRunnerState/running``.
+    /// State changes are reported asynchronously through the runner-state
+    /// callback.
     public func stop() {
         stateQueue.async {
             self.stopCurrentTest()
@@ -1071,6 +1098,13 @@ public class IperfRunner {
 
     private func stopCurrentTest() {
         guard let pointer = currentTest else {
+            guard pendingRunID != nil else {
+                return
+            }
+            pendingRunID = nil
+            state = .stopping
+            configuration = nil
+            state = .finished
             return
         }
         
