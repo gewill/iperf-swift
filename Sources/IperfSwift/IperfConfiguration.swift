@@ -218,8 +218,9 @@ public struct IperfConfiguration {
     /// `--one-off`. The runner then reaches ``IperfRunnerState/finished``
     /// without an explicit ``IperfRunner/stop()``.
     public var oneOff: Bool = false
-    /// The number of seconds after which an idle server restarts, equivalent
-    /// to `--idle-timeout`.
+    /// The number of seconds after which an idle server run ends, equivalent
+    /// to `--idle-timeout`. The runner returns ``IperfRunnerState/finished``;
+    /// it never terminates the host process.
     ///
     /// Positive values are rounded up to whole seconds in `1...86,400`.
     public var idleTimeout: TimeInterval?

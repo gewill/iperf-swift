@@ -219,6 +219,25 @@ diff -ru a/iperf_auth.c b/iperf_auth.c
      return 3;
  }
  
+diff -ru a/iperf_server_api.c b/iperf_server_api.c
+--- a/iperf_server_api.c	2026-05-15 23:42:06
++++ b/iperf_server_api.c	2026-05-15 23:42:06
+@@ -702,13 +702,7 @@
+                             printf("Server restart (#%d) in idle state as no connection request was received for %d sec\n",
+                                 test->server_forced_idle_restarts_count, test->settings->idle_timeout);
+                         cleanup_server(test);
+-			if ( iperf_get_test_one_off(test) ) {
+-			  if (test->debug)
+-                            printf("No connection request was received for %d sec in one-off mode; exiting.\n",
+-				   test->settings->idle_timeout);
+-			  exit(0);
+-			}
+-
++                        /* Return control to the embedding process; never exit it. */
+                         return 2;
+                     }
+                 }
+
 Only in a: main.c
 Only in a: t_api.c
 Only in a: t_auth.c

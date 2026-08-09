@@ -702,13 +702,7 @@ iperf_run_server(struct iperf_test *test)
                             printf("Server restart (#%d) in idle state as no connection request was received for %d sec\n",
                                 test->server_forced_idle_restarts_count, test->settings->idle_timeout);
                         cleanup_server(test);
-			if ( iperf_get_test_one_off(test) ) {
-			  if (test->debug)
-                            printf("No connection request was received for %d sec in one-off mode; exiting.\n",
-				   test->settings->idle_timeout);
-			  exit(0);
-			}
-
+                        /* Return control to the embedding process; never exit it. */
                         return 2;
                     }
                 }

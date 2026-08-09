@@ -253,7 +253,7 @@ sockets; `timeout` uses seconds rather than the CLI's milliseconds.
 | Swift property | iperf3 option | Applies when | Constraints / current behavior |
 | --- | --- | --- | --- |
 | `oneOff` | `--one-off` | Server | Enabling it for Client fails with `IESERVERONLY`; the server finishes after one client |
-| `idleTimeout` | `--idle-timeout` | Server | Positive seconds that round up into `1...86,400`; invalid/nonfinite values fail with `IEIDLETIMEOUT` before role validation or timer work, while valid Client use fails with `IESERVERONLY` |
+| `idleTimeout` | `--idle-timeout` | Server | Positive seconds that round up into `1...86,400`; timeout finishes the current run without terminating the host process; invalid/nonfinite values fail with `IEIDLETIMEOUT` before role validation or timer work, while valid Client use fails with `IESERVERONLY` |
 
 ### Authentication options
 
