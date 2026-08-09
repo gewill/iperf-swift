@@ -1079,8 +1079,7 @@ public class IperfRunner {
             pointer.pointee.done = 1
             if let configuration = configuration,
                configuration.role == .server {
-                shutdown(pointer.pointee.listener, SHUT_RDWR)
-                close(pointer.pointee.listener)
+                iperf_close_test_listener(OpaquePointer(pointer))
             }
         }
     }

@@ -17,6 +17,8 @@ void iperf_set_test_rcv_timeout(struct iperf_test* ipt, struct iperf_time* to);
 
 /* Defined in custom.c. */
 void iperf_set_test_domain(struct iperf_test* ipt, int domain);
+/* Atomically invalidates the stored descriptor before closing it. */
+void iperf_close_test_listener(struct iperf_test* ipt);
 /* Validate the in-memory Base64 PEM inputs used by the wrapper setters.
    Always defined: real checks under HAVE_SSL, otherwise stubs that report the
    key as invalid, so these declarations and their Swift callers always link. */
