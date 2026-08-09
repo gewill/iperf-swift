@@ -454,6 +454,10 @@ English message:
 > healthy interval whose ``IperfIntervalResult/debugDescription`` is `"OK"`. The
 > error callback is the authoritative failure channel.
 
+The bundled iperf3 3.21 engine error codes are mapped to their corresponding
+``IperfError`` cases. ``IperfError/UNKNOWN`` is reserved for an engine code
+that is not declared by the bundled version.
+
 ## Server output
 
 When ``IperfConfiguration/getServerOutput`` is `true`, the server's textual result

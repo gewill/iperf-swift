@@ -85,6 +85,18 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
     case IERCVTIMEOUT = 31
     /// A client receive timeout is valid only in a receiving mode.
     case IERVRSONLYRCVTIMEOUT = 32
+    /// The control-message send timeout is out of range.
+    case IESNDTIMEOUT = 33
+    /// File transfer is not supported by UDP.
+    case IEUDPFILETRANSFER = 34
+    /// The authorized-users file could not be accessed.
+    case IESERVERAUTHUSERS = 35
+    /// The control keepalive period is shorter than the full retry period.
+    case IECNTLKA = 36
+    /// The requested duration exceeds the server's maximum duration.
+    case IEMAXSERVERTESTDURATIONEXCEEDED = 37
+    /// A value or unit suffix is invalid.
+    case IEUNITVAL = 38
     /* Test errors */
     /// The engine could not create a new test.
     case IENEWTEST = 100
@@ -172,6 +184,40 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
     case IESETBUF2 = 141
     /// Test authorization failed.
     case IEAUTHTEST = 142
+    /// Binding the socket to a device failed.
+    case IEBINDDEV = 143
+    /// No message was received before the receive timeout expired.
+    case IENOMSG = 144
+    /// Setting the IP Do-Not-Fragment flag failed.
+    case IESETDONTFRAGMENT = 145
+    /// Binding to a device is not supported by the current system.
+    case IEBINDDEVNOSUPPORT = 146
+    /// A host device is valid only for an IPv6 link-local address.
+    case IEHOSTDEV = 147
+    /// Setting TCP `USER_TIMEOUT` failed.
+    case IESETUSERTIMEOUT = 148
+    /// Creating an engine thread failed.
+    case IEPTHREADCREATE = 150
+    /// Cancelling an engine thread failed.
+    case IEPTHREADCANCEL = 151
+    /// Joining an engine thread failed.
+    case IEPTHREADJOIN = 152
+    /// Initializing thread attributes failed.
+    case IEPTHREADATTRINIT = 153
+    /// Destroying thread attributes failed.
+    case IEPTHREADATTRDESTROY = 154
+    /// Setting control-socket keepalive failed.
+    case IESETCNTLKA = 155
+    /// Setting the control-socket keepalive idle period failed.
+    case IESETCNTLKAKEEPIDLE = 156
+    /// Setting the control-socket keepalive interval failed.
+    case IESETCNTLKAINTERVAL = 157
+    /// Setting the control-socket keepalive retry count failed.
+    case IESETCNTLKACOUNT = 158
+    /// Configuring the engine thread signal mask failed.
+    case IEPTHREADSIGMASK = 159
+    /// The server test duration expired.
+    case IESERVERTESTDURATIONEXPIRED = 160
     /* Stream errors */
     /// The engine could not create a new stream.
     case IECREATESTREAM = 200
@@ -283,6 +329,18 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
             return "Receive timeout value is incorrect or not in range"
         case .IERVRSONLYRCVTIMEOUT:
             return "Client receive timeout is valid only in receiving mode"
+        case .IESNDTIMEOUT:
+            return "Send timeout value is incorrect or not in range"
+        case .IEUDPFILETRANSFER:
+            return "Cannot transfer file using UDP"
+        case .IESERVERAUTHUSERS:
+            return "Cannot access authorized users file"
+        case .IECNTLKA:
+            return "Control connection keepalive period should be larger than the full retry period"
+        case .IEMAXSERVERTESTDURATIONEXCEEDED:
+            return "Client's requested duration exceeds the server's maximum permitted limit"
+        case .IEUNITVAL:
+            return "Invalid unit value or suffix"
         /* Test errors */
         case .IENEWTEST:
             return "Unable to create a new test (check perror)"
@@ -370,6 +428,40 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
             return "Socket buffer size incorrect (written value != read value)"
         case .IEAUTHTEST:
             return "Test authorization failed"
+        case .IEBINDDEV:
+            return "Unable to bind to network device"
+        case .IENOMSG:
+            return "No message was received before the timeout expired"
+        case .IESETDONTFRAGMENT:
+            return "Unable to set IP Do-Not-Fragment flag"
+        case .IEBINDDEVNOSUPPORT:
+            return "Binding to a device is not supported on this system"
+        case .IEHOSTDEV:
+            return "A host device is valid only for an IPv6 link-local address"
+        case .IESETUSERTIMEOUT:
+            return "Unable to set TCP USER_TIMEOUT"
+        case .IEPTHREADCREATE:
+            return "Unable to create engine thread"
+        case .IEPTHREADCANCEL:
+            return "Unable to cancel engine thread"
+        case .IEPTHREADJOIN:
+            return "Unable to join engine thread"
+        case .IEPTHREADATTRINIT:
+            return "Unable to initialize thread attributes"
+        case .IEPTHREADATTRDESTROY:
+            return "Unable to destroy thread attributes"
+        case .IESETCNTLKA:
+            return "Unable to set control-socket keepalive"
+        case .IESETCNTLKAKEEPIDLE:
+            return "Unable to set control-socket keepalive idle period"
+        case .IESETCNTLKAINTERVAL:
+            return "Unable to set control-socket keepalive interval"
+        case .IESETCNTLKACOUNT:
+            return "Unable to set control-socket keepalive retry count"
+        case .IEPTHREADSIGMASK:
+            return "Unable to configure engine thread signal mask"
+        case .IESERVERTESTDURATIONEXPIRED:
+            return "Server test duration expired"
         /* Stream errors */
         case .IECREATESTREAM:
             return "Unable to create a new stream (check herror/perror)"
