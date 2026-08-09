@@ -222,20 +222,25 @@ diff -ru a/iperf_auth.c b/iperf_auth.c
 diff -ru a/iperf_server_api.c b/iperf_server_api.c
 --- a/iperf_server_api.c	2026-05-15 23:42:06
 +++ b/iperf_server_api.c	2026-05-15 23:42:06
-@@ -610,4 +610,8 @@
-         return -2;
-     }
--
+@@ -60,0 +61 @@
++#include "custom.h"
+@@ -522,4 +523 @@
+-    if (test->listener > -1) {
+-	close(test->listener);
+-        test->listener = -1;
+-    }
++    iperf_close_test_listener(test);
+@@ -611,0 +610,4 @@
 +    if (test->done) {
 +        cleanup_server(test);
 +        return 0;
 +    }
-+
-     iperf_time_now(&last_receive_time); // Initialize last time something was received
-@@ -702,13 +702,7 @@
-                             printf("Server restart (#%d) in idle state as no connection request was received for %d sec\n",
-                                 test->server_forced_idle_restarts_count, test->settings->idle_timeout);
-                         cleanup_server(test);
+@@ -680,0 +683,4 @@
++        if (test->done) {
++            cleanup_server(test);
++            return 0;
++        }
+@@ -705,7 +711 @@
 -			if ( iperf_get_test_one_off(test) ) {
 -			  if (test->debug)
 -                            printf("No connection request was received for %d sec in one-off mode; exiting.\n",
@@ -244,9 +249,10 @@ diff -ru a/iperf_server_api.c b/iperf_server_api.c
 -			}
 -
 +                        /* Return control to the embedding process; never exit it. */
-                         return 2;
-                     }
-                 }
+@@ -899,2 +899 @@
+-                            close(test->listener);
+-			    test->listener = -1;
++                            iperf_close_test_listener(test);
 
 Only in a: main.c
 Only in a: t_api.c
