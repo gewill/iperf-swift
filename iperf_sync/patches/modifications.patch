@@ -222,6 +222,16 @@ diff -ru a/iperf_auth.c b/iperf_auth.c
 diff -ru a/iperf_server_api.c b/iperf_server_api.c
 --- a/iperf_server_api.c	2026-05-15 23:42:06
 +++ b/iperf_server_api.c	2026-05-15 23:42:06
+@@ -610,4 +610,8 @@
+         return -2;
+     }
+-
++    if (test->done) {
++        cleanup_server(test);
++        return 0;
++    }
++
+     iperf_time_now(&last_receive_time); // Initialize last time something was received
 @@ -702,13 +702,7 @@
                              printf("Server restart (#%d) in idle state as no connection request was received for %d sec\n",
                                  test->server_forced_idle_restarts_count, test->settings->idle_timeout);

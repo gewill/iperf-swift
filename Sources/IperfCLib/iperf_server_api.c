@@ -609,6 +609,10 @@ iperf_run_server(struct iperf_test *test)
 	cleanup_server(test);
         return -2;
     }
+    if (test->done) {
+        cleanup_server(test);
+        return 0;
+    }
 
     iperf_time_now(&last_receive_time); // Initialize last time something was received
     last_receive_blocks = 0;
