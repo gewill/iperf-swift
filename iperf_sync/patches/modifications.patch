@@ -219,28 +219,78 @@ diff -ru a/iperf_auth.c b/iperf_auth.c
      return 3;
  }
  
+diff -ru a/iperf_client_api.c b/iperf_client_api.c
+--- a/iperf_client_api.c	2026-05-15 23:42:06
++++ b/iperf_client_api.c	2026-05-15 23:42:06
+@@ -438,7 +438,8 @@
+ 	// Create the control channel using an ephemeral port
+ 	test->ctrl_sck = netdial(test->settings->domain, Ptcp, test->bind_address, test->bind_dev, 0, test->server_hostname, test->server_port, test->settings->connect_timeout);
+     if (test->ctrl_sck < 0) {
+-        i_errno = IECONNECT;
++        if (i_errno == IENONE)
++            i_errno = IECONNECT;
+         return -1;
+     }
+ 
 diff -ru a/iperf_server_api.c b/iperf_server_api.c
 --- a/iperf_server_api.c	2026-05-15 23:42:06
 +++ b/iperf_server_api.c	2026-05-15 23:42:06
-@@ -60,0 +61 @@
+@@ -58,6 +58,7 @@
+ #include "units.h"
+ #include "iperf_util.h"
+ #include "iperf_locale.h"
 +#include "custom.h"
-@@ -522,4 +523 @@
+ 
+ #if defined(HAVE_TCP_CONGESTION)
+ #if !defined(TCP_CA_NAME_MAX)
+@@ -124,7 +125,8 @@
+ 	    test->settings->domain = AF_INET;
+ 	    goto retry;
+ 	} else {
+-	    i_errno = IELISTEN;
++	    if (i_errno == IENONE)
++	        i_errno = IELISTEN;
+ 	    return -1;
+ 	}
+     }
+@@ -519,10 +521,7 @@
+         iperf_sync_close_socket(test->ctrl_sck);
+         test->ctrl_sck = -1;
+     }
 -    if (test->listener > -1) {
 -	close(test->listener);
 -        test->listener = -1;
 -    }
 +    iperf_close_test_listener(test);
-@@ -611,0 +610,4 @@
+     if (test->prot_listener > -1) {     // May remain open if create socket failed
+ 	close(test->prot_listener);
+         test->prot_listener = -1;
+@@ -609,6 +608,10 @@
+ 	cleanup_server(test);
+         return -2;
+     }
 +    if (test->done) {
 +        cleanup_server(test);
 +        return 0;
 +    }
-@@ -680,0 +683,4 @@
+ 
+     iperf_time_now(&last_receive_time); // Initialize last time something was received
+     last_receive_blocks = 0;
+@@ -678,6 +681,10 @@
+         }
+ 
+         result = select(test->max_fd + 1, &read_set, &write_set, NULL, timeout);
 +        if (test->done) {
 +            cleanup_server(test);
 +            return 0;
 +        }
-@@ -705,7 +711 @@
+         if (result < 0 && errno != EINTR) {
+             cleanup_server(test);
+             i_errno = IESELECT;
+@@ -702,13 +709,7 @@
+                             printf("Server restart (#%d) in idle state as no connection request was received for %d sec\n",
+                                 test->server_forced_idle_restarts_count, test->settings->idle_timeout);
+                         cleanup_server(test);
 -			if ( iperf_get_test_one_off(test) ) {
 -			  if (test->debug)
 -                            printf("No connection request was received for %d sec in one-off mode; exiting.\n",
@@ -249,14 +299,68 @@ diff -ru a/iperf_server_api.c b/iperf_server_api.c
 -			}
 -
 +                        /* Return control to the embedding process; never exit it. */
-@@ -899,2 +899 @@
+                         return 2;
+                     }
+                 }
+@@ -896,8 +897,7 @@
+                     } else {
+                         if (test->no_delay || test->settings->mss || test->settings->socket_bufsize) {
+                             FD_CLR(test->listener, &test->read_set);
 -                            close(test->listener);
 -			    test->listener = -1;
 +                            iperf_close_test_listener(test);
-
-Only in a: main.c
-Only in a: t_api.c
-Only in a: t_auth.c
-Only in a: t_timer.c
-Only in a: t_units.c
-Only in a: t_uuid.c
+                             if ((s = netannounce(test->settings->domain, Ptcp, test->bind_address, test->bind_dev, test->server_port)) < 0) {
+ 				cleanup_server(test);
+                                 i_errno = IELISTEN;
+diff -ru a/iperf_udp.c b/iperf_udp.c
+--- a/iperf_udp.c	2026-05-15 23:42:06
++++ b/iperf_udp.c	2026-05-15 23:42:06
+@@ -608,7 +608,8 @@
+     FD_CLR(test->prot_listener, &test->read_set); // No control messages from old listener
+     test->prot_listener = netannounce(test->settings->domain, Pudp, test->bind_address, test->bind_dev, test->server_port);
+     if (test->prot_listener < 0) {
+-        i_errno = IESTREAMLISTEN;
++        if (i_errno == IENONE)
++            i_errno = IESTREAMLISTEN;
+         return -1;
+     }
+ 
+@@ -639,7 +640,8 @@
+     int s;
+ 
+     if ((s = netannounce(test->settings->domain, Pudp, test->bind_address, test->bind_dev, test->server_port)) < 0) {
+-        i_errno = IESTREAMLISTEN;
++        if (i_errno == IENONE)
++            i_errno = IESTREAMLISTEN;
+         return -1;
+     }
+ 
+diff -ru a/net.c b/net.c
+--- a/net.c	2026-05-15 23:42:06
++++ b/net.c	2026-05-15 23:42:06
+@@ -68,6 +68,7 @@
+ #endif /* HAVE_POLL_H */
+ 
+ #include "iperf.h"
++#include "iperf_api.h"
+ #include "iperf_util.h"
+ #include "net.h"
+ #include "timer.h"
+@@ -199,6 +200,8 @@
+             freeaddrinfo(local_res);
+             freeaddrinfo(server_res);
+             errno = saved_errno;
++            i_errno = (saved_errno == ENOTSUP || saved_errno == EOPNOTSUPP)
++                ? IEBINDDEVNOSUPPORT : IEBINDDEV;
+             return -1;
+         }
+     }
+@@ -337,6 +340,8 @@
+             close(s);
+             freeaddrinfo(res);
+             errno = saved_errno;
++            i_errno = (saved_errno == ENOTSUP || saved_errno == EOPNOTSUPP)
++                ? IEBINDDEVNOSUPPORT : IEBINDDEV;
+             return -1;
+         }
+     }
