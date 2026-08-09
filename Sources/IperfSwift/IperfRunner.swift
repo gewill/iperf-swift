@@ -76,7 +76,14 @@ public enum IperfState: Int8 {
 ///   stall and then several near-zero-duration results in the same instant,
 ///   whose throughput is arithmetically correct and practically meaningless.
 public typealias reporterFunctionType = (_ result: IperfIntervalResult) -> Void
-/// Receives a terminal libiperf or wrapper error.
+/// Receives a libiperf or wrapper error.
+///
+/// Usually terminal: the runner moves to ``IperfRunnerState/error`` and the run
+/// is over. The exception is a server with ``IperfConfiguration/oneOff``
+/// disabled, where the engine rejecting one client — a failed authentication, a
+/// stalled transfer — is reported here while the runner stays
+/// ``IperfRunnerState/running`` and keeps listening, as the CLI does. Read the
+/// runner's state rather than assuming this closure means the run has ended.
 public typealias errorFunctionType = (_ error: IperfError) -> Void
 /// Receives a high-level runner lifecycle change.
 public typealias runnerStateFunctionType = (_ state: IperfRunnerState) -> Void
@@ -873,13 +880,29 @@ public class IperfRunner {
             wasStopped = testPointer.pointee.done != 0
             i_errno = IperfError.IENONE.rawValue
 
+            // The engine distinguishes a failed client interaction from a
+            // failed server: it returns -1 for the former — a rejected
+            // authentication, a stalled transfer, a control-channel error, all
+            // of which it expects the caller to survive — and -2 only when the
+            // listening socket itself could not be established. The CLI's own
+            // loop reports a -1 and keeps listening, exiting only below that,
+            // so a persistent server here has to do the same or one bad client
+            // ends it.
             let shouldRestartServer = withState {
                 guard configuration.role == .server,
                       !configuration.oneOff,
-                      code >= 0,
+                      code >= -1,
                       currentTest == testPointer,
                       state == .running else {
                     return false
+                }
+                if code < 0 {
+                    // Report the rejection the way the CLI prints it, without
+                    // the terminal state change: the client's test failed, the
+                    // server did not. The runner stays running, so a consumer
+                    // that reads the state alongside the error can tell the
+                    // difference.
+                    onErrorFunction(error)
                 }
                 previousDeliveredStreams = nil
                 iperf_reset_test(testPointer)

@@ -2323,6 +2323,87 @@ final class IperfCLIIntegrationTests: XCTestCase {
         wait(for: [serverFailed], timeout: 3)
     }
 
+    func testPersistentServerKeepsListeningAfterARejectedClient() throws {
+        // The engine returns -1 from iperf_run_server for a failed client
+        // interaction and -2 only when it cannot listen at all. The CLI's loop
+        // reports a -1 and goes back to listening, so a rejected password must
+        // not end a persistent server here either.
+        let tools = try TestTools()
+        let credentials = try tools.makeCredentials()
+        let port = try TestTools.freePort()
+
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.oneOff = false
+        configuration.isAuth = true
+        configuration.privateKey = credentials.privateKeyBase64
+        configuration.authorizedUsers = credentials.authorizedUsers
+
+        let server = IperfRunner(with: configuration)
+        addTeardownBlock {
+            server.stop()
+        }
+
+        let serverRunning = expectation(description: "persistent authenticated server is running")
+        let lock = NSLock()
+        var serverError: IperfError?
+        var reachedFinished = false
+        server.start(
+            { _ in },
+            { error in
+                lock.lock()
+                serverError = error
+                lock.unlock()
+            },
+            { state in
+                if state == .running {
+                    serverRunning.fulfill()
+                }
+                if state == .finished {
+                    lock.lock()
+                    reachedFinished = true
+                    lock.unlock()
+                }
+            }
+        )
+        wait(for: [serverRunning], timeout: 3)
+
+        let rejected = try tools.run(
+            tools.iperf3,
+            arguments: [
+                "-c", "127.0.0.1", "-p", String(port), "-t", "1",
+                "--username", credentials.username,
+                "--rsa-public-key-path", credentials.publicKeyURL.path,
+            ],
+            environment: ["IPERF3_PASSWORD": "wrong-\(credentials.password)"]
+        )
+        XCTAssertNotEqual(rejected.status, 0, "the CLI client was expected to be rejected")
+
+        // The server must still be serving, and must not have reported the
+        // rejection as its own failure.
+        let accepted = try tools.run(
+            tools.iperf3,
+            arguments: [
+                "-c", "127.0.0.1", "-p", String(port), "-t", "1",
+                "--username", credentials.username,
+                "--rsa-public-key-path", credentials.publicKeyURL.path,
+            ],
+            environment: ["IPERF3_PASSWORD": credentials.password]
+        )
+        XCTAssertEqual(accepted.status, 0, accepted.output)
+
+        lock.lock()
+        let observedError = serverError
+        let finished = reachedFinished
+        lock.unlock()
+        // Both halves of what the CLI does: the rejection is reported, and the
+        // server is still there afterwards.
+        XCTAssertEqual(observedError, .IEAUTHTEST)
+        XCTAssertFalse(finished, "server ended instead of continuing to listen")
+    }
+
     func testSwiftServerAcceptsAuthenticatedUDPCLIClient() throws {
         let tools = try TestTools()
         let credentials = try tools.makeCredentials()
