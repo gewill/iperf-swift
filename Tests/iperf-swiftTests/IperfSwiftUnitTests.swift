@@ -1,7 +1,50 @@
 import XCTest
+import IperfCLib
 @testable import IperfSwift
 
 final class IperfSwiftUnitTests: XCTestCase {
+    func testIperfErrorMirrorsEveryEmbeddedEngineCode() {
+        let cErrorCodes: [Int32] = [
+            Int32(IENONE), Int32(IESERVCLIENT), Int32(IENOROLE), Int32(IESERVERONLY),
+            Int32(IECLIENTONLY), Int32(IEDURATION), Int32(IENUMSTREAMS), Int32(IEBLOCKSIZE),
+            Int32(IEBUFSIZE), Int32(IEINTERVAL), Int32(IEMSS), Int32(IENOSENDFILE),
+            Int32(IEOMIT), Int32(IEUNIMP), Int32(IEFILE), Int32(IEBURST),
+            Int32(IEENDCONDITIONS), Int32(IELOGFILE), Int32(IENOSCTP), Int32(IEBIND),
+            Int32(IEUDPBLOCKSIZE), Int32(IEBADTOS), Int32(IESETCLIENTAUTH), Int32(IESETSERVERAUTH),
+            Int32(IEBADFORMAT), Int32(IEREVERSEBIDIR), Int32(IEBADPORT), Int32(IETOTALRATE),
+            Int32(IETOTALINTERVAL), Int32(IESKEWTHRESHOLD), Int32(IEIDLETIMEOUT), Int32(IERCVTIMEOUT),
+            Int32(IERVRSONLYRCVTIMEOUT), Int32(IESNDTIMEOUT), Int32(IEUDPFILETRANSFER),
+            Int32(IESERVERAUTHUSERS), Int32(IECNTLKA), Int32(IEMAXSERVERTESTDURATIONEXCEEDED),
+            Int32(IEUNITVAL), Int32(IENEWTEST), Int32(IEINITTEST), Int32(IELISTEN), Int32(IECONNECT),
+            Int32(IEACCEPT), Int32(IESENDCOOKIE), Int32(IERECVCOOKIE), Int32(IECTRLWRITE), Int32(IECTRLREAD),
+            Int32(IECTRLCLOSE), Int32(IEMESSAGE), Int32(IESENDMESSAGE), Int32(IERECVMESSAGE),
+            Int32(IESENDPARAMS), Int32(IERECVPARAMS), Int32(IEPACKAGERESULTS), Int32(IESENDRESULTS),
+            Int32(IERECVRESULTS), Int32(IESELECT), Int32(IECLIENTTERM), Int32(IESERVERTERM),
+            Int32(IEACCESSDENIED), Int32(IESETNODELAY), Int32(IESETMSS), Int32(IESETBUF), Int32(IESETTOS),
+            Int32(IESETCOS), Int32(IESETFLOW), Int32(IEREUSEADDR), Int32(IENONBLOCKING), Int32(IESETWINDOWSIZE),
+            Int32(IEPROTOCOL), Int32(IEAFFINITY), Int32(IEDAEMON), Int32(IESETCONGESTION), Int32(IEPIDFILE),
+            Int32(IEV6ONLY), Int32(IESETSCTPDISABLEFRAG), Int32(IESETSCTPNSTREAM), Int32(IESETSCTPBINDX),
+            Int32(IESETPACING), Int32(IESETBUF2), Int32(IEAUTHTEST), Int32(IEBINDDEV), Int32(IENOMSG),
+            Int32(IESETDONTFRAGMENT), Int32(IEBINDDEVNOSUPPORT), Int32(IEHOSTDEV), Int32(IESETUSERTIMEOUT),
+            Int32(IEPTHREADCREATE), Int32(IEPTHREADCANCEL), Int32(IEPTHREADJOIN), Int32(IEPTHREADATTRINIT),
+            Int32(IEPTHREADATTRDESTROY), Int32(IESETCNTLKA), Int32(IESETCNTLKAKEEPIDLE),
+            Int32(IESETCNTLKAINTERVAL), Int32(IESETCNTLKACOUNT), Int32(IEPTHREADSIGMASK),
+            Int32(IESERVERTESTDURATIONEXPIRED), Int32(IECREATESTREAM), Int32(IEINITSTREAM),
+            Int32(IESTREAMLISTEN), Int32(IESTREAMCONNECT), Int32(IESTREAMACCEPT), Int32(IESTREAMWRITE),
+            Int32(IESTREAMREAD), Int32(IESTREAMCLOSE), Int32(IESTREAMID), Int32(IENEWTIMER), Int32(IEUPDATETIMER)
+        ]
+
+        let swiftEngineCodes = IperfError.allCases
+            .map(\.rawValue)
+            .filter { (0..<400).contains($0) }
+        XCTAssertEqual(Set(swiftEngineCodes), Set(cErrorCodes))
+        XCTAssertEqual(swiftEngineCodes.count, cErrorCodes.count)
+        for code in cErrorCodes {
+            XCTAssertNotNil(IperfError(rawValue: code), "Missing Swift mapping for C error code \(code)")
+            XCTAssertFalse(IperfError(rawValue: code)!.debugDescription.isEmpty)
+        }
+    }
+
     func testConcurrentStartsDeliverEachCallersErrorCallback() {
         let invocationCount = 200
         let callbacks = expectation(description: "all concurrent starts complete")

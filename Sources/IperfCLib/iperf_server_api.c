@@ -125,7 +125,8 @@ iperf_server_listen(struct iperf_test *test)
 	    test->settings->domain = AF_INET;
 	    goto retry;
 	} else {
-	    i_errno = IELISTEN;
+	    if (i_errno == IENONE)
+	        i_errno = IELISTEN;
 	    return -1;
 	}
     }

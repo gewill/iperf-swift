@@ -438,7 +438,8 @@ iperf_connect(struct iperf_test *test)
 	// Create the control channel using an ephemeral port
 	test->ctrl_sck = netdial(test->settings->domain, Ptcp, test->bind_address, test->bind_dev, 0, test->server_hostname, test->server_port, test->settings->connect_timeout);
     if (test->ctrl_sck < 0) {
-        i_errno = IECONNECT;
+        if (i_errno == IENONE)
+            i_errno = IECONNECT;
         return -1;
     }
 

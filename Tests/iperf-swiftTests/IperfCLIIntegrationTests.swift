@@ -4,6 +4,23 @@ import Darwin
 @testable import IperfSwift
 
 final class IperfCLIIntegrationTests: XCTestCase {
+    func testInvalidBindDevicePreservesEngineError() throws {
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "127.0.0.1"
+        configuration.bindDevice = "iperf-invalid-device"
+        configuration.port = try TestTools.freePort()
+
+        let failed = expectation(description: "invalid bind device fails")
+        let runner = IperfRunner(with: configuration)
+        runner.start({ _ in }, { error in
+            XCTAssertEqual(error, .IEBINDDEV)
+            failed.fulfill()
+        }, { _ in })
+
+        wait(for: [failed], timeout: 3)
+    }
+
     func testTimeIntervalErrorsMatchCLIWhereContractsOverlap() throws {
         typealias Mutation = (inout IperfConfiguration) -> Void
         let tools = try TestTools()

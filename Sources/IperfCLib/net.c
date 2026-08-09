@@ -68,6 +68,7 @@
 #endif /* HAVE_POLL_H */
 
 #include "iperf.h"
+#include "iperf_api.h"
 #include "iperf_util.h"
 #include "net.h"
 #include "timer.h"
@@ -199,6 +200,8 @@ create_socket(int domain, int type, int proto, const char *local, const char *bi
             freeaddrinfo(local_res);
             freeaddrinfo(server_res);
             errno = saved_errno;
+            i_errno = (saved_errno == ENOTSUP || saved_errno == EOPNOTSUPP)
+                ? IEBINDDEVNOSUPPORT : IEBINDDEV;
             return -1;
         }
     }
@@ -337,6 +340,8 @@ netannounce(int domain, int proto, const char *local, const char *bind_dev, int 
             close(s);
             freeaddrinfo(res);
             errno = saved_errno;
+            i_errno = (saved_errno == ENOTSUP || saved_errno == EOPNOTSUPP)
+                ? IEBINDDEVNOSUPPORT : IEBINDDEV;
             return -1;
         }
     }
@@ -885,4 +890,3 @@ iperf_sync_close_socket(int sock)
 #endif // HAVE_SOCKET_SHUTDOWN_SHUT_WR
     close(sock);
 }
-
