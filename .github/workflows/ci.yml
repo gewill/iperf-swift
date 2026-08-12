@@ -13,11 +13,22 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
-      # openssl@3 is required by the RSA auth interoperability tests, which
-      # shell out to the Homebrew openssl CLI to generate credentials; it is
-      # not used for building (OpenSSL comes from the openssl-spm XCFramework).
+      # Homebrew's official iperf3 bottle supplies its OpenSSL CLI dependency.
+      # Package linking still comes exclusively from openssl-spm.
       - name: Install test dependencies
-        run: brew install iperf3 openssl@3
+        run: |
+          brew install iperf3
+          version_output="$(iperf3 --version 2>&1)"
+          first_line="${version_output%%$'\n'*}"
+          if [[ ! "$first_line" =~ ^iperf\ 3\.21([[:space:]]|\() ]]; then
+            echo "Expected iperf 3.21, got: $first_line" >&2
+            exit 1
+          fi
+          if [[ "$version_output" != *authentication* ]]; then
+            echo "The installed iperf3 does not report authentication support" >&2
+            exit 1
+          fi
+          echo "IPERF3_PATH=$(command -v iperf3)" >> "$GITHUB_ENV"
       - name: Build
         run: swift build
       # The DocC catalog and doc comments contain many ``symbol`` links that a

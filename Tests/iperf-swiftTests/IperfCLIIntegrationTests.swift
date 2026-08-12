@@ -4,6 +4,27 @@ import Darwin
 @testable import IperfSwift
 
 final class IperfCLIIntegrationTests: XCTestCase {
+    func testCLIInteroperabilityRejectsAnUnpinnedIperfVersion() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iperf-swift-version-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let executable = directory.appendingPathComponent("iperf3")
+        try "#!/bin/sh\necho 'iperf 3.22 (cJSON 1.7.15)'\n".write(
+            to: executable,
+            atomically: true,
+            encoding: .utf8
+        )
+        XCTAssertEqual(chmod(executable.path, 0o755), 0)
+
+        XCTAssertThrowsError(try TestTools(iperf3Candidates: [executable.path])) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "CLI interoperability requires iperf 3.21, but \(executable.path) reports: iperf 3.22 (cJSON 1.7.15)"
+            )
+        }
+    }
+
     func testInvalidBindDevicePreservesEngineError() throws {
         var configuration = IperfConfiguration()
         configuration.role = .server
@@ -3324,18 +3345,18 @@ private final class TestTools {
     let iperf3: String
     private let openssl: String?
 
-    init() throws {
-        guard let iperf3 = ["/opt/homebrew/bin/iperf3", "/usr/local/bin/iperf3"]
-            .first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-            throw XCTSkip("iperf3 is not installed")
-        }
-        self.iperf3 = iperf3
-        openssl = [
-            "/opt/homebrew/bin/openssl",
+    init(iperf3Candidates: [String]? = nil) throws {
+        self.iperf3 = try IperfCLITestSupport.iperf3(candidates: iperf3Candidates)
+        let environment = ProcessInfo.processInfo.environment
+        openssl = ([environment["OPENSSL_PATH"]].compactMap { $0 } + [
+            "/opt/homebrew/opt/openssl@4/bin/openssl",
             "/opt/homebrew/opt/openssl@3/bin/openssl",
+            "/usr/local/opt/openssl@4/bin/openssl",
             "/usr/local/opt/openssl@3/bin/openssl",
-            "/usr/local/bin/openssl",
-        ].first(where: { FileManager.default.isExecutableFile(atPath: $0) })
+        ] + IperfCLITestSupport.executableCandidates(
+            named: "openssl",
+            overrideVariable: "OPENSSL_PATH"
+        )).first(where: { FileManager.default.isExecutableFile(atPath: $0) })
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("iperf-swift-integration-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

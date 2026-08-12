@@ -343,11 +343,24 @@ Do not commit private keys, passwords, or authorized-user data.
 ## Testing
 
 The integration tests require a local `iperf3` 3.21 executable with
-authentication support. On macOS it can be installed with Homebrew:
+authentication support. Install the official Homebrew bottle:
 
 ```sh
 brew install iperf3
 ```
+
+The tests reject other iperf3 versions with an explicit diagnostic so the CLI
+baseline cannot drift from the embedded 3.21 engine. Set `IPERF3_PATH` when the
+3.21 executable is not otherwise on `PATH`:
+
+```sh
+IPERF3_PATH="/path/to/iperf3" swift test
+```
+
+Homebrew's current iperf3 bottle uses OpenSSL 4, which the tests can use to
+generate temporary authentication credentials; OpenSSL 3 remains supported via
+`OPENSSL_PATH`. OpenSSL linked by the Swift Package itself still comes
+exclusively from `openssl-spm`.
 
 Run the complete Swift Package test suite:
 
