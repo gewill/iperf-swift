@@ -62,9 +62,9 @@ find "$STAGING_PATH" -name '*.orig' -delete
 echo "Verifying synchronized sources"
 grep -Fq '#ifdef __linux__' "$STAGING_PATH/include/flowlabel.h"
 test "$(grep -c '#ifdef __linux__' "$STAGING_PATH/include/flowlabel.h")" -eq 1
-grep -Fq 'if (i_errno == IENONE)' "$STAGING_PATH/iperf_client_api.c"
-grep -Fq 'if (i_errno == IENONE)' "$STAGING_PATH/iperf_server_api.c"
-grep -Fq 'if (i_errno == IENONE)' "$STAGING_PATH/iperf_udp.c"
+test "$(grep -Fc 'if (i_errno == IENONE)' "$STAGING_PATH/iperf_client_api.c")" -eq 1
+test "$(grep -Fc 'if (i_errno == IENONE)' "$STAGING_PATH/iperf_server_api.c")" -eq 1
+test "$(grep -Fc 'if (i_errno == IENONE)' "$STAGING_PATH/iperf_udp.c")" -eq 2
 grep -Fq 'IEBINDDEVNOSUPPORT' "$STAGING_PATH/net.c"
 grep -Fq '#include <File.h>' "$STAGING_PATH/include/iperf_util.h"
 grep -Fq '#include <iperf_stdatomic.h>' "$STAGING_PATH/include/iperf.h"
