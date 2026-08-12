@@ -13,13 +13,22 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
-      # openssl@3 is required by the RSA auth interoperability tests, which
-      # shell out to the Homebrew openssl CLI to generate credentials; it is
-      # not used for building (OpenSSL comes from the openssl-spm XCFramework).
+      # Homebrew's official iperf3 bottle supplies its OpenSSL CLI dependency.
+      # Package linking still comes exclusively from openssl-spm.
       - name: Install test dependencies
         run: |
-          brew install openssl@3
-          ./Scripts/install_iperf3_3_21.sh "$RUNNER_TEMP/iperf3-3.21"
+          brew install iperf3
+          version_output="$(iperf3 --version 2>&1)"
+          first_line="${version_output%%$'\n'*}"
+          if [[ ! "$first_line" =~ ^iperf\ 3\.21([[:space:]]|\() ]]; then
+            echo "Expected iperf 3.21, got: $first_line" >&2
+            exit 1
+          fi
+          if [[ "$version_output" != *authentication* ]]; then
+            echo "The installed iperf3 does not report authentication support" >&2
+            exit 1
+          fi
+          echo "IPERF3_PATH=$(command -v iperf3)" >> "$GITHUB_ENV"
       - name: Build
         run: swift build
       # The DocC catalog and doc comments contain many ``symbol`` links that a
@@ -28,8 +37,6 @@ jobs:
         run: swift package generate-documentation --target IperfSwift --warnings-as-errors
       - name: Run tests
         run: swift test
-        env:
-          IPERF3_PATH: ${{ runner.temp }}/iperf3-3.21/bin/iperf3
       # HAVE_SSL is hardcoded on, so the no-SSL fallback in custom.c is never
       # compiled by swift build/test. Exercise it directly so the unconditional
       # RSA-validation declarations can never regress into a link failure.

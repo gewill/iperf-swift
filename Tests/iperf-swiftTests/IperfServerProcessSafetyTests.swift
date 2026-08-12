@@ -34,9 +34,7 @@ final class IperfServerProcessSafetyTests: XCTestCase {
     }
 
     func testAbruptServerDisconnectUsesSocketLocalSIGPIPESuppression() throws {
-        guard Self.iperf3Path != nil else {
-            throw XCTSkip("iperf3 is not installed")
-        }
+        _ = try IperfCLITestSupport.iperf3()
         if ProcessInfo.processInfo.environment[Self.abruptDisconnectChildEnvironmentKey] == "1" {
             try runAbruptServerDisconnectScenario()
             FileHandle.standardOutput.write(Data("\n\(Self.abruptDisconnectCompletionMarker)\n".utf8))
@@ -52,9 +50,7 @@ final class IperfServerProcessSafetyTests: XCTestCase {
     }
 
     func testAbruptClientDisconnectUsesSocketLocalSIGPIPESuppression() throws {
-        guard Self.iperf3Path != nil else {
-            throw XCTSkip("iperf3 is not installed")
-        }
+        _ = try IperfCLITestSupport.iperf3()
         if ProcessInfo.processInfo.environment[Self.abruptClientDisconnectChildEnvironmentKey] == "1" {
             try runAbruptClientDisconnectScenario()
             FileHandle.standardOutput.write(Data("\n\(Self.abruptClientDisconnectCompletionMarker)\n".utf8))
@@ -85,6 +81,7 @@ final class IperfServerProcessSafetyTests: XCTestCase {
     }
 
     func testRepeatedStopDoesNotCloseAReusedListenerDescriptor() throws {
+        _ = try IperfCLITestSupport.iperf3()
         if ProcessInfo.processInfo.environment[Self.listenerReuseChildEnvironmentKey] == "1" {
             try runListenerReuseScenario()
             FileHandle.standardOutput.write(Data("\n\(Self.listenerReuseCompletionMarker)\n".utf8))
@@ -188,7 +185,7 @@ final class IperfServerProcessSafetyTests: XCTestCase {
         let port = try Self.freePort()
         let server = Process()
         let serverOutput = Pipe()
-        server.executableURL = URL(fileURLWithPath: try XCTUnwrap(Self.iperf3Path))
+        server.executableURL = URL(fileURLWithPath: try IperfCLITestSupport.iperf3())
         server.arguments = ["-s", "-p", String(port)]
         server.standardOutput = serverOutput
         server.standardError = serverOutput
@@ -308,7 +305,7 @@ final class IperfServerProcessSafetyTests: XCTestCase {
         )
 
         wait(for: [running], timeout: 3)
-        client.executableURL = URL(fileURLWithPath: try XCTUnwrap(Self.iperf3Path))
+        client.executableURL = URL(fileURLWithPath: try IperfCLITestSupport.iperf3())
         client.arguments = ["-c", "127.0.0.1", "-p", String(port), "-t", "30", "-P", "4"]
         client.standardOutput = clientOutput
         client.standardError = clientOutput
@@ -394,9 +391,9 @@ final class IperfServerProcessSafetyTests: XCTestCase {
 
         wait(for: [running], timeout: 3)
         listenerDescriptor = try Self.waitForListenerDescriptor(boundTo: port)
-        client.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        client.executableURL = URL(fileURLWithPath: try IperfCLITestSupport.iperf3())
         client.arguments = [
-            "iperf3", "-c", "127.0.0.1", "-p", String(port),
+            "-c", "127.0.0.1", "-p", String(port),
             "-t", "30", "-P", "8",
         ]
         client.standardOutput = clientOutput
@@ -537,11 +534,6 @@ final class IperfServerProcessSafetyTests: XCTestCase {
         let listener = try boundListener()
         close(listener.descriptor)
         return listener.port
-    }
-
-    private static var iperf3Path: String? {
-        ["/opt/homebrew/bin/iperf3", "/usr/local/bin/iperf3"]
-            .first(where: { FileManager.default.isExecutableFile(atPath: $0) })
     }
 
     private enum SocketEndpoint {

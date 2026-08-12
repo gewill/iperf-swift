@@ -3340,75 +3340,26 @@ private struct Credentials {
     }
 }
 
-private struct UnsupportedIperfVersionError: LocalizedError {
-    let executable: String
-    let reportedVersion: String
-
-    var errorDescription: String? {
-        "CLI interoperability requires iperf 3.21, but \(executable) reports: \(reportedVersion)"
-    }
-}
-
 private final class TestTools {
     let directory: URL
     let iperf3: String
     private let openssl: String?
 
     init(iperf3Candidates: [String]? = nil) throws {
-        let candidates = iperf3Candidates ?? Self.executableCandidates(
-            named: "iperf3",
-            overrideVariable: "IPERF3_PATH"
-        )
-        guard let iperf3 = candidates
-            .first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-            throw XCTSkip("iperf3 is not installed")
-        }
-        let version = try Self.version(of: iperf3)
-        guard version.range(
-            of: #"^iperf 3\.21(?:\s|\()"#,
-            options: .regularExpression
-        ) != nil else {
-            throw UnsupportedIperfVersionError(executable: iperf3, reportedVersion: version)
-        }
-        self.iperf3 = iperf3
-        openssl = [
-            "/opt/homebrew/bin/openssl",
+        self.iperf3 = try IperfCLITestSupport.iperf3(candidates: iperf3Candidates)
+        let environment = ProcessInfo.processInfo.environment
+        openssl = ([environment["OPENSSL_PATH"]].compactMap { $0 } + [
+            "/opt/homebrew/opt/openssl@4/bin/openssl",
             "/opt/homebrew/opt/openssl@3/bin/openssl",
+            "/usr/local/opt/openssl@4/bin/openssl",
             "/usr/local/opt/openssl@3/bin/openssl",
-            "/usr/local/bin/openssl",
-        ].first(where: { FileManager.default.isExecutableFile(atPath: $0) })
+        ] + IperfCLITestSupport.executableCandidates(
+            named: "openssl",
+            overrideVariable: "OPENSSL_PATH"
+        )).first(where: { FileManager.default.isExecutableFile(atPath: $0) })
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("iperf-swift-integration-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    }
-
-    private static func executableCandidates(
-        named name: String,
-        overrideVariable: String
-    ) -> [String] {
-        let environment = ProcessInfo.processInfo.environment
-        if let override = environment[overrideVariable] {
-            return [override]
-        }
-        return environment["PATH", default: ""]
-            .split(separator: ":")
-            .map { URL(fileURLWithPath: String($0)).appendingPathComponent(name).path }
-    }
-
-    private static func version(of executable: String) throws -> String {
-        let process = Process()
-        let output = Pipe()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = ["--version"]
-        process.standardOutput = output
-        process.standardError = output
-        try process.run()
-        process.waitUntilExit()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)?
-            .split(whereSeparator: \.isNewline)
-            .first
-            .map(String.init) ?? "no version output"
     }
 
     deinit {
