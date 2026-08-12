@@ -32,6 +32,11 @@ the maintained changes applied by `sync.sh`.
   callback and lifecycle semantics.
 - Keep upstream C changes in `iperf_sync/patches/modifications.patch` or
   `iperf_sync/custom_files/` so a future `sync.sh` run does not erase them.
+  Prefer the patch: `patch --forward` fails loudly when a hunk stops applying,
+  which is what makes a drifting change visible. `sync.sh` also carries `perl`
+  substitutions for edits the patch cannot express; they exit successfully when
+  nothing matches, so each one needs a `grep -Fq` line in the verification
+  block to turn a silent no-op into a failed sync.
 - Do not edit generated build output, `.build/`, or Xcode DerivedData.
 - Preserve third-party copyright headers in vendored C files. Keep the upstream
   iperf license in `LICENSE-iperf` and the OpenSSL dependency note in

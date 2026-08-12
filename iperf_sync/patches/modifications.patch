@@ -1,18 +1,3 @@
-diff -ru a/include/iperf.h b/include/iperf.h
---- a/include/iperf.h	2026-05-15 23:42:06
-+++ b/include/iperf.h	2026-05-15 23:42:06
-@@ -68,9 +68,9 @@
-  * with normal integers and warn.
-  */
- #ifdef HAVE_STDATOMIC_H
--#include <stdatomic.h>
-+#include <iperf_stdatomic.h>
- #else
--#warning "No <stdatomic.h> available."
-+#warning "No <iperf_stdatomic.h> available."
- typedef uint64_t atomic_uint_fast64_t;
- #endif // HAVE_STDATOMIC_H
- 
 diff -ru a/include/iperf_api.h b/include/iperf_api.h
 --- a/include/iperf_api.h	2026-05-15 23:42:06
 +++ b/include/iperf_api.h	2026-05-15 23:42:06

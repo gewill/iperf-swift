@@ -42,7 +42,9 @@ if [ ! -f "$SYNC_DATA/patches/modifications.patch" ]; then
 fi
 patch --batch --forward -p1 -d "$STAGING_PATH" < "$SYNC_DATA/patches/modifications.patch"
 
-perl -0pi -e 's/(#define\s+__FLOW_LABEL_H\s*\n)/$1\n#ifdef __linux__\n/; s/(\n#define IPV6_FLOWINFO_SEND\s+33\s*\n\s*#endif\s*)\z/$1\n#endif\n/' "$STAGING_PATH/include/flowlabel.h"
+# Inserts the guard and collapses the blank lines around it in one step. The
+# substitution must match the pristine upstream header, which has no guard.
+perl -0pi -e 's/(#define[ \t]+__FLOW_LABEL_H[ \t]*\n)\n*/$1\n#ifdef __linux__\n/; s/(\n#define IPV6_FLOWINFO_SEND\s+33\s*\n\s*#endif\s*)\z/$1\n#endif\n/' "$STAGING_PATH/include/flowlabel.h"
 
 perl -0pi -e 's/if \( !\(test->server_rsa_private_key && test->server_authorized_users\)\) \{\n        return 0;\n    \}/if (!test->server_rsa_private_key && !test->server_authorized_users) {\n        return 0;\n    }\n\n    if (!(test->server_rsa_private_key && test->server_authorized_users)) {\n        i_errno = IEAUTHTEST;\n        return -1;\n    }/; s/(\tif \(rc\) \{\n)\t    return -1;/$1\t    i_errno = IEAUTHTEST;\n\t    return -1;/; s/(        \} else \{\n)(            if \(test->debug\) \{)/$1            i_errno = IEAUTHTEST;\n$2/; s/(\n    \}\n    return -1;\n\}\n#endif \/\/HAVE_SSL)/\n    }\n    i_errno = IEAUTHTEST;\n    return -1;\n}\n#endif \/\/HAVE_SSL/' "$STAGING_PATH/iperf_api.c"
 
@@ -59,7 +61,11 @@ find "$STAGING_PATH" -name '*.orig' -delete
 
 echo "Verifying synchronized sources"
 grep -Fq '#ifdef __linux__' "$STAGING_PATH/include/flowlabel.h"
-grep -Fq '#include <File.h>' "$STAGING_PATH/include/iperf.h"
+test "$(grep -c '#ifdef __linux__' "$STAGING_PATH/include/flowlabel.h")" -eq 1
+grep -Fq 'if (i_errno == IENONE)' "$STAGING_PATH/iperf_client_api.c"
+grep -Fq 'if (i_errno == IENONE)' "$STAGING_PATH/iperf_server_api.c"
+grep -Fq 'if (i_errno == IENONE)' "$STAGING_PATH/iperf_udp.c"
+grep -Fq 'IEBINDDEVNOSUPPORT' "$STAGING_PATH/net.c"
 grep -Fq '#include <File.h>' "$STAGING_PATH/include/iperf_util.h"
 grep -Fq '#include <iperf_stdatomic.h>' "$STAGING_PATH/include/iperf.h"
 grep -Fq '#include <iperf_stdatomic.h>' "$STAGING_PATH/include/iperf_api.h"

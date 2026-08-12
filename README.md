@@ -436,3 +436,6 @@ downstream consumer is ready to adopt them:
 Project-specific code is released under the [MIT License](LICENSE). The bundled
 iperf code keeps the upstream license in [LICENSE-iperf](LICENSE-iperf), and the
 OpenSSL dependency is documented in [LICENSE-OpenSSL.md](LICENSE-OpenSSL.md).
+The Apple-platform build uses the project's MIT-licensed atomic compatibility
+header so the C structures remain importable by Swift; it does not include the
+former FFmpeg LGPL atomic compatibility source.
