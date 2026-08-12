@@ -4,6 +4,27 @@ import Darwin
 @testable import IperfSwift
 
 final class IperfCLIIntegrationTests: XCTestCase {
+    func testCLIInteroperabilityRejectsAnUnpinnedIperfVersion() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iperf-swift-version-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let executable = directory.appendingPathComponent("iperf3")
+        try "#!/bin/sh\necho 'iperf 3.22 (cJSON 1.7.15)'\n".write(
+            to: executable,
+            atomically: true,
+            encoding: .utf8
+        )
+        XCTAssertEqual(chmod(executable.path, 0o755), 0)
+
+        XCTAssertThrowsError(try TestTools(iperf3Candidates: [executable.path])) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "CLI interoperability requires iperf 3.21, but \(executable.path) reports: iperf 3.22 (cJSON 1.7.15)"
+            )
+        }
+    }
+
     func testInvalidBindDevicePreservesEngineError() throws {
         var configuration = IperfConfiguration()
         configuration.role = .server
@@ -3319,15 +3340,35 @@ private struct Credentials {
     }
 }
 
+private struct UnsupportedIperfVersionError: LocalizedError {
+    let executable: String
+    let reportedVersion: String
+
+    var errorDescription: String? {
+        "CLI interoperability requires iperf 3.21, but \(executable) reports: \(reportedVersion)"
+    }
+}
+
 private final class TestTools {
     let directory: URL
     let iperf3: String
     private let openssl: String?
 
-    init() throws {
-        guard let iperf3 = ["/opt/homebrew/bin/iperf3", "/usr/local/bin/iperf3"]
+    init(iperf3Candidates: [String]? = nil) throws {
+        let candidates = iperf3Candidates ?? Self.executableCandidates(
+            named: "iperf3",
+            overrideVariable: "IPERF3_PATH"
+        )
+        guard let iperf3 = candidates
             .first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
             throw XCTSkip("iperf3 is not installed")
+        }
+        let version = try Self.version(of: iperf3)
+        guard version.range(
+            of: #"^iperf 3\.21(?:\s|\()"#,
+            options: .regularExpression
+        ) != nil else {
+            throw UnsupportedIperfVersionError(executable: iperf3, reportedVersion: version)
         }
         self.iperf3 = iperf3
         openssl = [
@@ -3339,6 +3380,35 @@ private final class TestTools {
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("iperf-swift-integration-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    private static func executableCandidates(
+        named name: String,
+        overrideVariable: String
+    ) -> [String] {
+        let environment = ProcessInfo.processInfo.environment
+        if let override = environment[overrideVariable] {
+            return [override]
+        }
+        return environment["PATH", default: ""]
+            .split(separator: ":")
+            .map { URL(fileURLWithPath: String($0)).appendingPathComponent(name).path }
+    }
+
+    private static func version(of executable: String) throws -> String {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = ["--version"]
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        process.waitUntilExit()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8)?
+            .split(whereSeparator: \.isNewline)
+            .first
+            .map(String.init) ?? "no version output"
     }
 
     deinit {
