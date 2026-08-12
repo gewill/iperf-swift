@@ -1,8 +1,29 @@
 import XCTest
 import IperfCLib
+import Darwin
 @testable import IperfSwift
 
 final class IperfSwiftUnitTests: XCTestCase {
+    func testServerAuthorizedUsersDoesNotLeakWhenReplacedOrFreed() throws {
+        let authorizedUsers = String(repeating: "user,hash\n", count: 100_000)
+        let baseline = mallocBytesInUse()
+        let test = try XCTUnwrap(iperf_new_test())
+
+        for _ in 0..<32 {
+            authorizedUsers.withCString {
+                iperf_set_test_server_authorized_users(test, $0)
+            }
+        }
+        iperf_free_test(test)
+
+        let retainedBytes = mallocBytesInUse() - baseline
+        XCTAssertLessThan(
+            retainedBytes,
+            authorizedUsers.utf8.count / 2,
+            "Replacing and freeing authorized users retained \(retainedBytes) bytes"
+        )
+    }
+
     func testIperfErrorMirrorsEveryEmbeddedEngineCode() {
         let cErrorCodes: [Int32] = [
             Int32(IENONE), Int32(IESERVCLIENT), Int32(IENOROLE), Int32(IESERVERONLY),
@@ -1311,4 +1332,10 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertEqual(receivedError, expectedError, file: file, line: line)
         XCTAssertEqual(states.last, .error, file: file, line: line)
     }
+}
+
+private func mallocBytesInUse() -> Int {
+    var statistics = malloc_statistics_t()
+    malloc_zone_statistics(malloc_default_zone(), &statistics)
+    return statistics.size_in_use
 }

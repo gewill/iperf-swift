@@ -74,6 +74,8 @@ grep -Fq '#include <iperf_stdatomic.h>' "$STAGING_PATH/include/iperf.h"
 grep -Fq '#include <iperf_stdatomic.h>' "$STAGING_PATH/include/iperf_api.h"
 grep -Fq '#define HAVE_SSL 1' "$STAGING_PATH/include/iperf_config.h"
 grep -Fq 'iperf_set_test_use_pkcs1_padding' "$STAGING_PATH/iperf_api.c"
+grep -Fq 'free(test->server_authorized_users)' "$STAGING_PATH/iperf_api.c"
+grep -Fq 'iperf_set_test_server_authorized_users(test, optarg)' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'if (!test->server_rsa_private_key && !test->server_authorized_users)' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'i_errno = IEAUTHTEST' "$STAGING_PATH/iperf_api.c"
 
