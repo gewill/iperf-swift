@@ -36,6 +36,17 @@ package release number.
 
 ### Fixed
 
+- A persistent server no longer ends because one client's test failed ([#98]).
+  The engine returns `-1` from `iperf_run_server` for a failed client
+  interaction — a rejected authentication, a stalled transfer, a control-channel
+  error — and `-2` only when it cannot establish the listening socket. The
+  restart condition accepted only non-negative codes, so any of the twenty-five
+  `-1` paths ended the runner. A rejected password now ends that client's test
+  and leaves the server listening, matching the CLI, whose own loop reports a
+  `-1` and continues. The error is still delivered to the error closure, so the
+  diagnostic is unchanged; what changes is that the runner stays
+  `IperfRunnerState/running`. **Behavior change:** the error closure is no
+  longer always terminal — read the runner's state alongside it.
 - A one-off server reaching its idle timeout no longer terminates the host
   process ([#97]). The vendored engine called `exit(0)` on that path, taking
   the embedding application down with it; it now returns control and the runner
