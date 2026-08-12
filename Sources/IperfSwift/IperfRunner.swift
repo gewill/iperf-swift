@@ -1084,7 +1084,6 @@ public class IperfRunner {
         guard currentTest == nil, pendingRunID == nil else {
             return
         }
-        signal(SIGPIPE, SIG_IGN)
         onReporterFunction = onReporter
         onErrorFunction = onError
         onRunnerStateFunction = onRunnerState

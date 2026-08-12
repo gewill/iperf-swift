@@ -66,6 +66,9 @@ test "$(grep -Fc 'if (i_errno == IENONE)' "$STAGING_PATH/iperf_client_api.c")" -
 test "$(grep -Fc 'if (i_errno == IENONE)' "$STAGING_PATH/iperf_server_api.c")" -eq 1
 test "$(grep -Fc 'if (i_errno == IENONE)' "$STAGING_PATH/iperf_udp.c")" -eq 2
 grep -Fq 'IEBINDDEVNOSUPPORT' "$STAGING_PATH/net.c"
+grep -Fq 'iperf_set_socket_no_sigpipe' "$STAGING_PATH/net.c"
+grep -Fq 'iperf_set_socket_no_sigpipe' "$STAGING_PATH/iperf_server_api.c"
+grep -Fq 'iperf_set_socket_no_sigpipe' "$STAGING_PATH/iperf_tcp.c"
 grep -Fq '#include <File.h>' "$STAGING_PATH/include/iperf_util.h"
 grep -Fq '#include <iperf_stdatomic.h>' "$STAGING_PATH/include/iperf.h"
 grep -Fq '#include <iperf_stdatomic.h>' "$STAGING_PATH/include/iperf_api.h"

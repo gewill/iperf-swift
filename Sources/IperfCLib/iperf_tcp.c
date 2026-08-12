@@ -135,6 +135,13 @@ iperf_tcp_accept(struct iperf_test * test)
         i_errno = IESTREAMCONNECT;
         return -1;
     }
+    if (iperf_set_socket_no_sigpipe(s) < 0) {
+        int saved_errno = errno;
+        close(s);
+        errno = saved_errno;
+        i_errno = IESTREAMCONNECT;
+        return -1;
+    }
 #if defined(HAVE_SO_MAX_PACING_RATE)
     /* If fq socket pacing is specified, enable it. */
 
@@ -228,6 +235,14 @@ iperf_tcp_listen(struct iperf_test *test)
 
         if ((s = socket(res->ai_family, SOCK_STREAM, proto)) < 0) {
 	    freeaddrinfo(res);
+            i_errno = IESTREAMLISTEN;
+            return -1;
+        }
+        if (iperf_set_socket_no_sigpipe(s) < 0) {
+            saved_errno = errno;
+            close(s);
+            freeaddrinfo(res);
+            errno = saved_errno;
             i_errno = IESTREAMLISTEN;
             return -1;
         }
