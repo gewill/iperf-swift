@@ -159,6 +159,18 @@ bind_to_device(int s, int domain, const char *bind_dev)
 #endif
 }
 
+int
+iperf_set_socket_no_sigpipe(int s)
+{
+#if defined(__APPLE__) && defined(SO_NOSIGPIPE)
+    int opt = 1;
+    return setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt));
+#else
+    (void) s;
+    return 0;
+#endif
+}
+
 /* create a socket */
 int
 create_socket(int domain, int type, int proto, const char *local, const char *bind_dev, int local_port, const char *server, int port, struct addrinfo **server_res_out)
@@ -190,6 +202,15 @@ create_socket(int domain, int type, int proto, const char *local, const char *bi
 	if (local)
 	    freeaddrinfo(local_res);
 	freeaddrinfo(server_res);
+        return -1;
+    }
+    if (type == SOCK_STREAM && iperf_set_socket_no_sigpipe(s) < 0) {
+        saved_errno = errno;
+        close(s);
+        if (local)
+            freeaddrinfo(local_res);
+        freeaddrinfo(server_res);
+        errno = saved_errno;
         return -1;
     }
 
@@ -327,6 +348,13 @@ netannounce(int domain, int proto, const char *local, const char *bind_dev, int 
     s = socket(res->ai_family, proto, 0);
     if (s < 0) {
 	freeaddrinfo(res);
+        return -1;
+    }
+    if (proto == SOCK_STREAM && iperf_set_socket_no_sigpipe(s) < 0) {
+        saved_errno = errno;
+        close(s);
+        freeaddrinfo(res);
+        errno = saved_errno;
         return -1;
     }
 

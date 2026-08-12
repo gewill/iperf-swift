@@ -72,6 +72,12 @@ diff -ru a/include/iperf_util.h b/include/iperf_util.h
  int readentropy(void *out, size_t outsize);
  
  void fill_with_repeating_pattern(void *out, size_t outsize);
+
+diff -ru a/include/net.h b/include/net.h
+--- a/include/net.h	2026-05-15 23:42:06
++++ b/include/net.h	2026-05-15 23:42:06
+@@ -46,0 +47 @@
++int iperf_set_socket_no_sigpipe(int s);
 diff -ru a/iperf_api.c b/iperf_api.c
 --- a/iperf_api.c	2026-05-15 23:42:06
 +++ b/iperf_api.c	2026-05-15 23:42:06
@@ -238,6 +244,14 @@ diff -ru a/iperf_server_api.c b/iperf_server_api.c
  	    return -1;
  	}
      }
+@@ -165,0 +168,7 @@
++    if (iperf_set_socket_no_sigpipe(s) < 0) {
++        int saved_errno = errno;
++        close(s);
++        errno = saved_errno;
++        i_errno = IEACCEPT;
++        return ret;
++    }
 @@ -519,10 +521,7 @@
          iperf_sync_close_socket(test->ctrl_sck);
          test->ctrl_sck = -1;
@@ -320,6 +334,26 @@ diff -ru a/iperf_udp.c b/iperf_udp.c
          return -1;
      }
  
+diff -ru a/iperf_tcp.c b/iperf_tcp.c
+--- a/iperf_tcp.c	2026-05-15 23:42:06
++++ b/iperf_tcp.c	2026-05-15 23:42:06
+@@ -137,0 +138,7 @@
++    if (iperf_set_socket_no_sigpipe(s) < 0) {
++        int saved_errno = errno;
++        close(s);
++        errno = saved_errno;
++        i_errno = IESTREAMCONNECT;
++        return -1;
++    }
+@@ -233,0 +239,8 @@
++        if (iperf_set_socket_no_sigpipe(s) < 0) {
++            saved_errno = errno;
++            close(s);
++            freeaddrinfo(res);
++            errno = saved_errno;
++            i_errno = IESTREAMLISTEN;
++            return -1;
++        }
 diff -ru a/net.c b/net.c
 --- a/net.c	2026-05-15 23:42:06
 +++ b/net.c	2026-05-15 23:42:06
@@ -331,6 +365,29 @@ diff -ru a/net.c b/net.c
  #include "iperf_util.h"
  #include "net.h"
  #include "timer.h"
+@@ -160,0 +162,12 @@
++int
++iperf_set_socket_no_sigpipe(int s)
++{
++#if defined(__APPLE__) && defined(SO_NOSIGPIPE)
++    int opt = 1;
++    return setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt));
++#else
++    (void) s;
++    return 0;
++#endif
++}
++
+@@ -193,0 +206,9 @@
++    if (type == SOCK_STREAM && iperf_set_socket_no_sigpipe(s) < 0) {
++        saved_errno = errno;
++        close(s);
++        if (local)
++            freeaddrinfo(local_res);
++        freeaddrinfo(server_res);
++        errno = saved_errno;
++        return -1;
++    }
 @@ -199,6 +200,8 @@
              freeaddrinfo(local_res);
              freeaddrinfo(server_res);
@@ -340,6 +397,14 @@ diff -ru a/net.c b/net.c
              return -1;
          }
      }
+@@ -328,0 +353,7 @@
++    if (proto == SOCK_STREAM && iperf_set_socket_no_sigpipe(s) < 0) {
++        saved_errno = errno;
++        close(s);
++        freeaddrinfo(res);
++        errno = saved_errno;
++        return -1;
++    }
 @@ -337,6 +340,8 @@
              close(s);
              freeaddrinfo(res);

@@ -165,6 +165,13 @@ iperf_accept(struct iperf_test *test)
         i_errno = IEACCEPT;
         return ret;
     }
+    if (iperf_set_socket_no_sigpipe(s) < 0) {
+        int saved_errno = errno;
+        close(s);
+        errno = saved_errno;
+        i_errno = IEACCEPT;
+        return ret;
+    }
 
     if (test->ctrl_sck == -1) {
         /* Server free, accept new client */
