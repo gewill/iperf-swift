@@ -1,4 +1,4 @@
-// swift-tools-version:5.6
+// swift-tools-version:5.7
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -22,7 +22,7 @@ let package = Package(
         ),
         .package(
             url: "https://github.com/swiftlang/swift-docc-plugin",
-            from: "1.1.0"
+            exact: "1.5.0"
         ),
     ],
     targets: [
