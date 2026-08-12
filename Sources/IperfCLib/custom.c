@@ -12,8 +12,7 @@
 #include <unistd.h>
 #if defined(HAVE_SSL)
 #include "iperf_auth.h"
-#include <openssl/evp.h>
-#include <openssl/pem.h>
+#include <iperf_openssl.h>
 #endif
 
 struct iperf_interval_results* extract_iperf_interval_results(struct iperf_stream* stream) {
@@ -37,6 +36,10 @@ void iperf_close_test_listener(struct iperf_test* ipt) {
 
 #if defined(HAVE_SSL)
 int Base64Decode(const char* b64message, unsigned char** buffer, size_t* length);
+
+int iperf_openssl_version_major(void) {
+    return OPENSSL_VERSION_MAJOR;
+}
 
 static int reject_private_key_password(char* buffer, int size, int rwflag, void* userdata) {
     (void)buffer;
@@ -95,5 +98,9 @@ int iperf_validate_client_rsa_pubkey(const char* base64) {
 int iperf_validate_server_rsa_privkey(const char* base64) {
     (void)base64;
     return -1;
+}
+
+int iperf_openssl_version_major(void) {
+    return 0;
 }
 #endif

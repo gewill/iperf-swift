@@ -57,8 +57,7 @@
 #include "portable_endian.h"
 
 #if defined(HAVE_SSL)
-#include <openssl/bio.h>
-#include <openssl/evp.h>
+#include <iperf_openssl.h>
 #endif // HAVE_SSL
 
 #include "iperf_pthread.h"

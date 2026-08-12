@@ -48,6 +48,9 @@ perl -0pi -e 's/(#define[ \t]+__FLOW_LABEL_H[ \t]*\n)\n*/$1\n#ifdef __linux__\n/
 
 perl -0pi -e 's/if \( !\(test->server_rsa_private_key && test->server_authorized_users\)\) \{\n        return 0;\n    \}/if (!test->server_rsa_private_key && !test->server_authorized_users) {\n        return 0;\n    }\n\n    if (!(test->server_rsa_private_key && test->server_authorized_users)) {\n        i_errno = IEAUTHTEST;\n        return -1;\n    }/; s/(\tif \(rc\) \{\n)\t    return -1;/$1\t    i_errno = IEAUTHTEST;\n\t    return -1;/; s/(        \} else \{\n)(            if \(test->debug\) \{)/$1            i_errno = IEAUTHTEST;\n$2/; s/(\n    \}\n    return -1;\n\}\n#endif \/\/HAVE_SSL)/\n    }\n    i_errno = IEAUTHTEST;\n    return -1;\n}\n#endif \/\/HAVE_SSL/' "$STAGING_PATH/iperf_api.c"
 
+perl -pi -e 's/#include <openssl\/bio\.h>/#include <iperf_openssl.h>/' \
+    "$STAGING_PATH/include/iperf_auth.h"
+
 if [ ! -d "$SYNC_DATA/custom_files" ]; then
     echo "Missing $SYNC_DATA/custom_files" >&2
     exit 1
@@ -72,6 +75,13 @@ grep -Fq 'iperf_set_socket_no_sigpipe' "$STAGING_PATH/iperf_tcp.c"
 grep -Fq '#include <File.h>' "$STAGING_PATH/include/iperf_util.h"
 grep -Fq '#include <iperf_stdatomic.h>' "$STAGING_PATH/include/iperf.h"
 grep -Fq '#include <iperf_stdatomic.h>' "$STAGING_PATH/include/iperf_api.h"
+grep -Fq '#include <iperf_openssl.h>' "$STAGING_PATH/include/iperf.h"
+grep -Fq '#include <iperf_openssl.h>' "$STAGING_PATH/include/iperf_auth.h"
+grep -Fq '#include <iperf_openssl.h>' "$STAGING_PATH/iperf_api.c"
+grep -Fq '#include <iperf_openssl.h>' "$STAGING_PATH/iperf_auth.c"
+grep -Fq '#include <iperf_openssl.h>' "$STAGING_PATH/custom.c"
+grep -Fq '#include <libssl/openssl/bio.h>' "$STAGING_PATH/include/iperf_openssl.h"
+grep -Fq 'iperf_openssl_version_major' "$STAGING_PATH/custom.c"
 grep -Fq '#define HAVE_SSL 1' "$STAGING_PATH/include/iperf_config.h"
 grep -Fq 'iperf_set_test_use_pkcs1_padding' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'free(test->server_authorized_users)' "$STAGING_PATH/iperf_api.c"
