@@ -11,6 +11,10 @@ package release number.
 
 ### Changed
 
+- The minimum supported toolchain is now Swift 5.7 / Xcode 14.0 ([#103]).
+  This matches the optional-binding syntax already used by the package and the
+  DocC 1.5.0 plugin, which is now pinned so dependency resolution cannot
+  silently raise the minimum toolchain again.
 - The atomic compatibility header the Apple platform build relies on is now
   project-owned and MIT-licensed ([#102]). It replaces a header derived from
   FFmpeg and carrying the LGPL, which the package shipped without disclosing in
@@ -550,5 +554,6 @@ unchanged from 3.21.6.
 [#99]: https://github.com/gewill/iperf-swift/issues/99
 [#101]: https://github.com/gewill/iperf-swift/issues/101
 [#102]: https://github.com/gewill/iperf-swift/issues/102
+[#103]: https://github.com/gewill/iperf-swift/issues/103
 [#114]: https://github.com/gewill/iperf-swift/pull/114
 [#84]: https://github.com/gewill/iperfman/issues/84

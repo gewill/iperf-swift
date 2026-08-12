@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/gewill/iperf-swift/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/gewill/iperf-swift/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/gewill/iperf-swift)](https://github.com/gewill/iperf-swift/releases)
-[![Swift 5.6+](https://img.shields.io/badge/Swift-5.6%2B-orange.svg)](https://swift.org)
+[![Swift 5.7+](https://img.shields.io/badge/Swift-5.7%2B-orange.svg)](https://swift.org)
 [![Platforms](https://img.shields.io/badge/platforms-iOS%2013%2B%20%7C%20macOS%2010.15%2B%20%7C%20tvOS%2013%2B-blue.svg)](#requirements)
 [![SwiftPM](https://img.shields.io/badge/SwiftPM-compatible-brightgreen.svg)](Package.swift)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
@@ -32,7 +32,7 @@ maintained. Development continues here without upstream involvement.
 
 ## Requirements
 
-- Swift 5.6+ (Xcode 13.4+)
+- Swift 5.7+ (Xcode 14.0+)
 - iOS 13+, macOS 10.15+, or tvOS 13+
 
 ## Installation
