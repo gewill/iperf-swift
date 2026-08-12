@@ -60,7 +60,7 @@ Then add `IperfSwift` to the target dependencies and import it:
 import IperfSwift
 ```
 
-The package uses the OpenSSL XCFramework from
+The package uses the OpenSSL 4 XCFramework from
 [`openssl-spm`](https://github.com/Lakr233/openssl-spm). Consuming apps therefore
 do not inherit machine-specific Homebrew library paths.
 
@@ -359,8 +359,8 @@ IPERF3_PATH="/path/to/iperf3" swift test
 
 Homebrew's current iperf3 bottle uses OpenSSL 4, which the tests can use to
 generate temporary authentication credentials; OpenSSL 3 remains supported via
-`OPENSSL_PATH`. OpenSSL linked by the Swift Package itself still comes
-exclusively from `openssl-spm`.
+`OPENSSL_PATH`. OpenSSL linked by the Swift Package itself comes exclusively
+from the OpenSSL 4 XCFramework in `openssl-spm`.
 
 Run the complete Swift Package test suite:
 

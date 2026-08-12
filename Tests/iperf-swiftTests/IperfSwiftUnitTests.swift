@@ -4,6 +4,10 @@ import Darwin
 @testable import IperfSwift
 
 final class IperfSwiftUnitTests: XCTestCase {
+    func testPackagedOpenSSLUsesMajorVersionFour() {
+        XCTAssertEqual(iperf_openssl_version_major(), 4)
+    }
+
     func testServerAuthorizedUsersDoesNotLeakWhenReplacedOrFreed() throws {
         let authorizedUsers = String(repeating: "user,hash\n", count: 100_000)
         let baseline = mallocBytesInUse()

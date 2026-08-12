@@ -24,6 +24,7 @@ void iperf_close_test_listener(struct iperf_test* ipt);
    key as invalid, so these declarations and their Swift callers always link. */
 int iperf_validate_client_rsa_pubkey(const char* base64);
 int iperf_validate_server_rsa_privkey(const char* base64);
+int iperf_openssl_version_major(void);
 
 
 #endif /* Header_h */

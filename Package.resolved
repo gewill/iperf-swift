@@ -5,8 +5,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Lakr233/openssl-spm.git",
       "state" : {
-        "revision" : "9f3b525d960fe71e534482310e96cd9c4f2faa17",
-        "version" : "3.6.2"
+        "revision" : "eac8fdd510ebbcd410982d209a4b1dc67eb063ce",
+        "version" : "4.0.1"
       }
     },
     {

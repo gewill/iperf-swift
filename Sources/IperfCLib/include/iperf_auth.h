@@ -28,7 +28,7 @@
 #if defined(HAVE_SSL)
 #include <time.h>
 #include <sys/types.h>
-#include <openssl/bio.h>
+typedef struct evp_pkey_st EVP_PKEY;
 
 int test_load_pubkey_from_file(const char *public_keyfile);
 int test_load_private_key_from_file(const char *private_keyfile);
