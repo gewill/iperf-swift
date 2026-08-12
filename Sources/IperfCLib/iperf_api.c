@@ -89,7 +89,7 @@
 #include "iperf_locale.h"
 #include "version.h"
 #if defined(HAVE_SSL)
-#include <iperf_openssl.h>
+#include "iperf_openssl.h"
 #include "iperf_auth.h"
 #endif /* HAVE_SSL */
 

@@ -39,7 +39,7 @@
 
 #if defined(HAVE_SSL)
 
-#include <iperf_openssl.h>
+#include "iperf_openssl.h"
 
 const char *auth_text_format = "user: %s\npwd:  %s\nts:   %"PRId64;
 

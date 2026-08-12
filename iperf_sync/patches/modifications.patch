@@ -49,10 +49,11 @@ diff -ru a/include/iperf_auth.h b/include/iperf_auth.h
 diff -ru a/include/iperf.h b/include/iperf.h
 --- a/include/iperf.h	2026-05-15 23:42:06
 +++ b/include/iperf.h	2026-05-15 23:42:06
-@@ -60,2 +60 @@
--#include <openssl/bio.h>
--#include <openssl/evp.h>
-+#include <iperf_openssl.h>
+@@ -32,3 +32,4 @@
+ #include <sys/time.h>
+ #include <sys/types.h>
++#include <stdio.h>
+ #include <stdint.h>
 diff -ru a/include/iperf_config.h b/include/iperf_config.h
 --- a/include/iperf_config.h	2026-05-15 23:42:06
 +++ b/include/iperf_config.h	2026-05-15 23:42:06
@@ -92,7 +93,7 @@ diff -ru a/iperf_api.c b/iperf_api.c
 @@ -92,2 +92 @@
 -#include <openssl/bio.h>
 -#include <openssl/err.h>
-+#include <iperf_openssl.h>
++#include "iperf_openssl.h"
 @@ -765,5 +765,8 @@
  void
  iperf_set_test_server_authorized_users(struct iperf_test *ipt, const char *server_authorized_users)
@@ -185,7 +186,7 @@ diff -ru a/iperf_auth.c b/iperf_auth.c
 -#include <openssl/evp.h>
 -#include <openssl/core_names.h>
 -#endif
-+#include <iperf_openssl.h>
++#include "iperf_openssl.h"
 @@ -66,9 +66,14 @@
  }
  

@@ -12,7 +12,7 @@
 #include <unistd.h>
 #if defined(HAVE_SSL)
 #include "iperf_auth.h"
-#include <iperf_openssl.h>
+#include "iperf_openssl.h"
 #endif
 
 struct iperf_interval_results* extract_iperf_interval_results(struct iperf_stream* stream) {
