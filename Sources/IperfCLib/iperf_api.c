@@ -765,7 +765,10 @@ iperf_set_test_client_rsa_pubkey_from_file(struct iperf_test *ipt, const char *c
 void
 iperf_set_test_server_authorized_users(struct iperf_test *ipt, const char *server_authorized_users)
 {
-    ipt->server_authorized_users = strdup(server_authorized_users);
+    char *authorized_users = server_authorized_users ? strdup(server_authorized_users) : NULL;
+
+    free(ipt->server_authorized_users);
+    ipt->server_authorized_users = authorized_users;
 }
 
 void
@@ -1767,7 +1770,7 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
             server_flag = 1;
             break;
         case OPT_SERVER_AUTHORIZED_USERS:
-            test->server_authorized_users = strdup(optarg);
+            iperf_set_test_server_authorized_users(test, optarg);
             break;
         case OPT_SERVER_SKEW_THRESHOLD:
             test->server_skew_threshold = atoi(optarg);
@@ -3448,6 +3451,9 @@ iperf_free_test(struct iperf_test *test)
         }
     }
 #if defined(HAVE_SSL)
+
+    free(test->server_authorized_users);
+    test->server_authorized_users = NULL;
 
     if (test->server_rsa_private_key)
       EVP_PKEY_free(test->server_rsa_private_key);
