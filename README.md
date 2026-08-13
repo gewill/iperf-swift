@@ -411,11 +411,20 @@ git diff
 git diff --check
 ```
 
-`sync.sh` defaults to the official `3.21` tag, stages the update in a temporary
-directory, applies `iperf_sync/patches/modifications.patch`, restores
-`iperf_sync/custom_files/`, and then replaces `Sources/IperfCLib/`. Do not keep
-project-specific changes only in the generated C source because the next sync
-will overwrite them.
+`sync.sh` defaults to the official `3.21` tag. It creates a unique system
+temporary directory for checkout and a unique staging directory beside
+`Sources/IperfCLib`, applies
+`iperf_sync/patches/modifications.patch`, restores
+`iperf_sync/custom_files/` (including the deterministic Apple-platform
+`iperf_config.h`), and then replaces `Sources/IperfCLib/`. Repository
+directories named `iperf3` or `Sources/IperfCLib.sync-tmp` are not used or
+removed. Concurrent synchronization is rejected through `.iperf-sync.lock`
+rather than allowing two processes to replace the generated tree at once. If a
+terminated process leaves a stale lock and no synchronization is active, remove
+it with `rmdir .iperf-sync.lock`. The maintained configuration's probe names are
+checked against the selected upstream tag, and CI regenerates the 3.21 tree and
+requires a clean diff. Do not keep project-specific changes only in the
+generated C source because the next sync will overwrite them.
 
 ## Versioning
 

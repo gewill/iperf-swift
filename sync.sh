@@ -2,20 +2,44 @@
 
 REPO_URL="https://github.com/esnet/iperf.git"
 TAG="${1:-3.21}"
-CHECKOUT_PATH="iperf3"
 SRC_PATH="Sources/IperfCLib"
 SYNC_DATA="iperf_sync"
-STAGING_PATH="${SRC_PATH}.sync-tmp"
+LOCK_PATH=".iperf-sync.lock"
 
 cd "$(dirname "$0")"
 
+WORK_PATH=""
+STAGING_PATH=""
+LOCK_ACQUIRED=0
+
 cleanup() {
-    rm -rf "$CHECKOUT_PATH" "$STAGING_PATH"
+    if [ -n "$WORK_PATH" ]; then
+        rm -rf "$WORK_PATH"
+    fi
+    if [ -n "$STAGING_PATH" ]; then
+        rm -rf "$STAGING_PATH"
+    fi
+    if [ "$LOCK_ACQUIRED" -eq 1 ]; then
+        rmdir "$LOCK_PATH"
+    fi
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+if ! mkdir "$LOCK_PATH" 2>/dev/null; then
+    echo "Another synchronization is running ($LOCK_PATH exists)." >&2
+    echo "If no synchronization is active, remove it with: rmdir $LOCK_PATH" >&2
+    exit 1
+fi
+LOCK_ACQUIRED=1
+
+WORK_PATH="$(mktemp -d "${TMPDIR:-/tmp}/iperf-swift-sync.XXXXXX")"
+CHECKOUT_PATH="$WORK_PATH/iperf3"
+# Keep staging beside the destination so the final move cannot degrade into a
+# cross-filesystem recursive copy.
+STAGING_PATH="$(mktemp -d "$(dirname "$SRC_PATH")/.IperfCLib-sync.XXXXXX")"
 
 echo "Checking out $REPO_URL (tag $TAG)"
-rm -rf "$CHECKOUT_PATH"
 mkdir "$CHECKOUT_PATH"
 git -C "$CHECKOUT_PATH" init --quiet
 git -C "$CHECKOUT_PATH" -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 \
@@ -28,8 +52,28 @@ if ! (cd "$CHECKOUT_PATH" && ./configure > configure.log 2>&1); then
     exit 1
 fi
 
+if [ ! -f "$SYNC_DATA/custom_files/iperf_config.h" ]; then
+    echo "Missing $SYNC_DATA/custom_files/iperf_config.h" >&2
+    exit 1
+fi
+generated_config_names="$WORK_PATH/generated-config-names"
+vendored_config_names="$WORK_PATH/vendored-config-names"
+grep -Eo '^(#define|/\* #undef) [A-Z_0-9]+' \
+    "$CHECKOUT_PATH/src/iperf_config.h" | awk '{print $NF}' | sort -u \
+    > "$generated_config_names"
+grep -Eo '^(#define|/\* #undef) [A-Z_0-9]+' \
+    "$SYNC_DATA/custom_files/iperf_config.h" | awk '{print $NF}' | sort -u \
+    > "$vendored_config_names"
+if ! cmp -s "$generated_config_names" "$vendored_config_names"; then
+    echo "Maintained iperf_config.h probes differ from upstream tag $TAG." >&2
+    echo "Missing maintained probes:" >&2
+    comm -23 "$generated_config_names" "$vendored_config_names" >&2
+    echo "Stale maintained probes:" >&2
+    comm -13 "$generated_config_names" "$vendored_config_names" >&2
+    exit 1
+fi
+
 echo "Copying upstream source files"
-rm -rf "$STAGING_PATH"
 mkdir -p "$STAGING_PATH/include"
 cp "$CHECKOUT_PATH/src/"*.h "$STAGING_PATH/include"
 cp "$CHECKOUT_PATH/src/"*.c "$STAGING_PATH/"
@@ -44,14 +88,32 @@ patch --batch --forward -p1 -d "$STAGING_PATH" < "$SYNC_DATA/patches/modificatio
 
 # Inserts the guard and collapses the blank lines around it in one step. The
 # substitution must match the pristine upstream header, which has no guard.
-perl -0pi -e 's/(#define[ \t]+__FLOW_LABEL_H[ \t]*\n)\n*/$1\n#ifdef __linux__\n/; s/(\n#define IPV6_FLOWINFO_SEND\s+33\s*\n\s*#endif\s*)\z/$1\n#endif\n/' "$STAGING_PATH/include/flowlabel.h"
+perl -0pi -e '
+    $count = s/(#define[ \t]+__FLOW_LABEL_H[ \t]*\n)\n*/$1\n#ifdef __linux__\n/g;
+    die "flowlabel start guard: expected 1 replacement, got $count\n" unless $count == 1;
+    $count = s/(\n#define IPV6_FLOWINFO_SEND\s+33\s*\n\s*#endif\s*)\z/$1\n#endif\n/g;
+    die "flowlabel end guard: expected 1 replacement, got $count\n" unless $count == 1;
+' "$STAGING_PATH/include/flowlabel.h"
 
-perl -0pi -e 's/if \( !\(test->server_rsa_private_key && test->server_authorized_users\)\) \{\n        return 0;\n    \}/if (!test->server_rsa_private_key && !test->server_authorized_users) {\n        return 0;\n    }\n\n    if (!(test->server_rsa_private_key && test->server_authorized_users)) {\n        i_errno = IEAUTHTEST;\n        return -1;\n    }/; s/(\tif \(rc\) \{\n)\t    return -1;/$1\t    i_errno = IEAUTHTEST;\n\t    return -1;/; s/(        \} else \{\n)(            if \(test->debug\) \{)/$1            i_errno = IEAUTHTEST;\n$2/; s/(\n    \}\n    return -1;\n\}\n#endif \/\/HAVE_SSL)/\n    }\n    i_errno = IEAUTHTEST;\n    return -1;\n}\n#endif \/\/HAVE_SSL/' "$STAGING_PATH/iperf_api.c"
+perl -0pi -e '
+    $count = s/if \( !\(test->server_rsa_private_key && test->server_authorized_users\)\) \{\n        return 0;\n    \}/if (!test->server_rsa_private_key && !test->server_authorized_users) {\n        return 0;\n    }\n\n    if (!(test->server_rsa_private_key && test->server_authorized_users)) {\n        i_errno = IEAUTHTEST;\n        return -1;\n    }/g;
+    die "server credentials check: expected 1 replacement, got $count\n" unless $count == 1;
+    $count = s/(\tif \(rc\) \{\n)\t    return -1;/$1\t    i_errno = IEAUTHTEST;\n\t    return -1;/g;
+    die "authentication token failure: expected 1 replacement, got $count\n" unless $count == 1;
+    $count = s/(        \} else \{\n)(            if \(test->debug\) \{)/$1            i_errno = IEAUTHTEST;\n$2/g;
+    die "authentication result failure: expected 1 replacement, got $count\n" unless $count == 1;
+    $count = s/(\n    \}\n    return -1;\n\}\n#endif \/\/HAVE_SSL)/\n    }\n    i_errno = IEAUTHTEST;\n    return -1;\n}\n#endif \/\/HAVE_SSL/g;
+    die "authentication fallback failure: expected 1 replacement, got $count\n" unless $count == 1;
+' "$STAGING_PATH/iperf_api.c"
 
-perl -pi -e 's/#include <openssl\/bio\.h>/typedef struct evp_pkey_st EVP_PKEY;/' \
-    "$STAGING_PATH/include/iperf_auth.h"
-perl -0pi -e 's/#include <openssl\/bio\.h>\n#include <openssl\/evp\.h>/typedef struct evp_pkey_st EVP_PKEY;/' \
-    "$STAGING_PATH/include/iperf.h"
+perl -0pi -e '
+    $count = s/#include <openssl\/bio\.h>/typedef struct evp_pkey_st EVP_PKEY;/g;
+    die "iperf_auth.h OpenSSL declaration: expected 1 replacement, got $count\n" unless $count == 1;
+' "$STAGING_PATH/include/iperf_auth.h"
+perl -0pi -e '
+    $count = s/#include <openssl\/bio\.h>\n#include <openssl\/evp\.h>/typedef struct evp_pkey_st EVP_PKEY;/g;
+    die "iperf.h OpenSSL declaration: expected 1 replacement, got $count\n" unless $count == 1;
+' "$STAGING_PATH/include/iperf.h"
 
 if [ ! -d "$SYNC_DATA/custom_files" ]; then
     echo "Missing $SYNC_DATA/custom_files" >&2
@@ -64,6 +126,16 @@ mv "$STAGING_PATH/include/iperf_openssl.h" "$STAGING_PATH/iperf_openssl.h"
 find "$STAGING_PATH" -type f \( -name '*.c' -o -name '*.h' \) \
     -exec perl -pi -e 's/<stdatomic\.h>/<iperf_stdatomic.h>/g' {} +
 find "$STAGING_PATH" -name '*.orig' -delete
+
+remaining_stdatomic="$(
+    find "$STAGING_PATH" -type f \( -name '*.c' -o -name '*.h' \) \
+        -exec grep -Fl '<stdatomic.h>' {} + || true
+)"
+if [ -n "$remaining_stdatomic" ]; then
+    echo "Unconverted <stdatomic.h> references:" >&2
+    echo "$remaining_stdatomic" >&2
+    exit 1
+fi
 
 echo "Verifying synchronized sources"
 grep -Fq '#ifdef __linux__' "$STAGING_PATH/include/flowlabel.h"
@@ -91,9 +163,10 @@ grep -Fq 'iperf_set_test_use_pkcs1_padding' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'free(test->server_authorized_users)' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'iperf_set_test_server_authorized_users(test, optarg)' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'if (!test->server_rsa_private_key && !test->server_authorized_users)' "$STAGING_PATH/iperf_api.c"
-grep -Fq 'i_errno = IEAUTHTEST' "$STAGING_PATH/iperf_api.c"
+test "$(grep -Fc 'i_errno = IEAUTHTEST' "$STAGING_PATH/iperf_api.c")" -eq 4
 
 rm -rf "$SRC_PATH"
 mv "$STAGING_PATH" "$SRC_PATH"
+STAGING_PATH=""
 
 echo "$SRC_PATH is now updated to version $TAG!"
