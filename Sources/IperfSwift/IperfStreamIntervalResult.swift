@@ -81,14 +81,13 @@ public struct IperfStreamIntervalResult {
 
     /// Creates a synthetic stream measurement using the legacy duration input.
     ///
-    /// The duration is ignored because iperf derives it from the interval's
-    /// timestamps. This overload remains available so existing consumers can
-    /// migrate without a source-breaking package update.
-    @available(*, deprecated, message: "Remove intervalDuration; duration is derived from startTime and endTime.")
+    /// When both timestamps retain their defaults, the duration supplies a
+    /// compatible `endTime`. Explicit timestamps otherwise take precedence.
+    @available(*, deprecated, message: "Supply startTime and endTime; duration is derived from them.")
     public init(
         direction: IperfDirection = .upload,
         bytesTransferred: Int = 0,
-        intervalDuration _: Double,
+        intervalDuration: Double,
         startTime: Double = 0,
         endTime: Double = 0,
         intervalPacketCount: Int64 = 0,
@@ -96,11 +95,14 @@ public struct IperfStreamIntervalResult {
         intervalOutoforderPackets: Int64 = 0,
         jitter: Double = 0
     ) {
+        let compatibleEndTime = startTime == 0 && endTime == 0
+            ? startTime + max(intervalDuration, 0)
+            : endTime
         self.init(
             direction: direction,
             bytesTransferred: bytesTransferred,
             startTime: startTime,
-            endTime: endTime,
+            endTime: compatibleEndTime,
             intervalPacketCount: intervalPacketCount,
             intervalCntError: intervalCntError,
             intervalOutoforderPackets: intervalOutoforderPackets,

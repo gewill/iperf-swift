@@ -43,7 +43,9 @@ package release number.
 - Synthetic `IperfStreamIntervalResult` values now derive duration and
   throughput from `startTime` and `endTime`, matching the engine ([#86]). The
   previous `intervalDuration` initializer remains as a deprecated compatibility
-  overload, but its value can no longer contradict the interval timestamps.
+  overload; calls that supply only a duration retain their previous result by
+  synthesizing the missing end timestamp. **Behavior change:** when timestamps
+  and `intervalDuration` conflict, the timestamps now take precedence.
 - A persistent server no longer ends because one client's test failed ([#98]).
   The engine returns `-1` from `iperf_run_server` for a failed client
   interaction — a rejected authentication, a stalled transfer, a control-channel

@@ -23,6 +23,24 @@ final class IperfPublicAPITests: XCTestCase {
     }
 
     @available(*, deprecated, message: "Exercises the deprecated compatibility initializer.")
+    func testDeprecatedDurationSuppliesDefaultTimestamps() {
+        var result = IperfIntervalResult(prot: .tcp)
+        result.streams = [
+            IperfStreamIntervalResult(
+                bytesTransferred: 1_000_000,
+                intervalDuration: 1
+            ),
+        ]
+
+        result.evaluate()
+
+        XCTAssertEqual(result.startTime, 0, accuracy: 0.001)
+        XCTAssertEqual(result.endTime, 1, accuracy: 0.001)
+        XCTAssertEqual(result.duration, 1, accuracy: 0.001)
+        XCTAssertEqual(result.throughput.rawValue, 1_000_000, accuracy: 0.001)
+    }
+
+    @available(*, deprecated, message: "Exercises the deprecated compatibility initializer.")
     func testDeprecatedDurationCannotContradictTimestamps() {
         var result = IperfIntervalResult(prot: .tcp)
         result.streams = [
