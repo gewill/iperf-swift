@@ -60,7 +60,6 @@ public struct IperfStreamIntervalResult {
     public init(
         direction: IperfDirection = .upload,
         bytesTransferred: Int = 0,
-        intervalDuration: Double = 0,
         startTime: Double = 0,
         endTime: Double = 0,
         intervalPacketCount: Int64 = 0,
@@ -70,7 +69,6 @@ public struct IperfStreamIntervalResult {
     ) {
         self.direction = direction
         self.bytesTransferred = bytesTransferred
-        self.intervalDuration = intervalDuration
         self.startTime = startTime
         self.endTime = endTime
         self.intervalPacketCount = intervalPacketCount
@@ -78,6 +76,38 @@ public struct IperfStreamIntervalResult {
         self.intervalOutoforderPackets = intervalOutoforderPackets
         self.jitter = jitter
         intervalTimeDiff = max(endTime - startTime, 0)
+        self.intervalDuration = intervalTimeDiff
+    }
+
+    /// Creates a synthetic stream measurement using the legacy duration input.
+    ///
+    /// When both timestamps retain their defaults, the duration supplies a
+    /// compatible `endTime`. Explicit timestamps otherwise take precedence.
+    @available(*, deprecated, message: "Supply startTime and endTime; duration is derived from them.")
+    public init(
+        direction: IperfDirection = .upload,
+        bytesTransferred: Int = 0,
+        intervalDuration: Double,
+        startTime: Double = 0,
+        endTime: Double = 0,
+        intervalPacketCount: Int64 = 0,
+        intervalCntError: Int64 = 0,
+        intervalOutoforderPackets: Int64 = 0,
+        jitter: Double = 0
+    ) {
+        let compatibleEndTime = startTime == 0 && endTime == 0
+            ? startTime + max(intervalDuration, 0)
+            : endTime
+        self.init(
+            direction: direction,
+            bytesTransferred: bytesTransferred,
+            startTime: startTime,
+            endTime: compatibleEndTime,
+            intervalPacketCount: intervalPacketCount,
+            intervalCntError: intervalCntError,
+            intervalOutoforderPackets: intervalOutoforderPackets,
+            jitter: jitter
+        )
     }
 
     init(_ results: iperf_interval_results) {

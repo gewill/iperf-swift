@@ -58,6 +58,7 @@
 #include "units.h"
 #include "iperf_util.h"
 #include "iperf_locale.h"
+#include "custom.h"
 
 #if defined(HAVE_TCP_CONGESTION)
 #if !defined(TCP_CA_NAME_MAX)
@@ -124,7 +125,8 @@ iperf_server_listen(struct iperf_test *test)
 	    test->settings->domain = AF_INET;
 	    goto retry;
 	} else {
-	    i_errno = IELISTEN;
+	    if (i_errno == IENONE)
+	        i_errno = IELISTEN;
 	    return -1;
 	}
     }
@@ -160,6 +162,13 @@ iperf_accept(struct iperf_test *test)
 
     len = sizeof(addr);
     if ((s = accept(test->listener, (struct sockaddr *) &addr, &len)) < 0) {
+        i_errno = IEACCEPT;
+        return ret;
+    }
+    if (iperf_set_socket_no_sigpipe(s) < 0) {
+        int saved_errno = errno;
+        close(s);
+        errno = saved_errno;
         i_errno = IEACCEPT;
         return ret;
     }
@@ -519,10 +528,7 @@ cleanup_server(struct iperf_test *test)
         iperf_sync_close_socket(test->ctrl_sck);
         test->ctrl_sck = -1;
     }
-    if (test->listener > -1) {
-	close(test->listener);
-        test->listener = -1;
-    }
+    iperf_close_test_listener(test);
     if (test->prot_listener > -1) {     // May remain open if create socket failed
 	close(test->prot_listener);
         test->prot_listener = -1;
@@ -609,6 +615,10 @@ iperf_run_server(struct iperf_test *test)
 	cleanup_server(test);
         return -2;
     }
+    if (test->done) {
+        cleanup_server(test);
+        return 0;
+    }
 
     iperf_time_now(&last_receive_time); // Initialize last time something was received
     last_receive_blocks = 0;
@@ -678,6 +688,10 @@ iperf_run_server(struct iperf_test *test)
         }
 
         result = select(test->max_fd + 1, &read_set, &write_set, NULL, timeout);
+        if (test->done) {
+            cleanup_server(test);
+            return 0;
+        }
         if (result < 0 && errno != EINTR) {
             cleanup_server(test);
             i_errno = IESELECT;
@@ -702,13 +716,7 @@ iperf_run_server(struct iperf_test *test)
                             printf("Server restart (#%d) in idle state as no connection request was received for %d sec\n",
                                 test->server_forced_idle_restarts_count, test->settings->idle_timeout);
                         cleanup_server(test);
-			if ( iperf_get_test_one_off(test) ) {
-			  if (test->debug)
-                            printf("No connection request was received for %d sec in one-off mode; exiting.\n",
-				   test->settings->idle_timeout);
-			  exit(0);
-			}
-
+                        /* Return control to the embedding process; never exit it. */
                         return 2;
                     }
                 }
@@ -896,8 +904,7 @@ iperf_run_server(struct iperf_test *test)
                     } else {
                         if (test->no_delay || test->settings->mss || test->settings->socket_bufsize) {
                             FD_CLR(test->listener, &test->read_set);
-                            close(test->listener);
-			    test->listener = -1;
+                            iperf_close_test_listener(test);
                             if ((s = netannounce(test->settings->domain, Ptcp, test->bind_address, test->bind_dev, test->server_port)) < 0) {
 				cleanup_server(test);
                                 i_errno = IELISTEN;

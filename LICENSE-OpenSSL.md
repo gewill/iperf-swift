@@ -1,6 +1,7 @@
 # OpenSSL License
 
-This package uses OpenSSL through [Lakr233/openssl-spm](https://github.com/Lakr233/openssl-spm).
+This package uses OpenSSL 4.0.1 through
+[Lakr233/openssl-spm 4.0.1](https://github.com/Lakr233/openssl-spm/tree/4.0.1).
 The `openssl-spm` wrapper itself is distributed under the MIT License; see its
 repository for that notice. The `OpenSSL` binary artifacts it vendors are
 governed by the upstream OpenSSL project license below.

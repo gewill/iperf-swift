@@ -1,197 +1,49 @@
 /*
- * This file is part of FFmpeg.
+ * Copyright (c) 2026 iPerf Swift contributors.
+ * SPDX-License-Identifier: MIT
  *
- * FFmpeg is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
- *
- * FFmpeg is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with FFmpeg; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ * Minimal atomic compatibility declarations for the Apple targets supported
+ * by this package. The public iperf structures must expose integer fields so
+ * they remain importable by Swift's Clang importer. Operations use compiler
+ * atomic builtins where the C source needs them.
  */
-
-/*
- * based on vlc_atomic.h from VLC
- * Copyright (C) 2010 Rémi Denis-Courmont
- */
-
-#ifndef COMPAT_ATOMICS_PTHREAD_STDATOMIC_H
-#define COMPAT_ATOMICS_PTHREAD_STDATOMIC_H
+#ifndef IPERF_STDATOMIC_H
+#define IPERF_STDATOMIC_H
 
 #include <stdint.h>
 
-#define ATOMIC_FLAG_INIT 0
+typedef intptr_t atomic_uint_fast64_t;
 
+#define ATOMIC_FLAG_INIT 0
 #define ATOMIC_VAR_INIT(value) (value)
 
-#define atomic_init(obj, value) \
-do {                            \
-    *(obj) = (value);           \
-} while(0)
+static inline void atomic_init(atomic_uint_fast64_t *object, uint64_t value)
+{
+    __atomic_store_n(object, value, __ATOMIC_SEQ_CST);
+}
 
-#define kill_dependency(y) ((void)0)
+static inline uint64_t atomic_load(const atomic_uint_fast64_t *object)
+{
+    return __atomic_load_n(object, __ATOMIC_SEQ_CST);
+}
 
-#define atomic_signal_fence(order) \
-    ((void)0)
+static inline void atomic_store(atomic_uint_fast64_t *object, uint64_t value)
+{
+    __atomic_store_n(object, value, __ATOMIC_SEQ_CST);
+}
 
-#define atomic_is_lock_free(obj) 0
+static inline uint64_t atomic_fetch_add(atomic_uint_fast64_t *object, uint64_t value)
+{
+    return __atomic_fetch_add(object, value, __ATOMIC_SEQ_CST);
+}
 
-typedef intptr_t atomic_flag;
-typedef intptr_t atomic_bool;
-typedef intptr_t atomic_char;
-typedef intptr_t atomic_schar;
-typedef intptr_t atomic_uchar;
-typedef intptr_t atomic_short;
-typedef intptr_t atomic_ushort;
-typedef intptr_t atomic_int;
-typedef intptr_t atomic_uint;
-typedef intptr_t atomic_long;
-typedef intptr_t atomic_ulong;
-typedef intptr_t atomic_llong;
-typedef intptr_t atomic_ullong;
-typedef intptr_t atomic_wchar_t;
-typedef intptr_t atomic_int_least8_t;
-typedef intptr_t atomic_uint_least8_t;
-typedef intptr_t atomic_int_least16_t;
-typedef intptr_t atomic_uint_least16_t;
-typedef intptr_t atomic_int_least32_t;
-typedef intptr_t atomic_uint_least32_t;
-typedef intptr_t atomic_int_least64_t;
-typedef intptr_t atomic_uint_least64_t;
-typedef intptr_t atomic_int_fast8_t;
-typedef intptr_t atomic_uint_fast8_t;
-typedef intptr_t atomic_int_fast16_t;
-typedef intptr_t atomic_uint_fast16_t;
-typedef intptr_t atomic_int_fast32_t;
-typedef intptr_t atomic_uint_fast32_t;
-typedef intptr_t atomic_int_fast64_t;
-typedef intptr_t atomic_uint_fast64_t;
-typedef intptr_t atomic_intptr_t;
-typedef intptr_t atomic_uintptr_t;
-typedef intptr_t atomic_size_t;
-typedef intptr_t atomic_ptrdiff_t;
-typedef intptr_t atomic_intmax_t;
-typedef intptr_t atomic_uintmax_t;
-
-void avpriv_atomic_lock(void);
-void avpriv_atomic_unlock(void);
+#define atomic_load_explicit(object, order) atomic_load(object)
+#define atomic_store_explicit(object, value, order) atomic_store(object, value)
+#define atomic_fetch_add_explicit(object, value, order) atomic_fetch_add(object, value)
 
 static inline void atomic_thread_fence(int order)
 {
-    avpriv_atomic_lock();
-    avpriv_atomic_unlock();
+    __atomic_thread_fence(order);
 }
 
-static inline void atomic_store(intptr_t *object, intptr_t desired)
-{
-    avpriv_atomic_lock();
-    *object = desired;
-    avpriv_atomic_unlock();
-}
-
-#define atomic_store_explicit(object, desired, order) \
-    atomic_store(object, desired)
-
-static inline intptr_t atomic_load(intptr_t *object)
-{
-    intptr_t ret;
-    avpriv_atomic_lock();
-    ret = *object;
-    avpriv_atomic_unlock();
-    return ret;
-}
-
-#define atomic_load_explicit(object, order) \
-    atomic_load(object)
-
-static inline intptr_t atomic_exchange(intptr_t *object, intptr_t desired)
-{
-    intptr_t ret;
-    avpriv_atomic_lock();
-    ret     = *object;
-    *object = desired;
-    avpriv_atomic_unlock();
-    return ret;
-}
-
-#define atomic_exchange_explicit(object, desired, order) \
-    atomic_exchange(object, desired)
-
-static inline int atomic_compare_exchange_strong(intptr_t *object, intptr_t *expected,
-                                                 intptr_t desired)
-{
-    int ret;
-    avpriv_atomic_lock();
-    if (*object == *expected) {
-        ret     = 1;
-        *object = desired;
-    } else {
-        ret = 0;
-        *expected = *object;
-    }
-    avpriv_atomic_unlock();
-    return ret;
-}
-
-#define atomic_compare_exchange_strong_explicit(object, expected, desired, success, failure) \
-    atomic_compare_exchange_strong(object, expected, desired)
-
-#define atomic_compare_exchange_weak(object, expected, desired) \
-    atomic_compare_exchange_strong(object, expected, desired)
-
-#define atomic_compare_exchange_weak_explicit(object, expected, desired, success, failure) \
-    atomic_compare_exchange_weak(object, expected, desired)
-
-#define FETCH_MODIFY(opname, op)                                                   \
-static inline intptr_t atomic_fetch_ ## opname(intptr_t *object, intptr_t operand) \
-{                                                                                  \
-    intptr_t ret;                                                                  \
-    avpriv_atomic_lock();                                                          \
-    ret = *object;                                                                 \
-    *object = *object op operand;                                                  \
-    avpriv_atomic_unlock();                                                        \
-    return ret;                                                                    \
-}
-
-FETCH_MODIFY(add, +)
-FETCH_MODIFY(sub, -)
-FETCH_MODIFY(or,  |)
-FETCH_MODIFY(xor, ^)
-FETCH_MODIFY(and, &)
-
-#undef FETCH_MODIFY
-
-#define atomic_fetch_add_explicit(object, operand, order) \
-    atomic_fetch_add(object, operand)
-
-#define atomic_fetch_sub_explicit(object, operand, order) \
-    atomic_fetch_sub(object, operand)
-
-#define atomic_fetch_or_explicit(object, operand, order) \
-    atomic_fetch_or(object, operand)
-
-#define atomic_fetch_xor_explicit(object, operand, order) \
-    atomic_fetch_xor(object, operand)
-
-#define atomic_fetch_and_explicit(object, operand, order) \
-    atomic_fetch_and(object, operand)
-
-#define atomic_flag_test_and_set(object) \
-    atomic_exchange(object, 1)
-
-#define atomic_flag_test_and_set_explicit(object, order) \
-    atomic_flag_test_and_set(object)
-
-#define atomic_flag_clear(object) \
-    atomic_store(object, 0)
-
-#define atomic_flag_clear_explicit(object, order) \
-    atomic_flag_clear(object)
-
-#endif /* COMPAT_ATOMICS_PTHREAD_STDATOMIC_H */
+#endif /* IPERF_STDATOMIC_H */

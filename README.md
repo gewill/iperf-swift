@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/gewill/iperf-swift/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/gewill/iperf-swift/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/gewill/iperf-swift)](https://github.com/gewill/iperf-swift/releases)
-[![Swift 5.6+](https://img.shields.io/badge/Swift-5.6%2B-orange.svg)](https://swift.org)
+[![Swift 5.7+](https://img.shields.io/badge/Swift-5.7%2B-orange.svg)](https://swift.org)
 [![Platforms](https://img.shields.io/badge/platforms-iOS%2013%2B%20%7C%20macOS%2010.15%2B%20%7C%20tvOS%2013%2B-blue.svg)](#requirements)
 [![SwiftPM](https://img.shields.io/badge/SwiftPM-compatible-brightgreen.svg)](Package.swift)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
@@ -32,7 +32,7 @@ maintained. Development continues here without upstream involvement.
 
 ## Requirements
 
-- Swift 5.6+ (Xcode 13.4+)
+- Swift 5.7+ (Xcode 14.0+)
 - iOS 13+, macOS 10.15+, or tvOS 13+
 
 ## Installation
@@ -49,7 +49,7 @@ Or add the package to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/gewill/iperf-swift.git",
-        from: "3.21.12"
+        from: "3.21.13"
     )
 ]
 ```
@@ -60,7 +60,7 @@ Then add `IperfSwift` to the target dependencies and import it:
 import IperfSwift
 ```
 
-The package uses the OpenSSL XCFramework from
+The package uses the OpenSSL 4 XCFramework from
 [`openssl-spm`](https://github.com/Lakr233/openssl-spm). Consuming apps therefore
 do not inherit machine-specific Homebrew library paths.
 
@@ -155,6 +155,13 @@ Keep the runner alive for the duration of the test. Work runs asynchronously,
 and callbacks are not guaranteed to use a specific queue. Dispatch UI updates
 to `MainActor` or the main queue. Terminal callback handling should be
 idempotent because libiperf can emit more than one terminal state notification.
+
+Vendored libiperf keeps timers and error state at process scope, so the package
+serializes all `IperfRunner` instances through one FIFO engine queue. Only one
+embedded client or server runs in a process at a time; later runners remain in
+`.initialising` until the active run finishes or stops. A persistent server
+therefore blocks later runners until `stop()` is called. Calling `stop()` on a
+queued runner cancels it without entering `.running`.
 
 ## Design philosophy
 
@@ -252,8 +259,8 @@ sockets; `timeout` uses seconds rather than the CLI's milliseconds.
 
 | Swift property | iperf3 option | Applies when | Constraints / current behavior |
 | --- | --- | --- | --- |
-| `oneOff` | `--one-off` | Server | Enabling it for Client fails with `IESERVERONLY`; the server finishes after one client |
-| `idleTimeout` | `--idle-timeout` | Server | Positive seconds that round up into `1...86,400`; invalid/nonfinite values fail with `IEIDLETIMEOUT` before role validation or timer work, while valid Client use fails with `IESERVERONLY` |
+| `oneOff` | `--one-off` | Server | Enabling it for Client fails with `IESERVERONLY`; enabled finishes after one client, while disabled resets after each client and listens until `stop()` |
+| `idleTimeout` | `--idle-timeout` | Server | Positive seconds that round up into `1...86,400`; timeout restarts a persistent Server or finishes a one-off run without terminating the host process; invalid/nonfinite values fail with `IEIDLETIMEOUT` before role validation or timer work, while valid Client use fails with `IESERVERONLY` |
 
 ### Authentication options
 
@@ -336,11 +343,24 @@ Do not commit private keys, passwords, or authorized-user data.
 ## Testing
 
 The integration tests require a local `iperf3` 3.21 executable with
-authentication support. On macOS it can be installed with Homebrew:
+authentication support. Install the official Homebrew bottle:
 
 ```sh
 brew install iperf3
 ```
+
+The tests reject other iperf3 versions with an explicit diagnostic so the CLI
+baseline cannot drift from the embedded 3.21 engine. Set `IPERF3_PATH` when the
+3.21 executable is not otherwise on `PATH`:
+
+```sh
+IPERF3_PATH="/path/to/iperf3" swift test
+```
+
+Homebrew's current iperf3 bottle uses OpenSSL 4, which the tests can use to
+generate temporary authentication credentials; OpenSSL 3 remains supported via
+`OPENSSL_PATH`. OpenSSL linked by the Swift Package itself comes exclusively
+from the OpenSSL 4 XCFramework in `openssl-spm`.
 
 Run the complete Swift Package test suite:
 
@@ -391,16 +411,25 @@ git diff
 git diff --check
 ```
 
-`sync.sh` defaults to the official `3.21` tag, stages the update in a temporary
-directory, applies `iperf_sync/patches/modifications.patch`, restores
-`iperf_sync/custom_files/`, and then replaces `Sources/IperfCLib/`. Do not keep
-project-specific changes only in the generated C source because the next sync
-will overwrite them.
+`sync.sh` defaults to the official `3.21` tag. It creates a unique system
+temporary directory for checkout and a unique staging directory beside
+`Sources/IperfCLib`, applies
+`iperf_sync/patches/modifications.patch`, restores
+`iperf_sync/custom_files/` (including the deterministic Apple-platform
+`iperf_config.h`), and then replaces `Sources/IperfCLib/`. Repository
+directories named `iperf3` or `Sources/IperfCLib.sync-tmp` are not used or
+removed. Concurrent synchronization is rejected through `.iperf-sync.lock`
+rather than allowing two processes to replace the generated tree at once. If a
+terminated process leaves a stale lock and no synchronization is active, remove
+it with `rmdir .iperf-sync.lock`. The maintained configuration's probe names are
+checked against the selected upstream tag, and CI regenerates the 3.21 tree and
+requires a clean diff. Do not keep project-specific changes only in the
+generated C source because the next sync will overwrite them.
 
 ## Versioning
 
 The Swift package and embedded engine have separate versions. For example,
-package release `3.21.12` embeds the official iperf3 `3.21` engine. See
+package release `3.21.13` embeds the official iperf3 `3.21` engine. See
 [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## Roadmap
@@ -429,3 +458,6 @@ downstream consumer is ready to adopt them:
 Project-specific code is released under the [MIT License](LICENSE). The bundled
 iperf code keeps the upstream license in [LICENSE-iperf](LICENSE-iperf), and the
 OpenSSL dependency is documented in [LICENSE-OpenSSL.md](LICENSE-OpenSSL.md).
+The Apple-platform build uses the project's MIT-licensed atomic compatibility
+header so the C structures remain importable by Swift; it does not include the
+former FFmpeg LGPL atomic compatibility source.

@@ -31,6 +31,7 @@
 
 #include <sys/time.h>
 #include <sys/types.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <inttypes.h>
 #include <sys/select.h>
@@ -57,8 +58,7 @@
 #include "portable_endian.h"
 
 #if defined(HAVE_SSL)
-#include <openssl/bio.h>
-#include <openssl/evp.h>
+typedef struct evp_pkey_st EVP_PKEY;
 #endif // HAVE_SSL
 
 #include "iperf_pthread.h"

@@ -9,6 +9,134 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.13] - 2026-08-13
+
+A dependency, correctness and hardening release. OpenSSL moves to 4.0.1, three
+ways the engine could reach past its own run into the host process are closed,
+and the synchronization script no longer loses local edits or races itself.
+
+**Breaking:** exhaustive switches over `IperfError` must handle twenty-three new
+cases, an application depending on `openssl-spm` directly must resolve 4.x, and
+the minimum toolchain is Swift 5.7. **Behavior change:** the error closure is no
+longer always terminal for a persistent server, and runs are serialized
+process-wide.
+
+### Changed
+
+- The bundled OpenSSL is now 4.0.1 ([#125]), raising the `openssl-spm`
+  requirement to `from: "4.0.1"`. Version 4 ships the library as a framework, so
+  the vendored C gained a compatibility header that resolves either layout, and
+  the public umbrella header now only forward-declares `EVP_PKEY` — the DocC
+  symbol-graph pass does not load the framework's module map, so a public
+  OpenSSL include broke documentation builds. **Breaking:** an application that
+  also depends on `openssl-spm` directly must be able to resolve 4.x.
+- The minimum supported toolchain is now Swift 5.7 / Xcode 14.0 ([#103]).
+  This matches the optional-binding syntax already used by the package and the
+  DocC 1.5.0 plugin, which is now pinned so dependency resolution cannot
+  silently raise the minimum toolchain again.
+- The atomic compatibility header the Apple platform build relies on is now
+  project-owned and MIT-licensed ([#102]). It replaces a header derived from
+  FFmpeg and carrying the LGPL, which the package shipped without disclosing in
+  its license documentation. The replacement uses compiler atomic builtins
+  while keeping the fields integer-typed, so the public iperf structures stay
+  importable by Swift's Clang importer. No API or behavior change.
+- `IperfError` now maps every error code the embedded engine defines ([#101]),
+  adding twenty-three cases that previously surfaced as `.UNKNOWN`. **Breaking:**
+  exhaustive switches over `IperfError` must handle the new cases.
+- Internal: interoperability tests now resolve the CLI through a shared helper
+  and require iperf 3.21 exactly ([#123]), instead of accepting whatever `iperf3`
+  the runner happened to have. A CLI-versus-wrapper comparison against a
+  different engine proves nothing about parity.
+- Internal: error-code parity tests now derive the engine's complete error enum
+  directly from `iperf_api.h` and compare both names and values with the Swift
+  source and runtime cases ([#118]). A future engine sync that adds an error now
+  fails without updating a second hand-maintained C list. `iperf_strerror` is
+  not used for discovery because it lacks a case for the valid
+  `IESETSCTPBINDX` code. The runtime check also rejects a wrapper error whose
+  raw value falls inside the engine's range, which the value list it replaced
+  covered, and the parser's own failure modes are pinned against fixtures so a
+  future edit cannot make it agree by parsing less.
+- Engine runs are serialized through one process-wide FIFO queue ([#114]). The
+  vendored libiperf keeps its timer list and `i_errno` at process scope, so
+  concurrent runners could race the timers and cross each other's errors. Only
+  one embedded client or server now executes per process; a later runner stays
+  in `IperfRunnerState/initialising` until the active one finishes or stops, and
+  `stop()` on a queued runner cancels it without it ever entering
+  `IperfRunnerState/running`. **Behavior change:** a persistent server blocks
+  later runners until it is stopped.
+- A server with `oneOff` disabled now keeps listening after a client finishes
+  and after an idle timeout, matching the CLI ([#98]). It previously ended the
+  run in both cases, so the persistent semantics the option describes were
+  unreachable. `idleTimeout` now restarts an idle server; in one-off mode it
+  still finishes the runner.
+
+### Fixed
+
+- Starting a run no longer changes the host process's `SIGPIPE` disposition
+  ([#106]). `IperfRunner.start()` called `signal(SIGPIPE, SIG_IGN)`, which is
+  process-wide and permanent, so an application that installed its own handler
+  lost it to a measurement library and never got it back. The engine now sets
+  `SO_NOSIGPIPE` on the sockets it creates and accepts, which confines the
+  suppression to those descriptors.
+- The engine no longer leaks the authorized-users buffer ([#122]). Setting
+  `authorizedUsers` a second time dropped the previous allocation, and
+  destroying a test never released the last one.
+- Synthetic `IperfStreamIntervalResult` values now derive duration and
+  throughput from `startTime` and `endTime`, matching the engine ([#86]). New
+  code should provide those timestamps and omit `intervalDuration`; set
+  `endTime` to `startTime + duration`. The previous initializer remains as a
+  deprecated compatibility overload: when both timestamps are left at their
+  default zero values, it
+  preserves duration-only calls by synthesizing `endTime` from
+  `intervalDuration`. **Behavior change:** when callers provide timestamps and
+  a conflicting `intervalDuration`, the timestamps take precedence. The
+  deprecated overload is intended for migration and may be removed in a future
+  source-breaking release.
+- A persistent server no longer ends because one client's test failed ([#98]).
+  The engine returns `-1` from `iperf_run_server` for a failed client
+  interaction — a rejected authentication, a stalled transfer, a control-channel
+  error — and `-2` only when it cannot establish the listening socket. The
+  restart condition accepted only non-negative codes, so any of the twenty-five
+  `-1` paths ended the runner. A rejected password now ends that client's test
+  and leaves the server listening, matching the CLI, whose own loop reports a
+  `-1` and continues. The error is still delivered to the error closure, so the
+  diagnostic is unchanged; what changes is that the runner stays
+  `IperfRunnerState/running`. **Behavior change:** the error closure is no
+  longer always terminal — read the runner's state alongside it.
+- A one-off server reaching its idle timeout no longer terminates the host
+  process ([#97]). The vendored engine called `exit(0)` on that path, taking
+  the embedding application down with it; it now returns control and the runner
+  reports `IperfRunnerState/finished`.
+- `stop()` no longer risks closing a file descriptor the host has since reused
+  ([#99]). The listener was closed while its descriptor stayed in the test, so a
+  second `stop()` or the engine's own cleanup could close whatever the process
+  had opened in its place. The descriptor is now invalidated atomically before
+  the close, and cancellation, cleanup, and listener rebuilding share that rule.
+- A failure to bind a socket to a device now reports `IEBINDDEV`, or
+  `IEBINDDEVNOSUPPORT` where the platform does not support it, instead of being
+  overwritten by the generic `IECONNECT`, `IELISTEN`, or `IESTREAMLISTEN` of the
+  calling path ([#101]).
+- Internal: `sync.sh` runs again and no longer loses the `flowlabel.h`
+  `__linux__` guard. It asserted `#include <File.h>` in `include/iperf.h`, which
+  that header does not contain, so the run aborted there; and the substitution
+  that inserts the guard was rewritten into one that only normalizes an existing
+  guard, which a pristine upstream checkout never has. The verification block
+  now also covers the engine-error edits, so a substitution that stops matching
+  fails the sync instead of passing silently ([#102]).
+- Internal: the synchronization patch now records the engine-error changes
+  ([#101]) made to `iperf_client_api.c`, `iperf_server_api.c`, `iperf_udp.c`,
+  and `net.c`. They were present only in `Sources/IperfCLib/`, and `sync.sh`
+  applies the patch to a freshly downloaded upstream tree before replacing the
+  vendored sources, so the next run would have reverted them.
+- Internal: `sync.sh` now uses a unique system temporary directory and refuses
+  concurrent replacement of the generated source tree ([#110]). It no longer
+  removes repository directories named `iperf3` or
+  `Sources/IperfCLib.sync-tmp`; key source transformations require exact match
+  counts, the Apple-platform `iperf_config.h` is a deterministic maintained
+  input whose probe names must match the selected upstream tag, staging stays
+  on the destination filesystem, and CI verifies that regenerating iperf 3.21
+  produces a clean diff. Stale-lock errors now include the recovery command.
+
 ## [3.21.12] - 2026-08-06
 
 A bug-fix release for stopped runs. The traffic measured between a run's last
@@ -425,7 +553,8 @@ unchanged from 3.21.6.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.12...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.13...HEAD
+[3.21.13]: https://github.com/gewill/iperf-swift/compare/v3.21.12...v3.21.13
 [3.21.12]: https://github.com/gewill/iperf-swift/compare/v3.21.11...v3.21.12
 [3.21.11]: https://github.com/gewill/iperf-swift/compare/v3.21.10...v3.21.11
 [3.21.10]: https://github.com/gewill/iperf-swift/compare/v3.21.9...v3.21.10
@@ -481,4 +610,17 @@ unchanged from 3.21.6.
 [#83]: https://github.com/gewill/iperf-swift/pull/83
 [#86]: https://github.com/gewill/iperf-swift/issues/86
 [#90]: https://github.com/gewill/iperf-swift/issues/90
+[#97]: https://github.com/gewill/iperf-swift/issues/97
+[#98]: https://github.com/gewill/iperf-swift/issues/98
+[#99]: https://github.com/gewill/iperf-swift/issues/99
+[#101]: https://github.com/gewill/iperf-swift/issues/101
+[#102]: https://github.com/gewill/iperf-swift/issues/102
+[#103]: https://github.com/gewill/iperf-swift/issues/103
+[#114]: https://github.com/gewill/iperf-swift/pull/114
+[#106]: https://github.com/gewill/iperf-swift/issues/106
+[#110]: https://github.com/gewill/iperf-swift/issues/110
+[#118]: https://github.com/gewill/iperf-swift/issues/118
+[#122]: https://github.com/gewill/iperf-swift/pull/122
+[#123]: https://github.com/gewill/iperf-swift/pull/123
+[#125]: https://github.com/gewill/iperf-swift/pull/125
 [#84]: https://github.com/gewill/iperfman/issues/84

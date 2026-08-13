@@ -608,7 +608,8 @@ iperf_udp_accept(struct iperf_test *test)
     FD_CLR(test->prot_listener, &test->read_set); // No control messages from old listener
     test->prot_listener = netannounce(test->settings->domain, Pudp, test->bind_address, test->bind_dev, test->server_port);
     if (test->prot_listener < 0) {
-        i_errno = IESTREAMLISTEN;
+        if (i_errno == IENONE)
+            i_errno = IESTREAMLISTEN;
         return -1;
     }
 
@@ -639,7 +640,8 @@ iperf_udp_listen(struct iperf_test *test)
     int s;
 
     if ((s = netannounce(test->settings->domain, Pudp, test->bind_address, test->bind_dev, test->server_port)) < 0) {
-        i_errno = IESTREAMLISTEN;
+        if (i_errno == IENONE)
+            i_errno = IESTREAMLISTEN;
         return -1;
     }
 

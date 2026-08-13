@@ -216,10 +216,16 @@ public struct IperfConfiguration {
 
     /// Stops the server after handling one client connection, equivalent to
     /// `--one-off`. The runner then reaches ``IperfRunnerState/finished``
-    /// without an explicit ``IperfRunner/stop()``.
+    /// without an explicit ``IperfRunner/stop()``. When disabled, the server
+    /// resets after each client and continues listening until stopped, and a
+    /// client the engine rejects — a failed authentication, a stalled
+    /// transfer — ends that client's test rather than the server.
     public var oneOff: Bool = false
     /// The number of seconds after which an idle server restarts, equivalent
-    /// to `--idle-timeout`.
+    /// to `--idle-timeout`. In one-off mode, the timeout instead finishes the
+    /// runner; it never terminates the host process. This departs from the CLI
+    /// deliberately: `iperf3 -s --one-off` treats the idle timeout as a restart
+    /// and keeps listening.
     ///
     /// Positive values are rounded up to whole seconds in `1...86,400`.
     public var idleTimeout: TimeInterval?

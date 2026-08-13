@@ -182,9 +182,12 @@ configuration.rcvTimeout = 30
 configuration.reporterInterval = 1
 ```
 
-- ``IperfConfiguration/oneOff`` — `--one-off`; Client use fails with
-  ``IperfError/IESERVERONLY``
+- ``IperfConfiguration/oneOff`` — `--one-off`; when disabled, the Server resets
+  after each client and keeps listening until ``IperfRunner/stop()``; Client use
+  fails with ``IperfError/IESERVERONLY``
 - ``IperfConfiguration/idleTimeout`` — `--idle-timeout`, `1...86,400` seconds
+  after which a persistent Server restarts; in one-off mode the current run
+  reaches ``IperfRunnerState/finished`` without terminating the host process
 
 ### Authenticated client
 
@@ -268,11 +271,20 @@ runner.start(
 - ``IperfRunner/start(with:_:_:_:)`` — replaces the configuration first, for
   reusing a runner after a completed run
 - The corresponding `onJSONStream` overloads install a raw JSON callback.
-- ``IperfRunner/stop()`` — requests cancellation of the active run
+- ``IperfRunner/stop()`` — requests cancellation of the active or queued run
 
 Callbacks are not guaranteed to run on a specific queue, so dispatch UI updates to
 the main actor or main queue, and keep terminal-state handling idempotent because
 the engine can report a terminal state more than once.
+
+Vendored libiperf stores timers and errors at process scope. All runner instances
+therefore share one FIFO engine queue, and only one embedded client or server can
+execute in a process at a time. A later runner remains
+``IperfRunnerState/initialising`` until the active run finishes or stops. In
+particular, a persistent Server blocks later runners until ``IperfRunner/stop()``
+is called. Stopping a queued runner takes it through
+``IperfRunnerState/stopping`` to ``IperfRunnerState/finished`` without entering
+``IperfRunnerState/running``.
 
 ### Keep the reporter closure fast
 
@@ -441,6 +453,10 @@ English message:
 > ``IperfError/IENONE``, so ``IperfIntervalResult/hasError`` is `true` even for a
 > healthy interval whose ``IperfIntervalResult/debugDescription`` is `"OK"`. The
 > error callback is the authoritative failure channel.
+
+The bundled iperf3 3.21 engine error codes are mapped to their corresponding
+``IperfError`` cases. ``IperfError/UNKNOWN`` is reserved for an engine code
+that is not declared by the bundled version.
 
 ## Server output
 
