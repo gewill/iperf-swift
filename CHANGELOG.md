@@ -87,6 +87,11 @@ package release number.
   and `net.c`. They were present only in `Sources/IperfCLib/`, and `sync.sh`
   applies the patch to a freshly downloaded upstream tree before replacing the
   vendored sources, so the next run would have reverted them.
+- Internal: `sync.sh` now uses a unique system temporary directory and refuses
+  concurrent replacement of the generated source tree ([#110]). It no longer
+  removes repository directories named `iperf3` or
+  `Sources/IperfCLib.sync-tmp`; key source transformations require exact match
+  counts, and CI verifies that regenerating iperf 3.21 produces a clean diff.
 
 ## [3.21.12] - 2026-08-06
 

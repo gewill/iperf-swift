@@ -7,6 +7,31 @@ on:
     branches: [main, develop]
 
 jobs:
+  sync:
+    name: Sync reproducibility
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify synchronization safety and reproducibility
+        run: |
+          mkdir -p iperf3 Sources/IperfCLib.sync-tmp
+          touch iperf3/sentinel Sources/IperfCLib.sync-tmp/sentinel
+          mkdir .iperf-sync.lock
+          touch .iperf-sync.lock/sentinel
+          if ./sync.sh; then
+            echo "Synchronization unexpectedly ignored an existing lock" >&2
+            exit 1
+          fi
+          test -f .iperf-sync.lock/sentinel
+          rm .iperf-sync.lock/sentinel
+          rmdir .iperf-sync.lock
+          ./sync.sh
+          test -f iperf3/sentinel
+          test -f Sources/IperfCLib.sync-tmp/sentinel
+          test ! -e .iperf-sync.lock
+          git diff --exit-code -- Sources/IperfCLib
+
   test:
     name: Test (macOS)
     runs-on: macos-latest
