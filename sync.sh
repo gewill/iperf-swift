@@ -8,13 +8,17 @@ LOCK_PATH=".iperf-sync.lock"
 
 cd "$(dirname "$0")"
 
-WORK_PATH="$(mktemp -d "${TMPDIR:-/tmp}/iperf-swift-sync.XXXXXX")"
-CHECKOUT_PATH="$WORK_PATH/iperf3"
-STAGING_PATH="$WORK_PATH/IperfCLib"
+WORK_PATH=""
+STAGING_PATH=""
 LOCK_ACQUIRED=0
 
 cleanup() {
-    rm -rf "$WORK_PATH"
+    if [ -n "$WORK_PATH" ]; then
+        rm -rf "$WORK_PATH"
+    fi
+    if [ -n "$STAGING_PATH" ]; then
+        rm -rf "$STAGING_PATH"
+    fi
     if [ "$LOCK_ACQUIRED" -eq 1 ]; then
         rmdir "$LOCK_PATH"
     fi
@@ -23,10 +27,17 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
 if ! mkdir "$LOCK_PATH" 2>/dev/null; then
-    echo "Another synchronization is running ($LOCK_PATH exists)" >&2
+    echo "Another synchronization is running ($LOCK_PATH exists)." >&2
+    echo "If no synchronization is active, remove it with: rmdir $LOCK_PATH" >&2
     exit 1
 fi
 LOCK_ACQUIRED=1
+
+WORK_PATH="$(mktemp -d "${TMPDIR:-/tmp}/iperf-swift-sync.XXXXXX")"
+CHECKOUT_PATH="$WORK_PATH/iperf3"
+# Keep staging beside the destination so the final move cannot degrade into a
+# cross-filesystem recursive copy.
+STAGING_PATH="$(mktemp -d "$(dirname "$SRC_PATH")/.IperfCLib-sync.XXXXXX")"
 
 echo "Checking out $REPO_URL (tag $TAG)"
 mkdir "$CHECKOUT_PATH"
@@ -38,6 +49,27 @@ git -C "$CHECKOUT_PATH" checkout --quiet "$TAG^{commit}"
 echo "Configuring the source files"
 if ! (cd "$CHECKOUT_PATH" && ./configure > configure.log 2>&1); then
     cat "$CHECKOUT_PATH/configure.log" >&2
+    exit 1
+fi
+
+if [ ! -f "$SYNC_DATA/custom_files/iperf_config.h" ]; then
+    echo "Missing $SYNC_DATA/custom_files/iperf_config.h" >&2
+    exit 1
+fi
+generated_config_names="$WORK_PATH/generated-config-names"
+vendored_config_names="$WORK_PATH/vendored-config-names"
+grep -Eo '^(#define|/\* #undef) [A-Z_0-9]+' \
+    "$CHECKOUT_PATH/src/iperf_config.h" | awk '{print $NF}' | sort -u \
+    > "$generated_config_names"
+grep -Eo '^(#define|/\* #undef) [A-Z_0-9]+' \
+    "$SYNC_DATA/custom_files/iperf_config.h" | awk '{print $NF}' | sort -u \
+    > "$vendored_config_names"
+if ! cmp -s "$generated_config_names" "$vendored_config_names"; then
+    echo "Maintained iperf_config.h probes differ from upstream tag $TAG." >&2
+    echo "Missing maintained probes:" >&2
+    comm -23 "$generated_config_names" "$vendored_config_names" >&2
+    echo "Stale maintained probes:" >&2
+    comm -13 "$generated_config_names" "$vendored_config_names" >&2
     exit 1
 fi
 
@@ -135,5 +167,6 @@ test "$(grep -Fc 'i_errno = IEAUTHTEST' "$STAGING_PATH/iperf_api.c")" -eq 4
 
 rm -rf "$SRC_PATH"
 mv "$STAGING_PATH" "$SRC_PATH"
+STAGING_PATH=""
 
 echo "$SRC_PATH is now updated to version $TAG!"

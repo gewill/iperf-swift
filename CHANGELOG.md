@@ -92,7 +92,9 @@ package release number.
   removes repository directories named `iperf3` or
   `Sources/IperfCLib.sync-tmp`; key source transformations require exact match
   counts, the Apple-platform `iperf_config.h` is a deterministic maintained
-  input, and CI verifies that regenerating iperf 3.21 produces a clean diff.
+  input whose probe names must match the selected upstream tag, staging stays
+  on the destination filesystem, and CI verifies that regenerating iperf 3.21
+  produces a clean diff. Stale-lock errors now include the recovery command.
 
 ## [3.21.12] - 2026-08-06
 
