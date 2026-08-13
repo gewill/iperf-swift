@@ -8,37 +8,76 @@ private struct SourceErrorDeclaration: Hashable {
     let rawValue: Int32
 }
 
-private func sourceErrorDeclarations(in relativePath: String) throws -> [SourceErrorDeclaration] {
-    let testFileURL = URL(fileURLWithPath: String(describing: #filePath))
-    let packageRootURL = testFileURL
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-    let sourceURL = packageRootURL.appendingPathComponent(relativePath)
-    let source = try String(contentsOf: sourceURL, encoding: .utf8)
+/// Which declaration syntax a source file states its error codes in.
+///
+/// The caller knows which kind of file it is passing, so the parser does not
+/// infer it: a renamed header would otherwise select the Swift parser silently
+/// and report a Swift-shaped failure against a C file.
+private enum ErrorDeclarationSyntax {
+    case engineHeader
+    case swiftEnum
+}
 
+/// The package root, found by walking up to the directory holding `Package.swift`.
+///
+/// Deriving it by counting path components instead would break silently if this
+/// test file ever moved into a subdirectory.
+private func packageRootURL() throws -> URL {
+    var directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    while directory.path != "/" {
+        let manifest = directory.appendingPathComponent("Package.swift")
+        if FileManager.default.fileExists(atPath: manifest.path) {
+            return directory
+        }
+        directory = directory.deletingLastPathComponent()
+    }
+    throw sourceError("Could not find Package.swift above this test", path: #filePath)
+}
+
+private func sourceErrorDeclarations(
+    in relativePath: String,
+    syntax: ErrorDeclarationSyntax
+) throws -> [SourceErrorDeclaration] {
+    let sourceURL = try packageRootURL().appendingPathComponent(relativePath)
+    let source = try String(contentsOf: sourceURL, encoding: .utf8)
+    return try errorDeclarations(in: source, syntax: syntax, origin: relativePath)
+}
+
+/// Parses error declarations out of already-loaded source text.
+///
+/// Separate from the file loading so the parser's own failure modes can be
+/// exercised against fixtures — this test's value is that it fails when the two
+/// sources drift, and a parser that quietly returned the wrong set would look
+/// exactly like agreement.
+private func errorDeclarations(
+    in source: String,
+    syntax: ErrorDeclarationSyntax,
+    origin: String
+) throws -> [SourceErrorDeclaration] {
     let block: Substring
     let declarationPattern: String
-    let isCHeader = relativePath.hasSuffix("iperf_api.h")
-    if isCHeader {
+    switch syntax {
+    case .engineHeader:
         guard
             let anchor = source.range(of: "extern const char *errarg;"),
             let start = source.range(of: "enum {", range: anchor.upperBound..<source.endIndex),
             let end = source.range(of: "\n};", range: start.upperBound..<source.endIndex)
         else {
-            throw sourceError("Could not locate the engine error enum", path: relativePath)
+            throw sourceError("Could not locate the engine error enum", path: origin)
         }
         block = source[start.upperBound..<end.lowerBound]
-        declarationPattern = #"^\s*([A-Z][A-Z0-9_]*)\s*=\s*([0-9]+)\s*,(?:\s*//.*)?$"#
-    } else {
+        // The trailing comma is optional so that dropping it on the final
+        // enumerator, which is ordinary C style, does not block a sync.
+        declarationPattern = #"^\s*([A-Z][A-Z0-9_]*)\s*=\s*([0-9]+)\s*,?(?:\s*//.*)?$"#
+    case .swiftEnum:
         guard
             let start = source.range(of: "public enum IperfError:"),
             let end = source.range(of: "/* Swift wrapper errors */", range: start.upperBound..<source.endIndex)
         else {
-            throw sourceError("Could not locate the Swift engine error cases", path: relativePath)
+            throw sourceError("Could not locate the Swift engine error cases", path: origin)
         }
         block = source[start.upperBound..<end.lowerBound]
-        declarationPattern = #"^\s*case\s+([A-Z][A-Z0-9_]*)\s*=\s*(-?[0-9]+)\s*$"#
+        declarationPattern = #"^\s*case\s+([A-Z][A-Z0-9_]*)\s*=\s*(-?[0-9]+)\s*(?://.*)?$"#
     }
 
     let regex = try NSRegularExpression(pattern: declarationPattern)
@@ -46,13 +85,14 @@ private func sourceErrorDeclarations(in relativePath: String) throws -> [SourceE
     for sourceLine in block.split(separator: "\n", omittingEmptySubsequences: false) {
         let line = String(sourceLine)
         let trimmedLine = line.trimmingCharacters(in: .whitespaces)
-        if isCHeader {
+        switch syntax {
+        case .engineHeader:
             guard
                 !trimmedLine.isEmpty,
                 !trimmedLine.hasPrefix("/*"),
                 !trimmedLine.hasPrefix("//")
             else { continue }
-        } else {
+        case .swiftEnum:
             guard trimmedLine.hasPrefix("case ") else { continue }
         }
         let fullRange = NSRange(line.startIndex..<line.endIndex, in: line)
@@ -63,22 +103,26 @@ private func sourceErrorDeclarations(in relativePath: String) throws -> [SourceE
             let valueRange = Range(match.range(at: 2), in: line),
             let rawValue = Int32(line[valueRange])
         else {
-            throw sourceError("Unrecognized error declaration: \(trimmedLine)", path: relativePath)
+            throw sourceError("Unrecognized error declaration: \(trimmedLine)", path: origin)
         }
         let declaration = SourceErrorDeclaration(name: String(line[nameRange]), rawValue: rawValue)
-        if isCHeader || declaration.name != "UNKNOWN" {
+        if syntax == .engineHeader || declaration.name != "UNKNOWN" {
             declarations.append(declaration)
         }
     }
 
     guard !declarations.isEmpty else {
-        throw sourceError("No engine error declarations found", path: relativePath)
+        throw sourceError("No engine error declarations found", path: origin)
     }
     guard Set(declarations.map(\.name)).count == declarations.count else {
-        throw sourceError("Duplicate engine error names found", path: relativePath)
+        throw sourceError("Duplicate engine error names found", path: origin)
     }
-    guard Set(declarations.map(\.rawValue)).count == declarations.count else {
-        throw sourceError("Duplicate engine error values found", path: relativePath)
+    // Only the header can express this: Swift rejects duplicate raw values at
+    // compile time.
+    if syntax == .engineHeader {
+        guard Set(declarations.map(\.rawValue)).count == declarations.count else {
+            throw sourceError("Duplicate engine error values found", path: origin)
+        }
     }
     return declarations
 }
@@ -124,8 +168,14 @@ final class IperfSwiftUnitTests: XCTestCase {
     }
 
     func testIperfErrorMirrorsEveryEmbeddedEngineCode() throws {
-        let cErrors = try sourceErrorDeclarations(in: "Sources/IperfCLib/include/iperf_api.h")
-        let swiftErrors = try sourceErrorDeclarations(in: "Sources/IperfSwift/IperfError.swift")
+        let cErrors = try sourceErrorDeclarations(
+            in: "Sources/IperfCLib/include/iperf_api.h",
+            syntax: .engineHeader
+        )
+        let swiftErrors = try sourceErrorDeclarations(
+            in: "Sources/IperfSwift/IperfError.swift",
+            syntax: .swiftEnum
+        )
 
         let cErrorSet = Set(cErrors)
         let swiftErrorSet = Set(swiftErrors)
@@ -140,12 +190,22 @@ final class IperfSwiftUnitTests: XCTestCase {
             "Extra Swift error declarations: \(formatted(extraSwiftDeclarations))"
         )
 
-        let runtimeCodeSet = Set(IperfError.allCases.map(\.rawValue))
-        let sourceCodeSet = Set(swiftErrors.map(\.rawValue))
+        // Comparing the two sources only constrains what the engine block
+        // declares. A case added after the wrapper marker is never parsed, so
+        // without this the engine's own value range is open for one to land in:
+        // it is not contiguous, and 39...99, 149, 161...199, 209...299 and
+        // 302...399 are all unused.
+        let engineValues = Set(cErrors.map(\.rawValue))
+        let highestEngineValue = engineValues.max() ?? 0
+        let intruders = Set(IperfError.allCases.map(\.rawValue))
+            .subtracting(engineValues)
+            .filter { (0...highestEngineValue).contains($0) }
         XCTAssertTrue(
-            sourceCodeSet.subtracting(runtimeCodeSet).isEmpty,
-            "Missing runtime error codes: \(sourceCodeSet.subtracting(runtimeCodeSet).sorted())"
+            intruders.isEmpty,
+            "Non-engine error codes inside the engine range 0...\(highestEngineValue): "
+                + "\(intruders.sorted())"
         )
+
         for code in cErrors.map(\.rawValue) {
             guard let error = IperfError(rawValue: code) else {
                 XCTFail("Missing Swift mapping for C error code \(code)")
@@ -153,6 +213,83 @@ final class IperfSwiftUnitTests: XCTestCase {
             }
             XCTAssertFalse(error.debugDescription.isEmpty)
         }
+    }
+
+    // The parity test above is only worth having if it fails when the two
+    // sources drift, and the failure mode that matters is a silent success: a
+    // parser that returned a wrong-but-self-consistent pair would look exactly
+    // like agreement. These fixtures pin the detection itself.
+    func testErrorDeclarationParsingDetectsDrift() throws {
+        func header(_ body: String) -> String {
+            "extern const char *errarg;\nenum {\n\(body)\n};\n"
+        }
+        func swiftEnum(_ body: String) -> String {
+            "public enum IperfError: Int32 {\n    case UNKNOWN = -1\n\(body)\n"
+                + "    /* Swift wrapper errors */\n    case INIT_ERROR = 400\n}\n"
+        }
+
+        let engine = try errorDeclarations(
+            in: header("    IENONE = 0,   // No error\n    IEDURATION = 5,"),
+            syntax: .engineHeader,
+            origin: "fixture.h"
+        )
+        XCTAssertEqual(
+            Set(engine),
+            [
+                SourceErrorDeclaration(name: "IENONE", rawValue: 0),
+                SourceErrorDeclaration(name: "IEDURATION", rawValue: 5),
+            ]
+        )
+        // The final enumerator carries no trailing comma above, and UNKNOWN is
+        // excluded from the Swift side rather than reported as a difference.
+        let matching = try errorDeclarations(
+            in: swiftEnum("    case IENONE = 0\n    case IEDURATION = 5"),
+            syntax: .swiftEnum,
+            origin: "fixture.swift"
+        )
+        XCTAssertEqual(Set(matching), Set(engine))
+
+        // A code the engine gained and Swift has not.
+        let missing = try errorDeclarations(
+            in: swiftEnum("    case IENONE = 0"),
+            syntax: .swiftEnum,
+            origin: "fixture.swift"
+        )
+        XCTAssertEqual(
+            Set(engine).subtracting(Set(missing)),
+            [SourceErrorDeclaration(name: "IEDURATION", rawValue: 5)]
+        )
+
+        // Same value, different name — the case the previous value-only list
+        // could not catch.
+        let renamed = try errorDeclarations(
+            in: swiftEnum("    case IENONE = 0\n    case IERENAMED = 5"),
+            syntax: .swiftEnum,
+            origin: "fixture.swift"
+        )
+        XCTAssertFalse(Set(renamed).subtracting(Set(engine)).isEmpty)
+
+        // Anchors and malformed declarations have to throw rather than yield a
+        // short list that happens to agree with the other side.
+        XCTAssertThrowsError(
+            try errorDeclarations(in: "enum { IENONE = 0, };", syntax: .engineHeader, origin: "f.h")
+        )
+        XCTAssertThrowsError(
+            try errorDeclarations(in: header("    IENONE = 0,\n    IEBROKEN;"), syntax: .engineHeader, origin: "f.h")
+        )
+        XCTAssertThrowsError(
+            try errorDeclarations(in: header("    // only a comment"), syntax: .engineHeader, origin: "f.h")
+        )
+        XCTAssertThrowsError(
+            try errorDeclarations(
+                in: header("    IENONE = 0,\n    IEDUPLICATE = 0,"),
+                syntax: .engineHeader,
+                origin: "f.h"
+            )
+        )
+        XCTAssertThrowsError(
+            try errorDeclarations(in: "case IENONE = 0", syntax: .swiftEnum, origin: "f.swift")
+        )
     }
 
     func testConcurrentStartsDeliverEachCallersErrorCallback() {
