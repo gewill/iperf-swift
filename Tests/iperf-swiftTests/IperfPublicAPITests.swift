@@ -6,20 +6,52 @@ import XCTest
 import IperfSwift
 
 final class IperfPublicAPITests: XCTestCase {
+    func testSyntheticStreamDerivesDurationFromTimestamps() {
+        var result = IperfIntervalResult(prot: .tcp)
+        result.streams = [
+            IperfStreamIntervalResult(
+                bytesTransferred: 1_000_000,
+                startTime: 10,
+                endTime: 11
+            ),
+        ]
+
+        result.evaluate()
+
+        XCTAssertEqual(result.duration, 1, accuracy: 0.001)
+        XCTAssertEqual(result.throughput.rawValue, 1_000_000, accuracy: 0.001)
+    }
+
+    @available(*, deprecated, message: "Exercises the deprecated compatibility initializer.")
+    func testDeprecatedDurationCannotContradictTimestamps() {
+        var result = IperfIntervalResult(prot: .tcp)
+        result.streams = [
+            IperfStreamIntervalResult(
+                bytesTransferred: 500_000,
+                intervalDuration: 99,
+                startTime: 20,
+                endTime: 21
+            ),
+        ]
+
+        result.evaluate()
+
+        XCTAssertEqual(result.duration, 1, accuracy: 0.001)
+        XCTAssertEqual(result.throughput.rawValue, 500_000, accuracy: 0.001)
+    }
+
     func testSyntheticStreamsAggregateTheSameWayEngineStreamsDo() {
         var result = IperfIntervalResult(prot: .tcp)
         result.streams = [
             IperfStreamIntervalResult(
                 direction: .upload,
                 bytesTransferred: 1_000_000,
-                intervalDuration: 1,
                 startTime: 344_987,
                 endTime: 344_988
             ),
             IperfStreamIntervalResult(
                 direction: .upload,
                 bytesTransferred: 500_000,
-                intervalDuration: 1,
                 startTime: 344_987,
                 endTime: 344_988
             ),
@@ -45,14 +77,12 @@ final class IperfPublicAPITests: XCTestCase {
             IperfStreamIntervalResult(
                 direction: .upload,
                 bytesTransferred: 400_000,
-                intervalDuration: 1,
                 startTime: 10,
                 endTime: 11
             ),
             IperfStreamIntervalResult(
                 direction: .download,
                 bytesTransferred: 900_000,
-                intervalDuration: 1,
                 startTime: 10,
                 endTime: 11
             ),
@@ -73,7 +103,6 @@ final class IperfPublicAPITests: XCTestCase {
             IperfStreamIntervalResult(
                 direction: .download,
                 bytesTransferred: 120_000,
-                intervalDuration: 1,
                 startTime: 5,
                 endTime: 6,
                 intervalPacketCount: 100,
@@ -84,7 +113,6 @@ final class IperfPublicAPITests: XCTestCase {
             IperfStreamIntervalResult(
                 direction: .download,
                 bytesTransferred: 60_000,
-                intervalDuration: 1,
                 startTime: 5,
                 endTime: 6,
                 intervalPacketCount: 50,
@@ -109,7 +137,6 @@ final class IperfPublicAPITests: XCTestCase {
             IperfStreamIntervalResult(
                 direction: .upload,
                 bytesTransferred: 200_000,
-                intervalDuration: 1,
                 startTime: 0,
                 endTime: 1,
                 intervalPacketCount: 100,

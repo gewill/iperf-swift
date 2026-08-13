@@ -60,7 +60,6 @@ public struct IperfStreamIntervalResult {
     public init(
         direction: IperfDirection = .upload,
         bytesTransferred: Int = 0,
-        intervalDuration: Double = 0,
         startTime: Double = 0,
         endTime: Double = 0,
         intervalPacketCount: Int64 = 0,
@@ -70,7 +69,6 @@ public struct IperfStreamIntervalResult {
     ) {
         self.direction = direction
         self.bytesTransferred = bytesTransferred
-        self.intervalDuration = intervalDuration
         self.startTime = startTime
         self.endTime = endTime
         self.intervalPacketCount = intervalPacketCount
@@ -78,6 +76,36 @@ public struct IperfStreamIntervalResult {
         self.intervalOutoforderPackets = intervalOutoforderPackets
         self.jitter = jitter
         intervalTimeDiff = max(endTime - startTime, 0)
+        self.intervalDuration = intervalTimeDiff
+    }
+
+    /// Creates a synthetic stream measurement using the legacy duration input.
+    ///
+    /// The duration is ignored because iperf derives it from the interval's
+    /// timestamps. This overload remains available so existing consumers can
+    /// migrate without a source-breaking package update.
+    @available(*, deprecated, message: "Remove intervalDuration; duration is derived from startTime and endTime.")
+    public init(
+        direction: IperfDirection = .upload,
+        bytesTransferred: Int = 0,
+        intervalDuration _: Double,
+        startTime: Double = 0,
+        endTime: Double = 0,
+        intervalPacketCount: Int64 = 0,
+        intervalCntError: Int64 = 0,
+        intervalOutoforderPackets: Int64 = 0,
+        jitter: Double = 0
+    ) {
+        self.init(
+            direction: direction,
+            bytesTransferred: bytesTransferred,
+            startTime: startTime,
+            endTime: endTime,
+            intervalPacketCount: intervalPacketCount,
+            intervalCntError: intervalCntError,
+            intervalOutoforderPackets: intervalOutoforderPackets,
+            jitter: jitter
+        )
     }
 
     init(_ results: iperf_interval_results) {
