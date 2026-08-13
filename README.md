@@ -49,7 +49,7 @@ Or add the package to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/gewill/iperf-swift.git",
-        from: "3.21.12"
+        from: "3.21.13"
     )
 ]
 ```
@@ -429,7 +429,7 @@ generated C source because the next sync will overwrite them.
 ## Versioning
 
 The Swift package and embedded engine have separate versions. For example,
-package release `3.21.12` embeds the official iperf3 `3.21` engine. See
+package release `3.21.13` embeds the official iperf3 `3.21` engine. See
 [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## Roadmap

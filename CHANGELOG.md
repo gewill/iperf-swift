@@ -9,8 +9,27 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.13] - 2026-08-13
+
+A dependency, correctness and hardening release. OpenSSL moves to 4.0.1, three
+ways the engine could reach past its own run into the host process are closed,
+and the synchronization script no longer loses local edits or races itself.
+
+**Breaking:** exhaustive switches over `IperfError` must handle twenty-three new
+cases, an application depending on `openssl-spm` directly must resolve 4.x, and
+the minimum toolchain is Swift 5.7. **Behavior change:** the error closure is no
+longer always terminal for a persistent server, and runs are serialized
+process-wide.
+
 ### Changed
 
+- The bundled OpenSSL is now 4.0.1 ([#125]), raising the `openssl-spm`
+  requirement to `from: "4.0.1"`. Version 4 ships the library as a framework, so
+  the vendored C gained a compatibility header that resolves either layout, and
+  the public umbrella header now only forward-declares `EVP_PKEY` — the DocC
+  symbol-graph pass does not load the framework's module map, so a public
+  OpenSSL include broke documentation builds. **Breaking:** an application that
+  also depends on `openssl-spm` directly must be able to resolve 4.x.
 - The minimum supported toolchain is now Swift 5.7 / Xcode 14.0 ([#103]).
   This matches the optional-binding syntax already used by the package and the
   DocC 1.5.0 plugin, which is now pinned so dependency resolution cannot
@@ -24,6 +43,10 @@ package release number.
 - `IperfError` now maps every error code the embedded engine defines ([#101]),
   adding twenty-three cases that previously surfaced as `.UNKNOWN`. **Breaking:**
   exhaustive switches over `IperfError` must handle the new cases.
+- Internal: interoperability tests now resolve the CLI through a shared helper
+  and require iperf 3.21 exactly ([#123]), instead of accepting whatever `iperf3`
+  the runner happened to have. A CLI-versus-wrapper comparison against a
+  different engine proves nothing about parity.
 - Internal: error-code parity tests now derive the engine's complete error enum
   directly from `iperf_api.h` and compare both names and values with the Swift
   source and runtime cases ([#118]). A future engine sync that adds an error now
@@ -49,6 +72,15 @@ package release number.
 
 ### Fixed
 
+- Starting a run no longer changes the host process's `SIGPIPE` disposition
+  ([#106]). `IperfRunner.start()` called `signal(SIGPIPE, SIG_IGN)`, which is
+  process-wide and permanent, so an application that installed its own handler
+  lost it to a measurement library and never got it back. The engine now sets
+  `SO_NOSIGPIPE` on the sockets it creates and accepts, which confines the
+  suppression to those descriptors.
+- The engine no longer leaks the authorized-users buffer ([#122]). Setting
+  `authorizedUsers` a second time dropped the previous allocation, and
+  destroying a test never released the last one.
 - Synthetic `IperfStreamIntervalResult` values now derive duration and
   throughput from `startTime` and `endTime`, matching the engine ([#86]). New
   code should provide those timestamps and omit `intervalDuration`; set
@@ -521,7 +553,8 @@ unchanged from 3.21.6.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.12...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.13...HEAD
+[3.21.13]: https://github.com/gewill/iperf-swift/compare/v3.21.12...v3.21.13
 [3.21.12]: https://github.com/gewill/iperf-swift/compare/v3.21.11...v3.21.12
 [3.21.11]: https://github.com/gewill/iperf-swift/compare/v3.21.10...v3.21.11
 [3.21.10]: https://github.com/gewill/iperf-swift/compare/v3.21.9...v3.21.10
@@ -584,4 +617,10 @@ unchanged from 3.21.6.
 [#102]: https://github.com/gewill/iperf-swift/issues/102
 [#103]: https://github.com/gewill/iperf-swift/issues/103
 [#114]: https://github.com/gewill/iperf-swift/pull/114
+[#106]: https://github.com/gewill/iperf-swift/issues/106
+[#110]: https://github.com/gewill/iperf-swift/issues/110
+[#118]: https://github.com/gewill/iperf-swift/issues/118
+[#122]: https://github.com/gewill/iperf-swift/pull/122
+[#123]: https://github.com/gewill/iperf-swift/pull/123
+[#125]: https://github.com/gewill/iperf-swift/pull/125
 [#84]: https://github.com/gewill/iperfman/issues/84
