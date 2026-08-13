@@ -24,6 +24,15 @@ package release number.
 - `IperfError` now maps every error code the embedded engine defines ([#101]),
   adding twenty-three cases that previously surfaced as `.UNKNOWN`. **Breaking:**
   exhaustive switches over `IperfError` must handle the new cases.
+- Internal: error-code parity tests now derive the engine's complete error enum
+  directly from `iperf_api.h` and compare both names and values with the Swift
+  source and runtime cases ([#118]). A future engine sync that adds an error now
+  fails without updating a second hand-maintained C list. `iperf_strerror` is
+  not used for discovery because it lacks a case for the valid
+  `IESETSCTPBINDX` code. The runtime check also rejects a wrapper error whose
+  raw value falls inside the engine's range, which the value list it replaced
+  covered, and the parser's own failure modes are pinned against fixtures so a
+  future edit cannot make it agree by parsing less.
 - Engine runs are serialized through one process-wide FIFO queue ([#114]). The
   vendored libiperf keeps its timer list and `i_errno` at process scope, so
   concurrent runners could race the timers and cross each other's errors. Only
