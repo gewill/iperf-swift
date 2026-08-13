@@ -91,7 +91,8 @@ package release number.
   concurrent replacement of the generated source tree ([#110]). It no longer
   removes repository directories named `iperf3` or
   `Sources/IperfCLib.sync-tmp`; key source transformations require exact match
-  counts, and CI verifies that regenerating iperf 3.21 produces a clean diff.
+  counts, the Apple-platform `iperf_config.h` is a deterministic maintained
+  input, and CI verifies that regenerating iperf 3.21 produces a clean diff.
 
 ## [3.21.12] - 2026-08-06
 

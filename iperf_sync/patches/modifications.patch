@@ -54,21 +54,6 @@ diff -ru a/include/iperf.h b/include/iperf.h
  #include <sys/types.h>
 +#include <stdio.h>
  #include <stdint.h>
-diff -ru a/include/iperf_config.h b/include/iperf_config.h
---- a/include/iperf_config.h	2026-05-15 23:42:06
-+++ b/include/iperf_config.h	2026-05-15 23:42:06
-@@ -95,9 +95,9 @@
- /* #undef HAVE_SO_MAX_PACING_RATE */
- 
- /* OpenSSL Is Available */
--/* #undef HAVE_SSL */
-+#define HAVE_SSL 1
- 
--/* Define to 1 if you have the <stdatomic.h> header file. */
-+/* Define to 1 if you have the <iperf_stdatomic.h> header file. */
- #define HAVE_STDATOMIC_H 1
- 
- /* Define to 1 if you have the <stdint.h> header file. */
 diff -ru a/include/iperf_util.h b/include/iperf_util.h
 --- a/include/iperf_util.h	2026-05-15 23:42:06
 +++ b/include/iperf_util.h	2026-05-15 23:42:06

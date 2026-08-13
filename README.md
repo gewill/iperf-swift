@@ -414,7 +414,8 @@ git diff --check
 `sync.sh` defaults to the official `3.21` tag. It creates a unique system
 temporary directory for checkout and staging, applies
 `iperf_sync/patches/modifications.patch`, restores
-`iperf_sync/custom_files/`, and then replaces `Sources/IperfCLib/`. Repository
+`iperf_sync/custom_files/` (including the deterministic Apple-platform
+`iperf_config.h`), and then replaces `Sources/IperfCLib/`. Repository
 directories named `iperf3` or `Sources/IperfCLib.sync-tmp` are not used or
 removed. Concurrent synchronization is rejected through `.iperf-sync.lock`
 rather than allowing two processes to replace the generated tree at once. CI
