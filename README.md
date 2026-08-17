@@ -224,7 +224,7 @@ interface, and socket constraints remain runtime decisions.
 
 | Swift property | iperf3 option | Applies when | Constraints / current behavior |
 | --- | --- | --- | --- |
-| `numStreams` | `--parallel` | Client · TCP / UDP | Defaults to `2`; requires `1...128`, otherwise fails with `IENUMSTREAMS`; an explicit Server assignment fails with `IECLIENTONLY` |
+| `numStreams` | `--parallel` | Client · TCP / UDP | Defaults to `1`, matching the engine; requires `1...128`, otherwise fails with `IENUMSTREAMS`; an explicit Server assignment fails with `IECLIENTONLY` |
 | `mode` | `--reverse` / `--bidir` | Client · TCP / UDP | Defaults to download; selects upload, download, or simultaneous bidirectional flow |
 | `reverse` | `--reverse` | Client · TCP / UDP | Compatibility accessor for `mode`; a read/write round trip does not cancel bidirectional mode |
 | `prot` | `--tcp` / `--udp` | Client | Defaults to TCP; an explicit Server assignment fails with `IECLIENTONLY` |

@@ -9,6 +9,20 @@ package release number.
 
 ## [Unreleased]
 
+### Changed
+
+- `IperfConfiguration.numStreams` now defaults to `1`, the value the engine's
+  own `iperf_defaults()` assigns, instead of `2` ([#131]). The wrapper
+  configures the engine directly rather than through the argument parser, so a
+  default it does not restore is a silent divergence: a caller who set nothing
+  ran two parallel streams where `iperf3` with the same arguments ran one, and
+  two streams and one measure differently on a fast path. The value dates to
+  the initial import and no decision recorded it. **Behavior change:** a run
+  that never set `numStreams` now reports the throughput of a single stream —
+  set it to `2` to keep the previous measurement. An interoperability test now
+  compares the wrapper's default stream count against the CLI's, so a divergence
+  fails instead of going unnoticed.
+
 ## [3.21.13] - 2026-08-13
 
 A dependency, correctness and hardening release. OpenSSL moves to 4.0.1, three
@@ -623,4 +637,5 @@ unchanged from 3.21.6.
 [#122]: https://github.com/gewill/iperf-swift/pull/122
 [#123]: https://github.com/gewill/iperf-swift/pull/123
 [#125]: https://github.com/gewill/iperf-swift/pull/125
+[#131]: https://github.com/gewill/iperf-swift/issues/131
 [#84]: https://github.com/gewill/iperfman/issues/84

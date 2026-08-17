@@ -99,7 +99,10 @@ public struct IperfConfiguration {
     /// require additional privileges on some platforms.
     public var bindDevice: String?
     /// The number of parallel client streams in `1...128`, equivalent to `--parallel`.
-    public var numStreams = 2 {
+    ///
+    /// Defaults to `1`, the value `iperf_defaults()` assigns, so a caller that
+    /// never sets it measures what `iperf3` measures with the same arguments.
+    public var numStreams = 1 {
         didSet { explicitlySet.insert(.numStreams) }
     }
     /// Whether the local endpoint runs as a client or server.
