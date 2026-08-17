@@ -825,6 +825,9 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertFalse(configuration.isAuth)
         XCTAssertNil(configuration.bindDevice)
         XCTAssertNil(configuration.dscp)
+        // Matches iperf_defaults(); a caller who sets nothing has to measure
+        // what the CLI measures, and nothing asserted this while it did not.
+        XCTAssertEqual(configuration.numStreams, 1)
 
         configuration.bindDevice = "lo0"
         configuration.dscp = 46
