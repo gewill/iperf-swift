@@ -9,6 +9,16 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.14] - 2026-08-17
+
+A single-change release. A client that never set a stream count measured two
+parallel streams where `iperf3` with the same arguments measured one, so the
+wrapper and the CLI reported different throughput for what looked like the same
+test.
+
+**Behavior change:** a run that never sets `numStreams` now reports
+single-stream throughput. Set it to `2` to keep the previous measurement.
+
 ### Changed
 
 - `IperfConfiguration.numStreams` now defaults to `1`, the value the engine's
@@ -567,7 +577,8 @@ unchanged from 3.21.6.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.13...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.14...HEAD
+[3.21.14]: https://github.com/gewill/iperf-swift/compare/v3.21.13...v3.21.14
 [3.21.13]: https://github.com/gewill/iperf-swift/compare/v3.21.12...v3.21.13
 [3.21.12]: https://github.com/gewill/iperf-swift/compare/v3.21.11...v3.21.12
 [3.21.11]: https://github.com/gewill/iperf-swift/compare/v3.21.10...v3.21.11
