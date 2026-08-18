@@ -49,7 +49,7 @@ Or add the package to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/gewill/iperf-swift.git",
-        from: "3.21.13"
+        from: "3.21.14"
     )
 ]
 ```
@@ -224,7 +224,7 @@ interface, and socket constraints remain runtime decisions.
 
 | Swift property | iperf3 option | Applies when | Constraints / current behavior |
 | --- | --- | --- | --- |
-| `numStreams` | `--parallel` | Client · TCP / UDP | Defaults to `2`; requires `1...128`, otherwise fails with `IENUMSTREAMS`; an explicit Server assignment fails with `IECLIENTONLY` |
+| `numStreams` | `--parallel` | Client · TCP / UDP | Defaults to `1`, matching the engine; requires `1...128`, otherwise fails with `IENUMSTREAMS`; an explicit Server assignment fails with `IECLIENTONLY` |
 | `mode` | `--reverse` / `--bidir` | Client · TCP / UDP | Defaults to download; selects upload, download, or simultaneous bidirectional flow |
 | `reverse` | `--reverse` | Client · TCP / UDP | Compatibility accessor for `mode`; a read/write round trip does not cancel bidirectional mode |
 | `prot` | `--tcp` / `--udp` | Client | Defaults to TCP; an explicit Server assignment fails with `IECLIENTONLY` |
@@ -429,7 +429,7 @@ generated C source because the next sync will overwrite them.
 ## Versioning
 
 The Swift package and embedded engine have separate versions. For example,
-package release `3.21.13` embeds the official iperf3 `3.21` engine. See
+package release `3.21.14` embeds the official iperf3 `3.21` engine. See
 [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## Roadmap

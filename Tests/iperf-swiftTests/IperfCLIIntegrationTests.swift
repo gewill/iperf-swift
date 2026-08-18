@@ -1834,6 +1834,108 @@ final class IperfCLIIntegrationTests: XCTestCase {
         wait(for: [finished], timeout: 10)
     }
 
+    func testDefaultStreamCountMatchesTheCLI() throws {
+        // The wrapper bypasses argument parsing, so every default it does not
+        // restore is a silent divergence. This one measured differently for
+        // years because nothing compared the two.
+        let tools = try TestTools()
+
+        let cliPort = try TestTools.freePort()
+        let cliServer = Process()
+        let cliServerOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(cliPort), "-1"]
+        cliServer.standardOutput = cliServerOutput
+        cliServer.standardError = cliServerOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        let cliResult = try tools.run(
+            tools.iperf3,
+            arguments: ["-c", "127.0.0.1", "-p", String(cliPort), "-t", "1", "-J"]
+        )
+        let cliJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(cliResult.output.utf8)) as? [String: Any]
+        )
+        let start = try XCTUnwrap(cliJSON["start"] as? [String: Any])
+        let cliStreamCount = try XCTUnwrap(start["connected"] as? [Any]).count
+        XCTAssertGreaterThan(cliStreamCount, 0, cliResult.output)
+
+        let port = try TestTools.freePort()
+        let wrapperServer = Process()
+        let wrapperServerOutput = Pipe()
+        wrapperServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        wrapperServer.arguments = ["-s", "-p", String(port), "-1"]
+        wrapperServer.standardOutput = wrapperServerOutput
+        wrapperServer.standardError = wrapperServerOutput
+        try wrapperServer.run()
+        addTeardownBlock {
+            if wrapperServer.isRunning {
+                wrapperServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Everything the CLI invocation above also states, and nothing more —
+        // the stream count has to come from the default.
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.duration = 1
+
+        let finished = expectation(description: "default-configuration client finished")
+        var didFinish = false
+        let lock = NSLock()
+        var observedStreamCounts: Set<Int> = []
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { result in
+                // A one-second run at the default reporting interval delivers
+                // its only interval as the closing summary, so do not filter on
+                // IperfState/TEST_RUNNING here.
+                guard !result.streams.isEmpty else {
+                    return
+                }
+                lock.lock()
+                observedStreamCounts.insert(result.streams.count)
+                lock.unlock()
+            },
+            { error in
+                XCTFail("default-configuration client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 15)
+        lock.lock()
+        let streamCounts = observedStreamCounts
+        lock.unlock()
+
+        XCTAssertEqual(
+            streamCounts,
+            [cliStreamCount],
+            "the wrapper's default stream count diverges from the CLI's"
+        )
+    }
+
     func testSwiftClientDefaultsUDPToOneMegabitTarget() throws {
         // The CLI applies its 1 Mbit/s UDP default during argument parsing,
         // which the wrapper bypasses, so the wrapper must restore it: an
