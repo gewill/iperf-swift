@@ -1436,13 +1436,15 @@ final class IperfCLIIntegrationTests: XCTestCase {
         }
         client.start(
             { result in
-                if result.state == .TEST_RUNNING {
-                    if result.streams.count == 2 {
-                        sawTwoStreams = true
-                    }
-                    runningBytes += result.totalBytes
-                    runningPackets += result.totalPackets
+                if result.state == .TEST_RUNNING, result.streams.count == 2 {
+                    sawTwoStreams = true
                 }
+                // Every delivery, not only the running ones. Each carries
+                // interval deltas, so summing all of them reconstructs the run
+                // totals; dropping the closing summary is what made the byte
+                // and packet totals disagree (see #137).
+                runningBytes += result.totalBytes
+                runningPackets += result.totalPackets
             },
             { error in
                 XCTFail("Swift UDP multi-stream client failed: \(error.debugDescription)")
@@ -1462,11 +1464,11 @@ final class IperfCLIIntegrationTests: XCTestCase {
         wait(for: [finished], timeout: 8)
         XCTAssertTrue(sawTwoStreams, "expected an interval reporting two parallel UDP streams")
         XCTAssertGreaterThan(runningPackets, 0)
-        // Every datagram must carry exactly blockSize bytes. Byte-versus-packet
-        // coherence is intentionally not asserted here: interval snapshots race
-        // the UDP sender threads, so accumulated totals can disagree without
-        // indicating a problem with the options under test (see #135).
-        XCTAssertEqual(runningBytes % 800, 0,
+        // The run sent whole datagrams of blockSize bytes, so once every
+        // delivery is counted the two totals agree exactly — no tolerance, and
+        // the size of the sender-thread race does not matter. Divisibility
+        // alone would not pin the size: 400-byte datagrams also divide 800.
+        XCTAssertEqual(runningBytes, Int(runningPackets) * 800,
                        "every UDP datagram should carry exactly blockSize bytes")
     }
 
