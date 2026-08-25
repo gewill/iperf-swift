@@ -819,23 +819,29 @@ final class IperfSwiftUnitTests: XCTestCase {
         var configuration = IperfConfiguration()
 
         XCTAssertEqual(configuration.role, .client)
-        XCTAssertEqual(configuration.mode, .download)
-        XCTAssertEqual(configuration.reverse, .download)
+        // iperf_defaults() never assigns reverse, so a client sends. Asserting
+        // the wrapper's own value only pins it here; the engine comparison is
+        // testDefaultDirectionMatchesTheCLI.
+        XCTAssertEqual(configuration.mode, .upload)
+        XCTAssertEqual(configuration.reverse, .upload)
         XCTAssertEqual(configuration.prot, .tcp)
         XCTAssertFalse(configuration.isAuth)
         XCTAssertNil(configuration.bindDevice)
         XCTAssertNil(configuration.dscp)
+        // Unset, so a server binds the wildcard address like `iperf3 -s`
+        // instead of narrowing itself to loopback.
+        XCTAssertNil(configuration.address)
         // Matches iperf_defaults(); a caller who sets nothing has to measure
         // what the CLI measures, and nothing asserted this while it did not.
         XCTAssertEqual(configuration.numStreams, 1)
 
         configuration.bindDevice = "lo0"
         configuration.dscp = 46
-        configuration.reverse = .upload
+        configuration.reverse = .download
 
         XCTAssertEqual(configuration.bindDevice, "lo0")
         XCTAssertEqual(configuration.dscp, 46)
-        XCTAssertEqual(configuration.mode, .upload)
+        XCTAssertEqual(configuration.mode, .download)
 
         configuration.mode = .bidirectional
 

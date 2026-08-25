@@ -770,6 +770,14 @@ public class IperfRunner {
             }
             if let duration = Self.durationSeconds(configuration.duration) {
                 iperf_set_test_duration(currentTest, duration)
+            } else if let numberOfBytes = configuration.numberOfBytes, numberOfBytes != 0 {
+                // A byte end condition with no duration is the CLI's
+                // bytes-only run, where iperf_parse_arguments() clears the
+                // duration so no time limit competes with the byte count. The
+                // wrapper bypasses that parser, so without this the engine
+                // keeps DURATION and the transfer stops after 10 seconds
+                // having moved less than the caller asked for.
+                iperf_set_test_duration(currentTest, 0)
             }
             if let numberOfBytes = configuration.numberOfBytes {
                 iperf_set_test_bytes(currentTest, UInt64(numberOfBytes))
