@@ -9,10 +9,13 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.15] - 2026-08-25
+
 An audit of every `IperfConfiguration` default against the bundled engine,
 continuing the work behind [#131]. Of 38 properties, 30 already matched and 3
 deviated deliberately with the reason recorded; these are the four that differed
-with nothing to explain them.
+with nothing to explain them. A UDP interoperability test also regains the
+block-size check it lost to a flake fix.
 
 **Behavior change:** a client that never sets `mode` now measures the upload
 direction, a server that never sets `address` now binds the wildcard address,
@@ -44,6 +47,15 @@ and a byte-limited run is no longer cut off after ten seconds.
   reads literally and which therefore rejects any clock difference at all;
   `iperf_parse_arguments()` substitutes `10` once a server private key has
   loaded, and the wrapper replicates that substituted value. No behavior change.
+- Internal: the UDP interoperability test now reconstructs run totals by
+  counting every delivery, so the datagram size it claims to verify is checked
+  again ([#135], [#137]). The pairing assertion was dropped as flaky because
+  interval snapshots race the UDP sender threads, which attribute a datagram to
+  the packet count before its bytes; that removed the only thing tying the byte
+  total to a datagram count, and the test passed with the engine sending
+  400-byte datagrams. Counting every delivery — including the closing summary
+  the test had excluded — makes the two agree exactly, with no tolerance to
+  outgrow.
 
 ### Fixed
 
@@ -625,6 +637,7 @@ unchanged from 3.21.6.
 - Embedded engine updated to iperf3 3.14.
 
 [Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.14...HEAD
+[3.21.15]: https://github.com/gewill/iperf-swift/compare/v3.21.14...v3.21.15
 [3.21.14]: https://github.com/gewill/iperf-swift/compare/v3.21.13...v3.21.14
 [3.21.13]: https://github.com/gewill/iperf-swift/compare/v3.21.12...v3.21.13
 [3.21.12]: https://github.com/gewill/iperf-swift/compare/v3.21.11...v3.21.12
@@ -696,5 +709,7 @@ unchanged from 3.21.6.
 [#123]: https://github.com/gewill/iperf-swift/pull/123
 [#125]: https://github.com/gewill/iperf-swift/pull/125
 [#131]: https://github.com/gewill/iperf-swift/issues/131
+[#135]: https://github.com/gewill/iperf-swift/issues/135
+[#137]: https://github.com/gewill/iperf-swift/issues/137
 [#139]: https://github.com/gewill/iperf-swift/issues/139
 [#84]: https://github.com/gewill/iperfman/issues/84
