@@ -3180,15 +3180,19 @@ final class IperfCLIIntegrationTests: XCTestCase {
         let finished = expectation(description: "byte-limited client finished")
         var didFinish = false
         var totalBytes = 0
+        let lock = NSLock()
         let client = IperfRunner(with: configuration)
         addTeardownBlock {
             client.stop()
         }
         client.start(
             { result in
-                if result.state == .TEST_RUNNING {
-                    totalBytes += result.totalBytes
+                guard result.state == .TEST_RUNNING else {
+                    return
                 }
+                lock.lock()
+                totalBytes += result.totalBytes
+                lock.unlock()
             },
             { error in
                 XCTFail("byte-limited client failed: \(error.debugDescription)")
@@ -3206,9 +3210,12 @@ final class IperfCLIIntegrationTests: XCTestCase {
         )
 
         wait(for: [finished], timeout: 10)
+        lock.lock()
+        let transferred = totalBytes
+        lock.unlock()
         // The transfer terminates on the byte count, so it must move at least
         // the requested amount and not run open-endedly toward a time limit.
-        XCTAssertGreaterThanOrEqual(totalBytes, Int(byteCap),
+        XCTAssertGreaterThanOrEqual(transferred, Int(byteCap),
                                     "a --bytes run should transmit at least the requested byte count")
     }
 
@@ -3254,6 +3261,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         let finished = expectation(description: "paced byte-limited client finished")
         var didFinish = false
         var totalBytes = 0
+        let lock = NSLock()
         let started = Date()
         let client = IperfRunner(with: configuration)
         addTeardownBlock {
@@ -3261,9 +3269,12 @@ final class IperfCLIIntegrationTests: XCTestCase {
         }
         client.start(
             { result in
-                if result.state == .TEST_RUNNING {
-                    totalBytes += result.totalBytes
+                guard result.state == .TEST_RUNNING else {
+                    return
                 }
+                lock.lock()
+                totalBytes += result.totalBytes
+                lock.unlock()
             },
             { error in
                 XCTFail("paced byte-limited client failed: \(error.debugDescription)")
@@ -3282,14 +3293,25 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
         wait(for: [finished], timeout: 40)
         let elapsed = Date().timeIntervalSince(started)
+        lock.lock()
+        let transferred = totalBytes
+        lock.unlock()
 
-        XCTAssertGreaterThanOrEqual(
-            totalBytes, Int(byteCap),
-            "the byte target was cut short — the engine's default duration is still ending the run"
-        )
+        // The wall clock is the signal: a run ended by DURATION stops at ten
+        // seconds, and reverting the fix produced exactly that (10.006s).
         XCTAssertGreaterThan(
             elapsed, 11,
             "the run ended near DURATION, so the byte count was not the only end condition"
+        )
+        // Corroboration, deliberately not an exact match against byteCap.
+        // Summing reporter deltas is the only way to obtain a run total today
+        // (see #149) and the reconstruction depends on how the engine slices
+        // the final intervals, so pin it to the failure mode instead: at this
+        // test's 4 Mbit/s pacing a DURATION-capped run moves about 5,000,000
+        // bytes in its ten seconds. The pre-fix run reported 4,587,520.
+        XCTAssertGreaterThan(
+            transferred, 5_000_000,
+            "transferred no more than a DURATION-capped run would have"
         )
     }
 
