@@ -9,6 +9,18 @@ package release number.
 
 ## [Unreleased]
 
+### Fixed
+
+- Internal: the UDP block-size test no longer fails when the packet/byte race
+  lands in the final interval ([#145]). Counting every delivery reconstructs the
+  totals for every interval but the last, which has no next delivery to carry
+  the compensating bytes, so a datagram straddling the final snapshot left the
+  totals one datagram apart against an assertion with no tolerance. The check
+  now requires the byte total to be a whole number of datagrams and bounds the
+  packet-versus-byte shortfall at one datagram. That pair still pins the
+  datagram size — divisibility alone does not, but a wrong size puts the
+  shortfall orders of magnitude outside the bound.
+
 ## [3.21.15] - 2026-08-25
 
 An audit of every `IperfConfiguration` default against the bundled engine,
@@ -712,4 +724,5 @@ unchanged from 3.21.6.
 [#135]: https://github.com/gewill/iperf-swift/issues/135
 [#137]: https://github.com/gewill/iperf-swift/issues/137
 [#139]: https://github.com/gewill/iperf-swift/issues/139
+[#145]: https://github.com/gewill/iperf-swift/issues/145
 [#84]: https://github.com/gewill/iperfman/issues/84
