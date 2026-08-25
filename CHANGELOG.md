@@ -43,6 +43,14 @@ package release number.
 
 ### Fixed
 
+- Internal: the non-finite duration test no longer depends on DNS ([#150]). It
+  reached the network through an unresolvable name, so the resolver's latency
+  sat inside its two-second bound — the same run took 0.012s locally and over
+  two seconds on a stalled CI runner. It now connects to a loopback port that
+  was just released, which is refused immediately: ten local runs finish in
+  0.001s. A documentation-range literal was measured first and rejected, failing
+  with `IECTRLCLOSE` after three to four seconds because what happens to those
+  packets depends on the local network.
 - Internal: the byte-limit test no longer asserts an exact reconstructed byte
   total ([#151]). Summing reporter deltas is the only way a test can obtain a
   run total today, and the reconstruction depends on how the engine slices the
@@ -768,5 +776,6 @@ unchanged from 3.21.6.
 [#143]: https://github.com/gewill/iperf-swift/issues/143
 [#145]: https://github.com/gewill/iperf-swift/issues/145
 [#147]: https://github.com/gewill/iperf-swift/issues/147
+[#150]: https://github.com/gewill/iperf-swift/issues/150
 [#151]: https://github.com/gewill/iperf-swift/issues/151
 [#84]: https://github.com/gewill/iperfman/issues/84
