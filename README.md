@@ -140,7 +140,6 @@ mode.
 ```swift
 var configuration = IperfConfiguration()
 configuration.role = .server
-configuration.address = "0.0.0.0"
 configuration.port = 5201
 
 let server = IperfRunner(with: configuration)
@@ -150,6 +149,11 @@ server.start(
     { state in print(state) }
 )
 ```
+
+Leaving `address` unset binds the wildcard address and accepts both IPv4 and
+IPv6, like `iperf3 -s`. Set it to bind one interface — but note that an explicit
+`"0.0.0.0"` gives an IPv4-only listener, because the engine only arranges the
+dual-stack socket when no bind address is given.
 
 Keep the runner alive for the duration of the test. Work runs asynchronously,
 and callbacks are not guaranteed to use a specific queue. Dispatch UI updates
@@ -210,7 +214,7 @@ interface, and socket constraints remain runtime decisions.
 | Swift property | iperf3 option | Applies when | Constraints / current behavior |
 | --- | --- | --- | --- |
 | `role` | `--client` / `--server` | Endpoint selection | Defaults to Client |
-| `address` | `--client` / `--bind` | Client / Server | Client destination or server bind address; `nil` or an empty string leaves it unset |
+| `address` | `--client` / `--bind` | Client / Server | Client destination or server bind address; unset by default, matching the engine, so a server binds the wildcard address and accepts IPv4 and IPv6 like `iperf3 -s`, and a client resolves to loopback. An explicit `"0.0.0.0"` narrows a server to IPv4 |
 | `addressFamily` | `-4` / `-6` | Client / Server | Defaults to `.any`; DNS and the resolved socket family remain runtime decisions |
 | `port` | `--port` | Client / Server | Defaults to `5201`; values outside `1...65535` fail with `IEBADPORT` |
 | `bindDevice` | `--bind-dev` | Client / Server | Interface existence, platform support, and permissions are checked at runtime |
@@ -225,7 +229,7 @@ interface, and socket constraints remain runtime decisions.
 | Swift property | iperf3 option | Applies when | Constraints / current behavior |
 | --- | --- | --- | --- |
 | `numStreams` | `--parallel` | Client · TCP / UDP | Defaults to `1`, matching the engine; requires `1...128`, otherwise fails with `IENUMSTREAMS`; an explicit Server assignment fails with `IECLIENTONLY` |
-| `mode` | `--reverse` / `--bidir` | Client · TCP / UDP | Defaults to download; selects upload, download, or simultaneous bidirectional flow |
+| `mode` | `--reverse` / `--bidir` | Client · TCP / UDP | Defaults to upload, matching the engine; selects upload, download (`--reverse`), or simultaneous bidirectional flow |
 | `reverse` | `--reverse` | Client · TCP / UDP | Compatibility accessor for `mode`; a read/write round trip does not cancel bidirectional mode |
 | `prot` | `--tcp` / `--udp` | Client | Defaults to TCP; an explicit Server assignment fails with `IECLIENTONLY` |
 | `rate` | `--bitrate` | Client · TCP / UDP | Unset keeps the CLI defaults: unlimited TCP and 1 Mbit/s UDP |
