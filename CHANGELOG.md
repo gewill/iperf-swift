@@ -9,6 +9,25 @@ package release number.
 
 ## [Unreleased]
 
+**Breaking:** `IperfIntervalResult.reverse` is read-only. Assign
+`IperfIntervalResult.mode` instead.
+
+### Changed
+
+- `IperfIntervalResult` carries its direction in one property ([#143]).
+  `mode` is now the direction of record and `reverse` is derived from it,
+  instead of both being stored where they could disagree — their defaults did,
+  pairing `.download` with a `0` flag, which is a state no run reports. libiperf
+  tracks direction as two flags but rejects `--reverse` together with `--bidir`,
+  so its three reachable states are exactly `IperfTestMode`'s cases, and
+  deriving the flag from the mode reproduces the engine's own value in each. The
+  opposite derivation is the lossy one: an upload and a bidirectional run both
+  report `0`. `reverse`'s documentation said `0` meant upload, which was wrong
+  for the bidirectional case. **Breaking:** `reverse` no longer has a setter;
+  callers building a result — previews, test doubles — set `mode`. An
+  interoperability test now checks all three directions against the CLI's
+  `reverse`/`bidir` pair, bidirectional included.
+
 ### Fixed
 
 - Internal: the UDP block-size test no longer fails when the packet/byte race
@@ -724,5 +743,6 @@ unchanged from 3.21.6.
 [#135]: https://github.com/gewill/iperf-swift/issues/135
 [#137]: https://github.com/gewill/iperf-swift/issues/137
 [#139]: https://github.com/gewill/iperf-swift/issues/139
+[#143]: https://github.com/gewill/iperf-swift/issues/143
 [#145]: https://github.com/gewill/iperf-swift/issues/145
 [#84]: https://github.com/gewill/iperfman/issues/84

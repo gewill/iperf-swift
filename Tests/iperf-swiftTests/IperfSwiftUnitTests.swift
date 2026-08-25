@@ -921,6 +921,24 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertTrue(configuration.dontFragment)
     }
 
+    func testResultReverseFlagDerivesFromMode() {
+        var result = IperfIntervalResult()
+
+        // The default is a state a run can actually be in. It previously paired
+        // .download with a 0 flag, which is upload's pair — no run reports it.
+        XCTAssertEqual(result.mode, .upload)
+        XCTAssertEqual(result.reverse, 0)
+
+        result.mode = .download
+        XCTAssertEqual(result.reverse, 1)
+
+        // The engine reports reverse 0 for a bidirectional run as well; only
+        // its separate bidir flag tells the two apart, and this one cannot.
+        // testEveryDirectionReportsTheCLIsFlagPair checks that against the CLI.
+        result.mode = .bidirectional
+        XCTAssertEqual(result.reverse, 0)
+    }
+
     func testReverseRoundTripKeepsBidirectionalMode() {
         var configuration = IperfConfiguration()
         configuration.mode = .bidirectional

@@ -474,6 +474,8 @@ even when requested, and is cleared at the start of each run.
 This guide walks the full consumer-facing path. A few compatibility or
 internal-value members are intentionally not featured: the misspelled
 `evaulate()` alias (use ``IperfIntervalResult/evaluate()``), the raw
-`IperfIntervalResult.reverse` integer flag (use ``IperfIntervalResult/mode``), the
+`IperfIntervalResult.reverse` integer flag, now read-only and derived from
+``IperfIntervalResult/mode`` — which is the one to read, since a bidirectional
+run reports the same `0` as an upload — the
 enums' `iperfConfigValue` bridging accessors, and ``IperfConfiguration/statsInterval``
 (covered above only as an ignored property).

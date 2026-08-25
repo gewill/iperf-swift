@@ -120,10 +120,19 @@ public struct IperfIntervalResult: Identifiable {
     public var prot: IperfProtocol = .tcp
     /// The client data-flow mode of the run, populated by ``IperfRunner``.
     ///
-    /// Manually created results keep the default, ``IperfTestMode/download``.
-    public var mode: IperfTestMode = .download
-    /// The raw libiperf reverse-mode flag (`0` for upload, `1` for download).
-    public var reverse: Int32 = 0
+    /// This is the direction of record. libiperf tracks the same thing as two
+    /// flags, `reverse` and `bidirectional`, but rejects the combination where
+    /// both are set, so its three reachable states are exactly this enum's
+    /// cases. Manually created results keep the default,
+    /// ``IperfTestMode/upload``, which is the direction an `iperf3` client runs
+    /// without `--reverse` or `--bidir`.
+    public var mode: IperfTestMode = .upload
+    /// The raw libiperf reverse-mode flag, derived from ``mode``.
+    ///
+    /// `1` for a download run and `0` otherwise — an upload and a bidirectional
+    /// run both report `0`, the same value the engine reports for each. Prefer
+    /// ``mode``, which distinguishes those two; this flag cannot.
+    public var reverse: Int32 { mode == .download ? 1 : 0 }
     
     /// Creates an interval result with no stream measurements.
     public init(
