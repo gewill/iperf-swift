@@ -1464,12 +1464,21 @@ final class IperfCLIIntegrationTests: XCTestCase {
         wait(for: [finished], timeout: 8)
         XCTAssertTrue(sawTwoStreams, "expected an interval reporting two parallel UDP streams")
         XCTAssertGreaterThan(runningPackets, 0)
-        // The run sent whole datagrams of blockSize bytes, so once every
-        // delivery is counted the two totals agree exactly — no tolerance, and
-        // the size of the sender-thread race does not matter. Divisibility
-        // alone would not pin the size: 400-byte datagrams also divide 800.
-        XCTAssertEqual(runningBytes, Int(runningPackets) * 800,
-                       "every UDP datagram should carry exactly blockSize bytes")
+        // The run sent whole datagrams of blockSize bytes. Counting every
+        // delivery reconstructs the totals for every interval but the last:
+        // the sender-thread race attributes a datagram to the packet count
+        // before its bytes, and the compensating bytes arrive in the next
+        // delivery, which the final interval does not have (see #145).
+        //
+        // So bound the residue rather than forbidding it. Divisibility alone
+        // would not pin the size — 400-byte datagrams also divide 800 — but
+        // the pair does: with 400-byte datagrams the shortfall would be
+        // packets × 400, orders of magnitude outside this bound.
+        XCTAssertEqual(runningBytes % 800, 0,
+                       "byte total is not a whole number of blockSize datagrams")
+        let shortfall = Int(runningPackets) * 800 - runningBytes
+        XCTAssertTrue((0...800).contains(shortfall),
+                      "byte and packet totals disagree by more than one datagram: \(shortfall)")
     }
 
     func testSwiftClientRetrievesServerOutput() throws {
