@@ -43,6 +43,15 @@ package release number.
 
 ### Fixed
 
+- Internal: the byte-limit test no longer asserts an exact reconstructed byte
+  total ([#151]). Summing reporter deltas is the only way a test can obtain a
+  run total today, and the reconstruction depends on how the engine slices the
+  final intervals, so an exact match against the target failed on CI while the
+  run itself was correct — its wall clock, the signal that actually detects a
+  `DURATION` cutoff, held at 12.957s. The byte check now pins the failure mode
+  instead, requiring more than a `DURATION`-capped run would move at the test's
+  pacing, and both byte-counting tests guard their accumulator with a lock
+  rather than mutating it from the engine thread unsynchronised.
 - Internal: the UDP block-size test no longer fails when the packet/byte race
   lands in the final interval ([#145]). Counting every delivery reconstructs the
   totals for every interval but the last, which has no next delivery to carry
@@ -759,4 +768,5 @@ unchanged from 3.21.6.
 [#143]: https://github.com/gewill/iperf-swift/issues/143
 [#145]: https://github.com/gewill/iperf-swift/issues/145
 [#147]: https://github.com/gewill/iperf-swift/issues/147
+[#151]: https://github.com/gewill/iperf-swift/issues/151
 [#84]: https://github.com/gewill/iperfman/issues/84
