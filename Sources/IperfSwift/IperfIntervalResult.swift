@@ -89,12 +89,16 @@ public struct IperfIntervalResult: Identifiable {
     /// receiving endpoint. Prefer the receiving direction's
     /// ``IperfDirectionalIntervalResult/averageJitter``.
     public var averageJitter: Double = 0.0
-    /// An aggregate round-trip time value.
+    /// An aggregate round-trip time value that is always `0.0`.
     ///
-    /// - Note: Currently unused. The wrapper always leaves this at `0.0`; the
-    ///   property is retained for source compatibility and may be populated in
-    ///   a future release. Read per-stream ``IperfStreamIntervalResult/rtt``
-    ///   for actual RTT measurements.
+    /// Neither `iperf3` nor RFC 6298 defines an RTT aggregated across streams,
+    /// so this is not populated and will not be. The CLI sums bytes, packets
+    /// and retransmits across streams but reports round-trip time per stream
+    /// only, and RFC 6298 gives each connection independent smoothed-RTT state
+    /// with no rule for combining them. Read
+    /// ``IperfStreamIntervalResult/rtt`` instead, which the engine fills in
+    /// microseconds wherever the platform exposes TCP info.
+    @available(*, deprecated, message: "Always 0.0. Read IperfStreamIntervalResult.rtt per stream; neither iperf3 nor RFC 6298 defines a cross-stream RTT aggregate.")
     public var averageRtt: Double = 0.0
     /// Length of the reporting interval in seconds.
     public var duration: TimeInterval = 0.0
@@ -170,7 +174,6 @@ public struct IperfIntervalResult: Identifiable {
         totalLostPackets = aggregate.totalLostPackets
         totalOutoforderPackets = aggregate.totalOutoforderPackets
         averageJitter = aggregate.averageJitter
-        averageRtt = 0.0
         duration = aggregate.duration
         startTime = aggregate.startTime
         endTime = aggregate.endTime

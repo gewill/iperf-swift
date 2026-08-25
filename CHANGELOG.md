@@ -28,6 +28,19 @@ package release number.
   interoperability test now checks all three directions against the CLI's
   `reverse`/`bidir` pair, bidirectional included.
 
+### Deprecated
+
+- `IperfIntervalResult.averageRtt` is deprecated and stays `0.0` ([#147]).
+  Neither `iperf3` nor RFC 6298 defines a round-trip time aggregated across
+  streams: the CLI sums bytes, packets and retransmits into `sum_sent` but
+  reports RTT per stream only, and RFC 6298 gives each connection independent
+  smoothed-RTT state with no rule for combining them. Populating the property
+  would also average estimators rather than measurements — the engine reports
+  SRTT, not a sample — and would have to decide what to do with the `-1` the
+  engine returns where TCP info is unavailable. Read
+  `IperfStreamIntervalResult.rtt` instead, in microseconds. `evaluate()` no
+  longer resets the property, since it never computed it.
+
 ### Fixed
 
 - Internal: the byte-limit test no longer asserts an exact reconstructed byte
@@ -754,5 +767,6 @@ unchanged from 3.21.6.
 [#139]: https://github.com/gewill/iperf-swift/issues/139
 [#143]: https://github.com/gewill/iperf-swift/issues/143
 [#145]: https://github.com/gewill/iperf-swift/issues/145
+[#147]: https://github.com/gewill/iperf-swift/issues/147
 [#151]: https://github.com/gewill/iperf-swift/issues/151
 [#84]: https://github.com/gewill/iperfman/issues/84
