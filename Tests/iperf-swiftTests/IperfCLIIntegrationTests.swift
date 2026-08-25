@@ -2051,6 +2051,140 @@ final class IperfCLIIntegrationTests: XCTestCase {
         )
     }
 
+    func testStreamRunTotalsReportAbsenceWhereTheCLIReportsZeros() throws {
+        // The engine accumulates per-stream run totals in one pass guarded by
+        // TCP, platform TCP info, and this endpoint being the sender. The CLI
+        // prints zeros when that pass never ran — a `-R` client reports
+        // mean_rtt 0 — which reads as a measurement. The wrapper reports the
+        // absence instead, and this pins both halves against the CLI.
+        let tools = try TestTools()
+
+        func cliSenderMeanRTT(flags: [String]) throws -> Int {
+            let port = try TestTools.freePort()
+            let server = Process()
+            let output = Pipe()
+            server.executableURL = URL(fileURLWithPath: tools.iperf3)
+            server.arguments = ["-s", "-p", String(port), "-1"]
+            server.standardOutput = output
+            server.standardError = output
+            try server.run()
+            addTeardownBlock {
+                if server.isRunning {
+                    server.terminate()
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.3)
+
+            let result = try tools.run(
+                tools.iperf3,
+                arguments: ["-c", "127.0.0.1", "-p", String(port), "-t", "1", "-J"] + flags
+            )
+            let json = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data(result.output.utf8)) as? [String: Any],
+                result.output
+            )
+            let end = try XCTUnwrap(json["end"] as? [String: Any])
+            let streams = try XCTUnwrap(end["streams"] as? [[String: Any]])
+            let sender = try XCTUnwrap(streams.first?["sender"] as? [String: Any])
+            return try XCTUnwrap(sender["mean_rtt"] as? Int)
+        }
+
+        // The CLI's own behaviour, which is the reason the wrapper distinguishes
+        // these two cases at all.
+        XCTAssertGreaterThan(
+            try cliSenderMeanRTT(flags: []),
+            0,
+            "the CLI no longer reports a sender RTT for an upload run"
+        )
+        XCTAssertEqual(
+            try cliSenderMeanRTT(flags: ["-R"]),
+            0,
+            "the CLI no longer reports zero for a receiving client"
+        )
+
+        func wrapperTotals(
+            _ mutate: (inout IperfConfiguration) -> Void
+        ) throws -> [IperfStreamRunResult] {
+            let port = try TestTools.freePort()
+            let server = Process()
+            let output = Pipe()
+            server.executableURL = URL(fileURLWithPath: tools.iperf3)
+            server.arguments = ["-s", "-p", String(port), "-1"]
+            server.standardOutput = output
+            server.standardError = output
+            try server.run()
+            addTeardownBlock {
+                if server.isRunning {
+                    server.terminate()
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.3)
+
+            var configuration = IperfConfiguration()
+            configuration.role = .client
+            configuration.address = "127.0.0.1"
+            configuration.port = port
+            configuration.duration = 1
+            mutate(&configuration)
+
+            let finished = expectation(description: "run finished")
+            var didFinish = false
+            let client = IperfRunner(with: configuration)
+            addTeardownBlock {
+                client.stop()
+            }
+            client.start(
+                { _ in },
+                { error in
+                    XCTFail("run failed: \(error.debugDescription)")
+                    if !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                },
+                { state in
+                    if state == .finished && !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                }
+            )
+            wait(for: [finished], timeout: 15)
+            return client.streamTotals ?? []
+        }
+
+        let uploadTotals = try wrapperTotals { $0.mode = .upload }
+        let sending = try XCTUnwrap(uploadTotals.first)
+        XCTAssertEqual(sending.direction, .upload)
+        let totals = try XCTUnwrap(
+            sending.tcpSenderTotals,
+            "a sending TCP stream should carry run totals"
+        )
+        XCTAssertGreaterThan(totals.rttSampleCount, 0)
+        XCTAssertLessThanOrEqual(totals.minRtt, totals.meanRtt)
+        XCTAssertLessThanOrEqual(totals.meanRtt, totals.maxRtt)
+        XCTAssertGreaterThan(totals.maxSendCongestionWindow, 0)
+
+        // Where the CLI prints zeros, the wrapper reports nothing at all.
+        let downloadTotals = try wrapperTotals { $0.mode = .download }
+        let receiving = try XCTUnwrap(downloadTotals.first)
+        XCTAssertEqual(receiving.direction, .download)
+        XCTAssertNil(
+            receiving.tcpSenderTotals,
+            "a receiving stream has no sender totals — the CLI's zeros are not measurements"
+        )
+
+        let udpTotals = try wrapperTotals {
+            $0.mode = .upload
+            $0.prot = .udp
+            $0.rate = 1_000_000
+        }
+        XCTAssertNil(
+            try XCTUnwrap(udpTotals.first).tcpSenderTotals,
+            "UDP carries no TCP sender totals"
+        )
+    }
+
     func testEveryDirectionReportsTheCLIsFlagPair() throws {
         // libiperf tracks direction as two flags and refuses the fourth
         // combination — `-R` with `--bidir` fails as IEREVERSEBIDIR — so its

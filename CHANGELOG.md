@@ -12,6 +12,24 @@ package release number.
 **Breaking:** `IperfIntervalResult.reverse` is read-only. Assign
 `IperfIntervalResult.mode` instead.
 
+### Added
+
+- `IperfRunner.streamTotals` exposes the per-stream run totals the engine keeps
+  in `iperf_stream_result` ([#149]) — the round-trip time range and sample
+  count, the largest send congestion window and send window, retransmits and
+  reordering. These are the figures `iperf3` prints in `end.streams[]`, and
+  nothing in the wrapper reached them before, so a consumer wanting a run
+  summary had to accumulate interval deltas and hope the reconstruction matched.
+  Doing exactly that is the root of four separate test issues ([#135], [#137],
+  [#145], [#151]).
+
+  `IperfStreamRunResult.tcpSenderTotals` is one optional rather than a
+  field-by-field one because the engine fills the whole group in a single pass
+  guarded by three conditions at once: TCP, platform TCP info, and this endpoint
+  being the sender. A receiving client and any UDP stream leave all of it
+  untouched. The CLI prints zeros there — a `-R` client reports `mean_rtt` 0 —
+  which reads as a measurement; this reports the absence instead.
+
 ### Changed
 
 - `IperfIntervalResult` carries its direction in one property ([#143]).
@@ -776,6 +794,7 @@ unchanged from 3.21.6.
 [#143]: https://github.com/gewill/iperf-swift/issues/143
 [#145]: https://github.com/gewill/iperf-swift/issues/145
 [#147]: https://github.com/gewill/iperf-swift/issues/147
+[#149]: https://github.com/gewill/iperf-swift/issues/149
 [#150]: https://github.com/gewill/iperf-swift/issues/150
 [#151]: https://github.com/gewill/iperf-swift/issues/151
 [#84]: https://github.com/gewill/iperfman/issues/84
