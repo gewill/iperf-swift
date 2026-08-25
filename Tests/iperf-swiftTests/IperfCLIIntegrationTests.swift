@@ -1995,7 +1995,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         let finished = expectation(description: "default-direction client finished")
         var didFinish = false
         let lock = NSLock()
-        var observedReverseFlags: Set<Int32> = []
+        var observedModes: Set<IperfTestMode> = []
         let client = IperfRunner(with: configuration)
         addTeardownBlock {
             client.stop()
@@ -2006,9 +2006,12 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     return
                 }
                 lock.lock()
-                // Read back from the engine's own field rather than the Swift
-                // configuration, so this pins what actually ran.
-                observedReverseFlags.insert(result.reverse)
+                // `mode` is assigned straight from the engine's own reverse and
+                // bidirectional flags, so this pins what actually ran rather
+                // than what the Swift configuration asked for. Reading
+                // `result.reverse` would go one derivation further out, since
+                // it is computed from `mode`.
+                observedModes.insert(result.mode)
                 lock.unlock()
             },
             { error in
@@ -2028,15 +2031,150 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
         wait(for: [finished], timeout: 15)
         lock.lock()
-        let reverseFlags = observedReverseFlags
+        let modes = observedModes
         lock.unlock()
 
         XCTAssertEqual(cliReverse, 0, "the CLI's own default is no longer upload")
         XCTAssertEqual(
-            reverseFlags,
-            [Int32(cliReverse)],
+            modes,
+            [.upload],
             "the wrapper's default direction diverges from the CLI's"
         )
+    }
+
+    func testEveryDirectionReportsTheCLIsFlagPair() throws {
+        // libiperf tracks direction as two flags and refuses the fourth
+        // combination — `-R` with `--bidir` fails as IEREVERSEBIDIR — so its
+        // reachable states are exactly IperfTestMode's three cases. This pins
+        // the whole mapping against the CLI, including that the derived
+        // `reverse` flag reproduces the engine's own value. Bidirectional is
+        // the case worth having: the engine reports reverse 0 there, the same
+        // as an upload, and only `bidir` tells them apart.
+        let tools = try TestTools()
+
+        let directions: [(
+            name: String,
+            flags: [String],
+            mode: IperfTestMode,
+            reverse: Int,
+            bidir: Int
+        )] = [
+            ("upload", [], .upload, 0, 0),
+            ("download", ["-R"], .download, 1, 0),
+            ("bidirectional", ["--bidir"], .bidirectional, 0, 1),
+        ]
+
+        for direction in directions {
+            let cliPort = try TestTools.freePort()
+            let cliServer = Process()
+            let cliServerOutput = Pipe()
+            cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+            cliServer.arguments = ["-s", "-p", String(cliPort), "-1"]
+            cliServer.standardOutput = cliServerOutput
+            cliServer.standardError = cliServerOutput
+            try cliServer.run()
+            addTeardownBlock {
+                if cliServer.isRunning {
+                    cliServer.terminate()
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.3)
+
+            let cliResult = try tools.run(
+                tools.iperf3,
+                arguments: ["-c", "127.0.0.1", "-p", String(cliPort), "-t", "1", "-J"]
+                    + direction.flags
+            )
+            let cliJSON = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data(cliResult.output.utf8)) as? [String: Any],
+                "\(direction.name): \(cliResult.output)"
+            )
+            let start = try XCTUnwrap(cliJSON["start"] as? [String: Any], direction.name)
+            let testStart = try XCTUnwrap(start["test_start"] as? [String: Any], direction.name)
+            let cliReverse = try XCTUnwrap(testStart["reverse"] as? Int, direction.name)
+            let cliBidir = try XCTUnwrap(testStart["bidir"] as? Int, direction.name)
+
+            // Fail loudly if a future engine changes the pair this mapping
+            // rests on, rather than silently comparing against the new one.
+            XCTAssertEqual(
+                [cliReverse, cliBidir],
+                [direction.reverse, direction.bidir],
+                "the CLI's flag pair for \(direction.name) is not what this mapping assumes"
+            )
+
+            let port = try TestTools.freePort()
+            let wrapperServer = Process()
+            let wrapperServerOutput = Pipe()
+            wrapperServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+            wrapperServer.arguments = ["-s", "-p", String(port), "-1"]
+            wrapperServer.standardOutput = wrapperServerOutput
+            wrapperServer.standardError = wrapperServerOutput
+            try wrapperServer.run()
+            addTeardownBlock {
+                if wrapperServer.isRunning {
+                    wrapperServer.terminate()
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.3)
+
+            var configuration = IperfConfiguration()
+            configuration.role = .client
+            configuration.address = "127.0.0.1"
+            configuration.port = port
+            configuration.duration = 1
+            configuration.mode = direction.mode
+
+            let finished = expectation(description: "\(direction.name) client finished")
+            var didFinish = false
+            let lock = NSLock()
+            var observedModes: Set<IperfTestMode> = []
+            var observedFlags: Set<Int32> = []
+            let client = IperfRunner(with: configuration)
+            addTeardownBlock {
+                client.stop()
+            }
+            client.start(
+                { result in
+                    guard !result.streams.isEmpty else {
+                        return
+                    }
+                    lock.lock()
+                    observedModes.insert(result.mode)
+                    observedFlags.insert(result.reverse)
+                    lock.unlock()
+                },
+                { error in
+                    XCTFail("\(direction.name) client failed: \(error.debugDescription)")
+                    if !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                },
+                { state in
+                    if state == .finished && !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                }
+            )
+
+            wait(for: [finished], timeout: 15)
+            lock.lock()
+            let modes = observedModes
+            let flags = observedFlags
+            lock.unlock()
+
+            XCTAssertEqual(
+                modes,
+                [direction.mode],
+                "the engine ran a different direction than \(direction.name) configured"
+            )
+            XCTAssertEqual(
+                flags,
+                [Int32(cliReverse)],
+                "the derived reverse flag does not reproduce the CLI's for \(direction.name)"
+            )
+        }
     }
 
     func testSwiftClientDefaultsUDPToOneMegabitTarget() throws {

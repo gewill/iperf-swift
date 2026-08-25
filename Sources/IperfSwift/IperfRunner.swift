@@ -283,7 +283,9 @@ public class IperfRunner {
         var result = IperfIntervalResult(prot: configuration.prot)
         result.debugDescription = "OK"
         result.state = IperfState(rawValue: runningTest.state) ?? .UNKNOWN
-        result.reverse = runningTest.reverse
+        // Both engine flags decide the mode, and `reverse` derives from it.
+        // The engine rejects reverse together with bidirectional, so these
+        // three branches cover every state it can be in.
         if runningTest.bidirectional != 0 {
             result.mode = .bidirectional
         } else if runningTest.reverse != 0 {
