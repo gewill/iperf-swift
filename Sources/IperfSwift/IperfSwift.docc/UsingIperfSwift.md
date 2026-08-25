@@ -369,8 +369,9 @@ Each reporter callback delivers an ``IperfIntervalResult``:
 - ``IperfIntervalResult/totalPackets`` / ``IperfIntervalResult/totalLostPackets`` /
   ``IperfIntervalResult/totalOutoforderPackets`` — UDP packet counters
 - ``IperfIntervalResult/averageJitter`` — mean UDP jitter, in seconds
-- ``IperfIntervalResult/averageRtt`` — **currently always `0.0`** (unused); read the
-  per-stream ``IperfStreamIntervalResult/rtt`` for real RTT
+- ``IperfIntervalResult/averageRtt`` — **deprecated, always `0.0`**. Neither
+  `iperf3` nor RFC 6298 defines an RTT aggregated across streams, so it is not
+  populated; read the per-stream ``IperfStreamIntervalResult/rtt`` instead
 - ``IperfIntervalResult/duration``, ``IperfIntervalResult/startTime``,
   ``IperfIntervalResult/endTime`` — interval timing
 - ``IperfIntervalResult/state`` — the low-level ``IperfState`` that produced it
