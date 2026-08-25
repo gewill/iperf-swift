@@ -9,6 +9,65 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.15] - 2026-08-25
+
+An audit of every `IperfConfiguration` default against the bundled engine,
+continuing the work behind [#131]. Of 38 properties, 30 already matched and 3
+deviated deliberately with the reason recorded; these are the four that differed
+with nothing to explain them. A UDP interoperability test also regains the
+block-size check it lost to a flake fix.
+
+**Behavior change:** a client that never sets `mode` now measures the upload
+direction, a server that never sets `address` now binds the wildcard address,
+and a byte-limited run is no longer cut off after ten seconds.
+
+### Changed
+
+- `IperfConfiguration.mode` now defaults to `.upload` instead of `.download`
+  ([#139]). `iperf_defaults()` never assigns `reverse`, so the engine's own
+  client is a sender and `iperf3 -c host` uploads unless `--reverse` asks
+  otherwise. The wrapper configures the engine directly rather than through the
+  argument parser, so a default it does not restore is a silent divergence.
+  **Behavior change:** a run that never set `mode` now measures the upload
+  direction — set `mode = .download` to keep the previous measurement. Upload
+  and download are different numbers on any asymmetric link, so a caller who set
+  nothing was reading the direction they did not ask for. An interoperability
+  test now compares the wrapper's default direction against the CLI's.
+- `IperfConfiguration.address` is now unset by default instead of `"127.0.0.1"`
+  ([#139]). A server therefore binds the wildcard address and accepts both IPv4
+  and IPv6 exactly as `iperf3 -s` does, instead of listening on loopback alone
+  and being unreachable from any other host. A client with no address still
+  resolves to loopback. **Behavior change:** a server that relied on the default
+  now accepts remote clients — set `address = "127.0.0.1"` to keep the previous
+  binding. An explicit `"0.0.0.0"` is not equivalent to unset: the engine only
+  arranges the dual-stack socket when no bind address is given, so that value
+  yields an IPv4-only listener.
+- `IperfConfiguration.timeSkewThreshold` now records why it defaults to `10`
+  ([#139]). The engine's own default is `0`, which `check_authentication()`
+  reads literally and which therefore rejects any clock difference at all;
+  `iperf_parse_arguments()` substitutes `10` once a server private key has
+  loaded, and the wrapper replicates that substituted value. No behavior change.
+- Internal: the UDP interoperability test now reconstructs run totals by
+  counting every delivery, so the datagram size it claims to verify is checked
+  again ([#135], [#137]). The pairing assertion was dropped as flaky because
+  interval snapshots race the UDP sender threads, which attribute a datagram to
+  the packet count before its bytes; that removed the only thing tying the byte
+  total to a datagram count, and the test passed with the engine sending
+  400-byte datagrams. Counting every delivery — including the closing summary
+  the test had excluded — makes the two agree exactly, with no tolerance to
+  outgrow.
+
+### Fixed
+
+- A byte-limited client run is no longer cut off after ten seconds ([#139]).
+  Setting `numberOfBytes` without a `duration` left the engine's default
+  duration in place, so the transfer stopped at `DURATION` having moved less
+  than the caller asked for, reporting success. The CLI's bytes-only semantics
+  were also unreachable through the public API, because an explicit `duration`
+  alongside `numberOfBytes` is rejected as `IEENDCONDITIONS`. The wrapper now
+  clears the duration the way `iperf_parse_arguments()` does for `--bytes`
+  without `-t`.
+
 ## [3.21.14] - 2026-08-17
 
 A single-change release. A client that never set a stream count measured two
@@ -578,6 +637,7 @@ unchanged from 3.21.6.
 - Embedded engine updated to iperf3 3.14.
 
 [Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.14...HEAD
+[3.21.15]: https://github.com/gewill/iperf-swift/compare/v3.21.14...v3.21.15
 [3.21.14]: https://github.com/gewill/iperf-swift/compare/v3.21.13...v3.21.14
 [3.21.13]: https://github.com/gewill/iperf-swift/compare/v3.21.12...v3.21.13
 [3.21.12]: https://github.com/gewill/iperf-swift/compare/v3.21.11...v3.21.12
@@ -649,4 +709,7 @@ unchanged from 3.21.6.
 [#123]: https://github.com/gewill/iperf-swift/pull/123
 [#125]: https://github.com/gewill/iperf-swift/pull/125
 [#131]: https://github.com/gewill/iperf-swift/issues/131
+[#135]: https://github.com/gewill/iperf-swift/issues/135
+[#137]: https://github.com/gewill/iperf-swift/issues/137
+[#139]: https://github.com/gewill/iperf-swift/issues/139
 [#84]: https://github.com/gewill/iperfman/issues/84

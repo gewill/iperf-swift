@@ -1436,13 +1436,15 @@ final class IperfCLIIntegrationTests: XCTestCase {
         }
         client.start(
             { result in
-                if result.state == .TEST_RUNNING {
-                    if result.streams.count == 2 {
-                        sawTwoStreams = true
-                    }
-                    runningBytes += result.totalBytes
-                    runningPackets += result.totalPackets
+                if result.state == .TEST_RUNNING, result.streams.count == 2 {
+                    sawTwoStreams = true
                 }
+                // Every delivery, not only the running ones. Each carries
+                // interval deltas, so summing all of them reconstructs the run
+                // totals; dropping the closing summary is what made the byte
+                // and packet totals disagree (see #137).
+                runningBytes += result.totalBytes
+                runningPackets += result.totalPackets
             },
             { error in
                 XCTFail("Swift UDP multi-stream client failed: \(error.debugDescription)")
@@ -1462,13 +1464,12 @@ final class IperfCLIIntegrationTests: XCTestCase {
         wait(for: [finished], timeout: 8)
         XCTAssertTrue(sawTwoStreams, "expected an interval reporting two parallel UDP streams")
         XCTAssertGreaterThan(runningPackets, 0)
-        // Interval snapshots can race the sender threads by one datagram per
-        // stream, so allow that much slack instead of exact byte/packet
-        // equality. Divisibility still pins the datagram size to blockSize.
-        XCTAssertEqual(runningBytes % 800, 0,
+        // The run sent whole datagrams of blockSize bytes, so once every
+        // delivery is counted the two totals agree exactly — no tolerance, and
+        // the size of the sender-thread race does not matter. Divisibility
+        // alone would not pin the size: 400-byte datagrams also divide 800.
+        XCTAssertEqual(runningBytes, Int(runningPackets) * 800,
                        "every UDP datagram should carry exactly blockSize bytes")
-        XCTAssertLessThanOrEqual(abs(Int(runningPackets) * 800 - runningBytes), 2 * 800,
-                                 "bytes \(runningBytes) and packets \(runningPackets) disagree")
     }
 
     func testSwiftClientRetrievesServerOutput() throws {
@@ -1933,6 +1934,108 @@ final class IperfCLIIntegrationTests: XCTestCase {
             streamCounts,
             [cliStreamCount],
             "the wrapper's default stream count diverges from the CLI's"
+        )
+    }
+
+    func testDefaultDirectionMatchesTheCLI() throws {
+        // iperf_defaults() never assigns reverse, so the engine's default
+        // client is a sender. The wrapper defaulted to download for years,
+        // which silently measured the opposite direction of `iperf3 -c host`.
+        let tools = try TestTools()
+
+        let cliPort = try TestTools.freePort()
+        let cliServer = Process()
+        let cliServerOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(cliPort), "-1"]
+        cliServer.standardOutput = cliServerOutput
+        cliServer.standardError = cliServerOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        let cliResult = try tools.run(
+            tools.iperf3,
+            arguments: ["-c", "127.0.0.1", "-p", String(cliPort), "-t", "1", "-J"]
+        )
+        let cliJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(cliResult.output.utf8)) as? [String: Any]
+        )
+        let start = try XCTUnwrap(cliJSON["start"] as? [String: Any])
+        let testStart = try XCTUnwrap(start["test_start"] as? [String: Any])
+        let cliReverse = try XCTUnwrap(testStart["reverse"] as? Int)
+
+        let port = try TestTools.freePort()
+        let wrapperServer = Process()
+        let wrapperServerOutput = Pipe()
+        wrapperServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        wrapperServer.arguments = ["-s", "-p", String(port), "-1"]
+        wrapperServer.standardOutput = wrapperServerOutput
+        wrapperServer.standardError = wrapperServerOutput
+        try wrapperServer.run()
+        addTeardownBlock {
+            if wrapperServer.isRunning {
+                wrapperServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // Everything the CLI invocation above also states, and nothing more —
+        // the direction has to come from the default.
+        var configuration = IperfConfiguration()
+        configuration.role = .client
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.duration = 1
+
+        let finished = expectation(description: "default-direction client finished")
+        var didFinish = false
+        let lock = NSLock()
+        var observedReverseFlags: Set<Int32> = []
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { result in
+                guard !result.streams.isEmpty else {
+                    return
+                }
+                lock.lock()
+                // Read back from the engine's own field rather than the Swift
+                // configuration, so this pins what actually ran.
+                observedReverseFlags.insert(result.reverse)
+                lock.unlock()
+            },
+            { error in
+                XCTFail("default-direction client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 15)
+        lock.lock()
+        let reverseFlags = observedReverseFlags
+        lock.unlock()
+
+        XCTAssertEqual(cliReverse, 0, "the CLI's own default is no longer upload")
+        XCTAssertEqual(
+            reverseFlags,
+            [Int32(cliReverse)],
+            "the wrapper's default direction diverges from the CLI's"
         )
     }
 
@@ -2921,8 +3024,9 @@ final class IperfCLIIntegrationTests: XCTestCase {
         configuration.port = port
         configuration.mode = .upload
         configuration.numStreams = 1
-        // A byte-limited run has no duration; iperf3 accepts only one end
-        // condition, so leave duration unset.
+        // iperf3 accepts one end condition, so leave duration unset. The
+        // wrapper then clears the engine's default duration the way the CLI
+        // does, and the byte count alone ends the run.
         configuration.numberOfBytes = byteCap
         configuration.reporterInterval = 0.25
 
@@ -2959,6 +3063,87 @@ final class IperfCLIIntegrationTests: XCTestCase {
         // the requested amount and not run open-endedly toward a time limit.
         XCTAssertGreaterThanOrEqual(totalBytes, Int(byteCap),
                                     "a --bytes run should transmit at least the requested byte count")
+    }
+
+    func testByteLimitOutlivesTheDefaultDuration() throws {
+        // The CLI clears the duration when --bytes is given without -t
+        // (iperf_parse_arguments), so a byte-limited run has no time limit.
+        // The wrapper bypasses that parser, and while it did not clear the
+        // duration itself the engine kept DURATION and cut every byte-limited
+        // run off at 10 seconds.
+        //
+        // Catching that requires a transfer that must take longer than
+        // DURATION, so this test paces itself past the threshold rather than
+        // racing over loopback. Verified against the CLI first:
+        // `iperf3 -c 127.0.0.1 -n 8M -b 4M` runs ~17s and transfers all 8 MB.
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let cliServer = Process()
+        let serverOutput = Pipe()
+        cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+        cliServer.arguments = ["-s", "-p", String(port), "-1"]
+        cliServer.standardOutput = serverOutput
+        cliServer.standardError = serverOutput
+        try cliServer.run()
+        addTeardownBlock {
+            if cliServer.isRunning {
+                cliServer.terminate()
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // 6 MB at 4 Mbit/s is roughly 12 seconds — past DURATION's 10, and
+        // short enough to keep the suite moving.
+        let byteCap: UInt64 = 6_000_000
+        var configuration = IperfConfiguration()
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.mode = .upload
+        configuration.numStreams = 1
+        configuration.numberOfBytes = byteCap
+        configuration.rate = 4_000_000
+        configuration.reporterInterval = 1
+
+        let finished = expectation(description: "paced byte-limited client finished")
+        var didFinish = false
+        var totalBytes = 0
+        let started = Date()
+        let client = IperfRunner(with: configuration)
+        addTeardownBlock {
+            client.stop()
+        }
+        client.start(
+            { result in
+                if result.state == .TEST_RUNNING {
+                    totalBytes += result.totalBytes
+                }
+            },
+            { error in
+                XCTFail("paced byte-limited client failed: \(error.debugDescription)")
+                if !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            },
+            { state in
+                if state == .finished && !didFinish {
+                    didFinish = true
+                    finished.fulfill()
+                }
+            }
+        )
+
+        wait(for: [finished], timeout: 40)
+        let elapsed = Date().timeIntervalSince(started)
+
+        XCTAssertGreaterThanOrEqual(
+            totalBytes, Int(byteCap),
+            "the byte target was cut short — the engine's default duration is still ending the run"
+        )
+        XCTAssertGreaterThan(
+            elapsed, 11,
+            "the run ended near DURATION, so the byte count was not the only end condition"
+        )
     }
 
     func testSwiftClientWithConnectTimeoutFailsUnreachableHost() throws {

@@ -40,7 +40,7 @@ var configuration = IperfConfiguration()
 configuration.role = .client
 configuration.address = "192.0.2.1"
 configuration.port = 5201
-configuration.mode = .upload            // the wrapper's default is .download
+configuration.mode = .upload            // the default; .download is --reverse
 configuration.duration = 10
 configuration.reporterInterval = 1
 configuration.logfile = FileManager.default.temporaryDirectory
@@ -81,7 +81,10 @@ configuration.verbose = true
 configuration.rcvTimeout = 30
 ```
 
-- ``IperfConfiguration/address`` — client destination, or server bind address
+- ``IperfConfiguration/address`` — client destination, or server bind address.
+  Unset by default: a server then binds the wildcard address and accepts IPv4
+  and IPv6 like `iperf3 -s`, and a client resolves to loopback. An explicit
+  `"0.0.0.0"` narrows a server to IPv4.
 - ``IperfConfiguration/port`` — `--port`, defaults to `5201`
 - ``IperfConfiguration/addressFamily`` — `-4` / `-6`, see ``IperfAddressFamily``
 - ``IperfConfiguration/bindDevice`` — `--bind-dev` interface binding
@@ -172,9 +175,9 @@ configuration.numberOfBytes = 50_000_000 // byte end condition (no duration set)
 ### Server
 
 ```swift
+// address stays unset, so the server takes the wildcard bind (IPv4 and IPv6)
 var configuration = IperfConfiguration()
 configuration.role = .server
-configuration.address = "0.0.0.0"       // bind address
 configuration.port = 5201
 configuration.oneOff = true
 configuration.idleTimeout = 60
@@ -226,7 +229,6 @@ configuration.usePkcs1Padding = false        // keep OAEP (the 3.17+ default)
 ```swift
 var configuration = IperfConfiguration()
 configuration.role = .server
-configuration.address = "0.0.0.0"
 configuration.isAuth = true
 configuration.privateKey = base64PEMPrivateKey // Base64-encoded unencrypted PEM
 let aliceHash = "34fdc09b3521751e48538d092b39c7c5c66bb9004cc69cc875e98643476ade37"

@@ -91,8 +91,17 @@ public struct IperfConfiguration {
 
     private var explicitlySet: Set<Field> = []
 
-    /// The remote server hostname/address for a client, or local bind address for a server.
-    public var address: String? = "127.0.0.1"
+    /// The remote server hostname/address for a client, or local bind address
+    /// for a server.
+    ///
+    /// Unset by default, which is what `iperf_defaults()` leaves in place. A
+    /// server then binds the wildcard address and accepts both IPv4 and IPv6,
+    /// exactly like `iperf3 -s`; passing an explicit `"0.0.0.0"` instead would
+    /// narrow it to IPv4, because the engine only arranges the dual-stack
+    /// socket when no bind address is given. A client with no address resolves
+    /// to loopback. The CLI has no equivalent of an unset client host, since
+    /// `--client` requires one.
+    public var address: String?
     /// The interface used for socket binding, equivalent to `--bind-dev`.
     ///
     /// For example, use `lo0` for the loopback interface on macOS. Binding may
@@ -108,7 +117,12 @@ public struct IperfConfiguration {
     /// Whether the local endpoint runs as a client or server.
     public var role = IperfRole.client
     /// The data-flow mode for a client run.
-    public var mode = IperfTestMode.download {
+    ///
+    /// Defaults to ``IperfTestMode/upload``, matching the engine: `iperf3`
+    /// leaves `reverse` unset, so a client sends unless `--reverse` or
+    /// `--bidir` asks otherwise. Selecting ``IperfTestMode/download`` is the
+    /// equivalent of `--reverse`.
+    public var mode = IperfTestMode.upload {
         didSet { explicitlySet.insert(.mode) }
     }
     /// Compatibility access to the unidirectional client mode.
@@ -309,6 +323,12 @@ public struct IperfConfiguration {
     /// authentication and a path never matches a user.
     public var authorizedUsers: String = ""
     /// The positive client/server clock-difference limit in seconds during server authentication.
+    ///
+    /// Defaults to `10` to match the CLI rather than the C API. The engine's
+    /// own default is `0`, which `check_authentication()` reads literally and
+    /// which therefore rejects any clock difference at all;
+    /// `iperf_parse_arguments()` substitutes `10` once a server private key has
+    /// loaded, and this replicates that substituted value.
     public var timeSkewThreshold: Int32 = 10 {
         didSet { explicitlySet.insert(.timeSkewThreshold) }
     }
