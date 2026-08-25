@@ -801,7 +801,9 @@ final class IperfSwiftUnitTests: XCTestCase {
 
             runner.start({ _ in }, { _ in failed.fulfill() }, { _ in })
 
-            wait(for: [failed], timeout: 2)
+            // The connection is refused on loopback, so this bound exists only
+            // to fail the test rather than hang it.
+            wait(for: [failed], timeout: 5)
         }
     }
 
@@ -1556,10 +1558,62 @@ final class IperfSwiftUnitTests: XCTestCase {
         }
     }
 
+    /// A client configuration whose run fails immediately without touching the
+    /// resolver or the network.
+    ///
+    /// Loopback with a port nothing is listening on refuses the connection at
+    /// once. An unresolvable name puts the resolver's latency inside the
+    /// caller's timeout instead, which cost CI a spurious failure where the
+    /// same run took 0.012s locally and over two seconds on a stalled runner.
+    /// A documentation-range literal is no better: measured here it failed with
+    /// `IECTRLCLOSE` after three to four seconds, because what happens to those
+    /// packets depends on the local network rather than on this process.
     private func unreachableClientConfiguration() -> IperfConfiguration {
         var configuration = IperfConfiguration()
-        configuration.address = "invalid.invalid"
+        configuration.address = "127.0.0.1"
+        configuration.port = Self.closedLoopbackPort()
         return configuration
+    }
+
+    /// A loopback TCP port that was free a moment ago.
+    ///
+    /// Binding to port 0 lets the kernel pick one and report it back; closing
+    /// the socket releases it, so a connection attempt is refused rather than
+    /// accepted. Falls back to a high port if the socket calls fail, which
+    /// still refuses connections on any normal machine.
+    private static func closedLoopbackPort() -> Int {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            return 49_151
+        }
+        defer { close(descriptor) }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr = in_addr(s_addr: in_addr_t(INADDR_LOOPBACK).bigEndian)
+
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bound == 0 else {
+            return 49_151
+        }
+
+        var assigned = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let named = withUnsafeMutablePointer(to: &assigned) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(descriptor, $0, &length)
+            }
+        }
+        guard named == 0 else {
+            return 49_151
+        }
+        return Int(UInt16(bigEndian: assigned.sin_port))
     }
 
     private func assertRunnerFails(
