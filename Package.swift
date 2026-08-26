@@ -17,8 +17,8 @@ let package = Package(
     ],
     dependencies: [
         .package(
-            url: "https://github.com/Lakr233/openssl-spm.git",
-            from: "4.0.1"
+            url: "https://github.com/gewill/openssl-spm.git",
+            branch: "test/minos-fixed-artifact"
         ),
         .package(
             url: "https://github.com/swiftlang/swift-docc-plugin",
