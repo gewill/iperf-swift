@@ -16,7 +16,15 @@ public enum IperfRunnerState {
     case ready
     /// The runner is validating the configuration or waiting for the shared engine.
     case initialising
-    /// The engine is executing the test and delivering interval results.
+    /// The configuration was accepted and the run has been handed to the engine.
+    ///
+    /// This does not mean a server is accepting connections or that a client
+    /// has connected. Both happen after this state is reported — the engine has
+    /// not been called yet when it arrives — and either failing shows up later
+    /// as ``IperfRunnerState/error``. A caller that must know a server is
+    /// reachable should probe the port rather than read this as that signal.
+    ///
+    /// Interval results begin arriving once the engine is measuring.
     case running
     /// The run failed; the error callback carries the ``IperfError``.
     case error

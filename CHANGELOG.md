@@ -61,6 +61,14 @@ package release number.
 
 ### Fixed
 
+- `IperfRunnerState.running` documents what it marks ([#160]). It said the
+  engine was executing the test, but the runner reports it before calling the
+  engine at all: a server binding and listening, and a client resolving and
+  connecting, all happen afterwards, and either failing arrives later as
+  `.error`. Measured while adding the test in #158 — at `.running` a wildcard
+  bind on the server's port can still succeed. The state is unchanged; a caller
+  that must know a server is reachable should probe the port rather than read
+  this as that signal.
 - Internal: the wildcard server default now has a lifecycle test ([#158]). A
   server that never sets `address` binds the wildcard address — the point of the
   3.21.15 change — and every one of the twenty-two server configurations in the
@@ -823,5 +831,6 @@ unchanged from 3.21.6.
 [#150]: https://github.com/gewill/iperf-swift/issues/150
 [#151]: https://github.com/gewill/iperf-swift/issues/151
 [#158]: https://github.com/gewill/iperf-swift/issues/158
+[#160]: https://github.com/gewill/iperf-swift/issues/160
 [#155]: https://github.com/gewill/iperf-swift/issues/155
 [#84]: https://github.com/gewill/iperfman/issues/84
