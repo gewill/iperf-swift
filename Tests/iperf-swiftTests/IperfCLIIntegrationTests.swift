@@ -245,7 +245,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     cliServer.terminate()
                 }
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            TestTools.settleServer(cliServer, port: port)
 
             var configuration = IperfConfiguration()
             configuration.address = "127.0.0.1"
@@ -377,7 +377,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         for iteration in 0..<5 {
             // The single-connection CLI server needs a moment to return to its
@@ -385,7 +385,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
             // stop() spam; without this settle the next connect can race the
             // server's reset and fail with IECONNECT under CI load.
             if iteration > 0 {
-                Thread.sleep(forTimeInterval: 0.3)
+                TestTools.settleServer(cliServer, port: port)
             }
 
             var configuration = IperfConfiguration()
@@ -447,7 +447,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: cliPort)
 
         let cliResult = try tools.run(
             tools.iperf3,
@@ -486,7 +486,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 wrapperServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(wrapperServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -649,7 +649,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         cliServer.standardOutput = cliServerOutput
         cliServer.standardError = cliServerOutput
         try cliServer.run()
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: cliServerPort)
         addTeardownBlock {
             if cliServer.isRunning {
                 cliServer.terminate()
@@ -867,7 +867,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.address = "127.0.0.1"
@@ -1137,7 +1137,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -1222,7 +1222,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -1296,7 +1296,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -1368,7 +1368,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -1411,7 +1411,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -1496,7 +1496,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -1564,7 +1564,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     cliServer.terminate()
                 }
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            TestTools.settleServer(cliServer, port: port)
 
             var configuration = IperfConfiguration()
             configuration.role = .client
@@ -1629,7 +1629,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -1863,7 +1863,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: cliPort)
 
         let cliResult = try tools.run(
             tools.iperf3,
@@ -1889,7 +1889,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 wrapperServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(wrapperServer, port: port)
 
         // Everything the CLI invocation above also states, and nothing more —
         // the stream count has to come from the default.
@@ -1946,6 +1946,51 @@ final class IperfCLIIntegrationTests: XCTestCase {
         )
     }
 
+    func testSettleServerReportsAServerThatLostItsPort() throws {
+        // The point of settleServer is that it fails where the problem is. If
+        // it ever stops checking, the tests it guards go back to proceeding
+        // without a server and failing later as something else, so the check
+        // itself needs a test.
+        // The collision is server against server: an iperf3 server binds the
+        // wildcard address, so it starts happily over a socket bound to
+        // 127.0.0.1 specifically — occupying the port that way proves nothing.
+        // A second wildcard server is what fails, with "Address already in
+        // use", and that is the shape freePort() can hand two tests.
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+
+        let holder = Process()
+        let holderOutput = Pipe()
+        holder.executableURL = URL(fileURLWithPath: tools.iperf3)
+        holder.arguments = ["-s", "-p", String(port)]
+        holder.standardOutput = holderOutput
+        holder.standardError = holderOutput
+        try holder.run()
+        addTeardownBlock {
+            if holder.isRunning {
+                holder.terminate()
+            }
+        }
+        TestTools.settleServer(holder, port: port)
+
+        let loser = Process()
+        let loserOutput = Pipe()
+        loser.executableURL = URL(fileURLWithPath: tools.iperf3)
+        loser.arguments = ["-s", "-p", String(port), "-1"]
+        loser.standardOutput = loserOutput
+        loser.standardError = loserOutput
+        try loser.run()
+        addTeardownBlock {
+            if loser.isRunning {
+                loser.terminate()
+            }
+        }
+
+        XCTExpectFailure("a server that cannot bind its port must be reported here") {
+            TestTools.settleServer(loser, port: port)
+        }
+    }
+
     func testDefaultDirectionMatchesTheCLI() throws {
         // iperf_defaults() never assigns reverse, so the engine's default
         // client is a sender. The wrapper defaulted to download for years,
@@ -1965,7 +2010,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: cliPort)
 
         let cliResult = try tools.run(
             tools.iperf3,
@@ -1991,7 +2036,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 wrapperServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(wrapperServer, port: port)
 
         // Everything the CLI invocation above also states, and nothing more —
         // the direction has to come from the default.
@@ -2073,7 +2118,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     server.terminate()
                 }
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            TestTools.settleServer(server, port: port)
 
             let result = try tools.run(
                 tools.iperf3,
@@ -2118,7 +2163,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     server.terminate()
                 }
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            TestTools.settleServer(server, port: port)
 
             var configuration = IperfConfiguration()
             configuration.role = .client
@@ -2221,7 +2266,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     cliServer.terminate()
                 }
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            TestTools.settleServer(cliServer, port: cliPort)
 
             let cliResult = try tools.run(
                 tools.iperf3,
@@ -2258,7 +2303,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     wrapperServer.terminate()
                 }
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            TestTools.settleServer(wrapperServer, port: port)
 
             var configuration = IperfConfiguration()
             configuration.role = .client
@@ -2338,7 +2383,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -2406,7 +2451,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -2474,7 +2519,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: cliPort)
 
         let cliResult = try tools.run(
             tools.iperf3,
@@ -2507,7 +2552,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 wrapperServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(wrapperServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.address = "127.0.0.1"
@@ -2645,7 +2690,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     cliServer.terminate()
                 }
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            TestTools.settleServer(cliServer, port: port)
 
             var configuration = IperfConfiguration()
             configuration.role = .client
@@ -2711,7 +2756,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         // Forcing IPv4 for an IPv6-only literal must fail to resolve, exactly
         // like `iperf3 -c ::1 -4`.
@@ -3008,7 +3053,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 server.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(server, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -3064,7 +3109,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 server.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(server, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -3115,7 +3160,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         // A long run that stop() must cut short well before it would end on
         // its own.
@@ -3182,7 +3227,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     cliServer.terminate()
                 }
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            TestTools.settleServer(cliServer, port: port)
 
             var configuration = IperfConfiguration()
             configuration.address = "127.0.0.1"
@@ -3236,7 +3281,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.address = "127.0.0.1"
@@ -3297,7 +3342,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         let byteCap: UInt64 = 5_000_000
         var configuration = IperfConfiguration()
@@ -3378,7 +3423,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         // 6 MB at 4 Mbit/s is roughly 12 seconds — past DURATION's 10, and
         // short enough to keep the suite moving.
@@ -3506,7 +3551,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -3574,7 +3619,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         let logfileURL = tools.directory.appendingPathComponent("client-\(port).log")
 
@@ -3689,7 +3734,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -3843,7 +3888,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     cliServer.terminate()
                 }
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            TestTools.settleServer(cliServer, port: port)
 
             var configuration = IperfConfiguration()
             configuration.address = "127.0.0.1"
@@ -4058,6 +4103,41 @@ private final class TestTools {
 
         let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         return ProcessResult(status: process.terminationStatus, output: output)
+    }
+
+    /// Settles after starting a server and fails if it did not survive.
+    ///
+    /// ``freePort()`` releases the port before the caller binds it, so a server
+    /// can lose the race and exit immediately. Waiting a fixed interval and
+    /// carrying on hides that: the test proceeds without a server and fails
+    /// later as whatever the client makes of an absent peer, which names the
+    /// wrong thing — a lost server has surfaced as a client-side "Unable to
+    /// start stream listener". Checking the process here reports it where it
+    /// happened.
+    ///
+    /// This confirms the server is alive rather than accepting connections,
+    /// which is deliberate. Probing with a connection would consume the single
+    /// client a `-1` server is willing to serve, and probing with a `bind`
+    /// could take the port from a server that has not claimed it yet. Both
+    /// would break what they measure.
+    static func settleServer(
+        _ process: Process,
+        port: Int,
+        for interval: TimeInterval = 0.3,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        Thread.sleep(forTimeInterval: interval)
+        guard process.isRunning else {
+            XCTFail(
+                "the iperf3 server on port \(port) exited during startup "
+                    + "(status \(process.terminationStatus)) — most likely the port "
+                    + "was taken between freePort() releasing it and the server binding it",
+                file: file,
+                line: line
+            )
+            return
+        }
     }
 
     static func freePort() throws -> Int {
