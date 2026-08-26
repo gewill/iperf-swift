@@ -801,7 +801,9 @@ final class IperfSwiftUnitTests: XCTestCase {
 
             runner.start({ _ in }, { _ in failed.fulfill() }, { _ in })
 
-            wait(for: [failed], timeout: 2)
+            // The connection is refused on loopback, so this bound exists only
+            // to fail the test rather than hang it.
+            wait(for: [failed], timeout: 5)
         }
     }
 
@@ -919,6 +921,63 @@ final class IperfSwiftUnitTests: XCTestCase {
 
         XCTAssertEqual(configuration.addressFamily, .ipv6)
         XCTAssertTrue(configuration.dontFragment)
+    }
+
+    func testStreamRunTotalsUseTheCLIsMeanAndSampleGuard() {
+        var streamResult = iperf_stream_result()
+        streamResult.stream_min_rtt = 100
+        streamResult.stream_max_rtt = 400
+        streamResult.stream_sum_rtt = 1_000
+        streamResult.stream_count_rtt = 4
+        streamResult.stream_max_snd_cwnd = 65_536
+        streamResult.stream_max_snd_wnd = 131_072
+        streamResult.stream_retrans = 7
+        streamResult.stream_reorder = 2
+
+        var stream = iperf_stream()
+        withUnsafeMutablePointer(to: &streamResult) { resultPointer in
+            stream.result = resultPointer
+            let totals = IperfRunner.tcpSenderTotals(of: &stream)
+
+            // Integer division over the engine's running sum, matching the
+            // expression the CLI prints as mean_rtt.
+            XCTAssertEqual(totals?.meanRtt, 250)
+            XCTAssertEqual(totals?.minRtt, 100)
+            XCTAssertEqual(totals?.maxRtt, 400)
+            XCTAssertEqual(totals?.rttSampleCount, 4)
+            XCTAssertEqual(totals?.maxSendCongestionWindow, 65_536)
+            XCTAssertEqual(totals?.maxSendWindow, 131_072)
+            XCTAssertEqual(totals?.retransmits, 7)
+            XCTAssertEqual(totals?.reorder, 2)
+
+            // No samples means the engine's guarded pass never ran for this
+            // stream, so none of the zeros beside it are measurements.
+            resultPointer.pointee.stream_count_rtt = 0
+            XCTAssertNil(IperfRunner.tcpSenderTotals(of: &stream))
+        }
+
+        // A stream the engine never attached a result to reports nothing.
+        var resultless = iperf_stream()
+        resultless.result = nil
+        XCTAssertNil(IperfRunner.tcpSenderTotals(of: &resultless))
+    }
+
+    func testResultReverseFlagDerivesFromMode() {
+        var result = IperfIntervalResult()
+
+        // The default is a state a run can actually be in. It previously paired
+        // .download with a 0 flag, which is upload's pair — no run reports it.
+        XCTAssertEqual(result.mode, .upload)
+        XCTAssertEqual(result.reverse, 0)
+
+        result.mode = .download
+        XCTAssertEqual(result.reverse, 1)
+
+        // The engine reports reverse 0 for a bidirectional run as well; only
+        // its separate bidir flag tells the two apart, and this one cannot.
+        // testEveryDirectionReportsTheCLIsFlagPair checks that against the CLI.
+        result.mode = .bidirectional
+        XCTAssertEqual(result.reverse, 0)
     }
 
     func testReverseRoundTripKeepsBidirectionalMode() {
@@ -1538,10 +1597,62 @@ final class IperfSwiftUnitTests: XCTestCase {
         }
     }
 
+    /// A client configuration whose run fails immediately without touching the
+    /// resolver or the network.
+    ///
+    /// Loopback with a port nothing is listening on refuses the connection at
+    /// once. An unresolvable name puts the resolver's latency inside the
+    /// caller's timeout instead, which cost CI a spurious failure where the
+    /// same run took 0.012s locally and over two seconds on a stalled runner.
+    /// A documentation-range literal is no better: measured here it failed with
+    /// `IECTRLCLOSE` after three to four seconds, because what happens to those
+    /// packets depends on the local network rather than on this process.
     private func unreachableClientConfiguration() -> IperfConfiguration {
         var configuration = IperfConfiguration()
-        configuration.address = "invalid.invalid"
+        configuration.address = "127.0.0.1"
+        configuration.port = Self.closedLoopbackPort()
         return configuration
+    }
+
+    /// A loopback TCP port that was free a moment ago.
+    ///
+    /// Binding to port 0 lets the kernel pick one and report it back; closing
+    /// the socket releases it, so a connection attempt is refused rather than
+    /// accepted. Falls back to a high port if the socket calls fail, which
+    /// still refuses connections on any normal machine.
+    private static func closedLoopbackPort() -> Int {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            return 49_151
+        }
+        defer { close(descriptor) }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr = in_addr(s_addr: in_addr_t(INADDR_LOOPBACK).bigEndian)
+
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bound == 0 else {
+            return 49_151
+        }
+
+        var assigned = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let named = withUnsafeMutablePointer(to: &assigned) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(descriptor, $0, &length)
+            }
+        }
+        guard named == 0 else {
+            return 49_151
+        }
+        return Int(UInt16(bigEndian: assigned.sin_port))
     }
 
     private func assertRunnerFails(

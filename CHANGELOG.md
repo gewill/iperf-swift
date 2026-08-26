@@ -9,6 +9,132 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.16] - 2026-08-26
+
+A results and test-reliability release. The engine's per-stream run totals
+become readable, one result property stops being able to contradict itself,
+another stops pretending to be a measurement, and the figure a state was
+documented to guarantee is corrected to what it actually marks. Five test
+changes remove reconstructions and fixed sleeps that had produced flakes rather
+than findings.
+
+**Breaking:** `IperfIntervalResult.reverse` is read-only. Assign
+`IperfIntervalResult.mode` instead.
+
+### Added
+
+- `IperfRunner.streamTotals` exposes the per-stream run totals the engine keeps
+  in `iperf_stream_result` ([#149]) — the round-trip time range and sample
+  count, the largest send congestion window and send window, retransmits and
+  reordering. These are the figures `iperf3` prints in `end.streams[]`, and
+  nothing in the wrapper reached them before, so a consumer wanting a run
+  summary had to accumulate interval deltas and hope the reconstruction matched.
+  Doing exactly that is the root of four separate test issues ([#135], [#137],
+  [#145], [#151]).
+
+  `IperfStreamRunResult.tcpSenderTotals` is one optional rather than a
+  field-by-field one because the engine fills the whole group in a single pass
+  guarded by three conditions at once: TCP, platform TCP info, and this endpoint
+  being the sender. A receiving client and any UDP stream leave all of it
+  untouched. The CLI prints zeros there — a `-R` client reports `mean_rtt` 0 —
+  which reads as a measurement; this reports the absence instead.
+
+### Changed
+
+- `IperfIntervalResult` carries its direction in one property ([#143]).
+  `mode` is now the direction of record and `reverse` is derived from it,
+  instead of both being stored where they could disagree — their defaults did,
+  pairing `.download` with a `0` flag, which is a state no run reports. libiperf
+  tracks direction as two flags but rejects `--reverse` together with `--bidir`,
+  so its three reachable states are exactly `IperfTestMode`'s cases, and
+  deriving the flag from the mode reproduces the engine's own value in each. The
+  opposite derivation is the lossy one: an upload and a bidirectional run both
+  report `0`. `reverse`'s documentation said `0` meant upload, which was wrong
+  for the bidirectional case. **Breaking:** `reverse` no longer has a setter;
+  callers building a result — previews, test doubles — set `mode`. An
+  interoperability test now checks all three directions against the CLI's
+  `reverse`/`bidir` pair, bidirectional included.
+
+### Deprecated
+
+- `IperfIntervalResult.averageRtt` is deprecated and stays `0.0` ([#147]).
+  Neither `iperf3` nor RFC 6298 defines a round-trip time aggregated across
+  streams: the CLI sums bytes, packets and retransmits into `sum_sent` but
+  reports RTT per stream only, and RFC 6298 gives each connection independent
+  smoothed-RTT state with no rule for combining them. Populating the property
+  would also average estimators rather than measurements — the engine reports
+  SRTT, not a sample — and would have to decide what to do with the `-1` the
+  engine returns where TCP info is unavailable. Read
+  `IperfStreamIntervalResult.rtt` instead, in microseconds. `evaluate()` no
+  longer resets the property, since it never computed it.
+
+### Fixed
+
+- `IperfRunnerState.running` documents what it marks ([#160]). It said the
+  engine was executing the test, but the runner reports it before calling the
+  engine at all: a server binding and listening, and a client resolving and
+  connecting, all happen afterwards, and either failing arrives later as
+  `.error`. Measured while adding the test in #158 — at `.running` a wildcard
+  bind on the server's port can still succeed. The state is unchanged; a caller
+  that must know a server is reachable should probe the port rather than read
+  this as that signal.
+- Internal: the testing rule in `AGENTS.md` now requires confirming a server
+  started, and `CLAUDE.md` records the Claude Code defaults that conflict with
+  this repository ([#157]). The rule already said to use a random port and clean
+  it up in teardown, which forty call sites followed without ever checking the
+  server came up — the gap [#155] was.
+- Internal: the wildcard server default now has a lifecycle test ([#158]). A
+  server that never sets `address` binds the wildcard address — the point of the
+  3.21.15 change — and every one of the twenty-two server configurations in the
+  suite set the address explicitly, so the default a consumer gets was never
+  run. The test asserts the port is held before asserting `stop()` releases it,
+  since a release check that cannot fail proves nothing. It probes IPv6, the
+  family the engine binds: an IPv4 wildcard bind sometimes succeeds alongside a
+  running server, because the engine sets `SO_REUSEADDR` and the two families
+  coexist on one port. It also waits for the listener rather than trusting
+  `.running`, which the runner reports before the listener is confirmed.
+- Internal: a CLI server that fails to start is now reported where it happens
+  ([#155]). `freePort()` releases its port before the caller binds it, so a
+  server can lose the race and exit; forty call sites then waited a fixed
+  interval and carried on without one, and the run failed later as whatever the
+  client made of an absent peer — a lost server surfaced once as a client-side
+  "Unable to start stream listener", which sent the investigation to the wrong
+  place. They now check the process survived startup instead.
+
+  The check is a liveness check rather than a connection probe on purpose:
+  connecting would consume the single client a `-1` server will serve, and a
+  `bind` probe cannot tell listening from not, since an `iperf3` server binds
+  the wildcard address and a specific-address bind succeeds either way. The
+  collision that matters is server against server — two tests handed the same
+  port, the second failing with "Address already in use" — and a test
+  reproduces exactly that to prove the check fires.
+- Internal: the non-finite duration test no longer depends on DNS ([#150]). It
+  reached the network through an unresolvable name, so the resolver's latency
+  sat inside its two-second bound — the same run took 0.012s locally and over
+  two seconds on a stalled CI runner. It now connects to a loopback port that
+  was just released, which is refused immediately: ten local runs finish in
+  0.001s. A documentation-range literal was measured first and rejected, failing
+  with `IECTRLCLOSE` after three to four seconds because what happens to those
+  packets depends on the local network.
+- Internal: the byte-limit test no longer asserts an exact reconstructed byte
+  total ([#151]). Summing reporter deltas is the only way a test can obtain a
+  run total today, and the reconstruction depends on how the engine slices the
+  final intervals, so an exact match against the target failed on CI while the
+  run itself was correct — its wall clock, the signal that actually detects a
+  `DURATION` cutoff, held at 12.957s. The byte check now pins the failure mode
+  instead, requiring more than a `DURATION`-capped run would move at the test's
+  pacing, and both byte-counting tests guard their accumulator with a lock
+  rather than mutating it from the engine thread unsynchronised.
+- Internal: the UDP block-size test no longer fails when the packet/byte race
+  lands in the final interval ([#145]). Counting every delivery reconstructs the
+  totals for every interval but the last, which has no next delivery to carry
+  the compensating bytes, so a datagram straddling the final snapshot left the
+  totals one datagram apart against an assertion with no tolerance. The check
+  now requires the byte total to be a whole number of datagrams and bounds the
+  packet-versus-byte shortfall at one datagram. That pair still pins the
+  datagram size — divisibility alone does not, but a wrong size puts the
+  shortfall orders of magnitude outside the bound.
+
 ## [3.21.15] - 2026-08-25
 
 An audit of every `IperfConfiguration` default against the bundled engine,
@@ -637,6 +763,7 @@ unchanged from 3.21.6.
 - Embedded engine updated to iperf3 3.14.
 
 [Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.14...HEAD
+[3.21.16]: https://github.com/gewill/iperf-swift/compare/v3.21.15...v3.21.16
 [3.21.15]: https://github.com/gewill/iperf-swift/compare/v3.21.14...v3.21.15
 [3.21.14]: https://github.com/gewill/iperf-swift/compare/v3.21.13...v3.21.14
 [3.21.13]: https://github.com/gewill/iperf-swift/compare/v3.21.12...v3.21.13
@@ -712,4 +839,14 @@ unchanged from 3.21.6.
 [#135]: https://github.com/gewill/iperf-swift/issues/135
 [#137]: https://github.com/gewill/iperf-swift/issues/137
 [#139]: https://github.com/gewill/iperf-swift/issues/139
+[#143]: https://github.com/gewill/iperf-swift/issues/143
+[#145]: https://github.com/gewill/iperf-swift/issues/145
+[#147]: https://github.com/gewill/iperf-swift/issues/147
+[#149]: https://github.com/gewill/iperf-swift/issues/149
+[#150]: https://github.com/gewill/iperf-swift/issues/150
+[#151]: https://github.com/gewill/iperf-swift/issues/151
+[#157]: https://github.com/gewill/iperf-swift/pull/157
+[#158]: https://github.com/gewill/iperf-swift/issues/158
+[#160]: https://github.com/gewill/iperf-swift/issues/160
+[#155]: https://github.com/gewill/iperf-swift/issues/155
 [#84]: https://github.com/gewill/iperfman/issues/84

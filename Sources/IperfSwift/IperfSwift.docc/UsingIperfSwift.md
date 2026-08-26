@@ -357,6 +357,13 @@ stored. Keep this callback fast for the same reason as the reporter callback.
 ``IperfRunnerState/finished`` follows the run's last reporter callback, so the
 interval results of a completed run are all delivered by the time it arrives.
 
+``IperfRunnerState/running`` marks the point where the configuration has been
+accepted and the run handed to the engine — not the point where a server is
+listening or a client has connected. Those happen after it, and either failing
+arrives later as ``IperfRunnerState/error``. A caller that has to know a server
+is reachable — starting a client against it, for instance — should probe the
+port rather than treat this state as that signal.
+
 ## Reading interval results
 
 Each reporter callback delivers an ``IperfIntervalResult``:
@@ -369,8 +376,9 @@ Each reporter callback delivers an ``IperfIntervalResult``:
 - ``IperfIntervalResult/totalPackets`` / ``IperfIntervalResult/totalLostPackets`` /
   ``IperfIntervalResult/totalOutoforderPackets`` — UDP packet counters
 - ``IperfIntervalResult/averageJitter`` — mean UDP jitter, in seconds
-- ``IperfIntervalResult/averageRtt`` — **currently always `0.0`** (unused); read the
-  per-stream ``IperfStreamIntervalResult/rtt`` for real RTT
+- ``IperfIntervalResult/averageRtt`` — **deprecated, always `0.0`**. Neither
+  `iperf3` nor RFC 6298 defines an RTT aggregated across streams, so it is not
+  populated; read the per-stream ``IperfStreamIntervalResult/rtt`` instead
 - ``IperfIntervalResult/duration``, ``IperfIntervalResult/startTime``,
   ``IperfIntervalResult/endTime`` — interval timing
 - ``IperfIntervalResult/state`` — the low-level ``IperfState`` that produced it
@@ -460,6 +468,31 @@ The bundled iperf3 3.21 engine error codes are mapped to their corresponding
 ``IperfError`` cases. ``IperfError/UNKNOWN`` is reserved for an engine code
 that is not declared by the bundled version.
 
+## Per-stream run totals
+
+Interval results describe one reporting interval. For the figures `iperf3`
+prints in its `end.streams[]` summary — the round-trip time range, the largest
+windows, retransmits and reordering — read ``IperfRunner/streamTotals`` once the
+run has finished:
+
+```swift
+for stream in runner.streamTotals ?? [] {
+    guard let totals = stream.tcpSenderTotals else { continue }
+    print("\(stream.direction): mean RTT \(totals.meanRtt) µs over \(totals.rttSampleCount) samples")
+}
+```
+
+``IperfStreamRunResult/tcpSenderTotals`` is `nil` unless the engine actually
+sampled TCP info for that stream, which it does only while *sending* over TCP on
+a platform that exposes it. A client running ``IperfTestMode/download`` receives,
+so it has none; neither does any UDP stream. The CLI prints zeros in those
+cases, which read as measurements — hence the optional.
+
+The values in ``IperfTCPSenderTotals`` are the kernel's smoothed round-trip
+estimate rather than raw latency samples; see the type's documentation. The
+property refreshes on every reporter callback, so it holds whatever accumulated
+when a run ends early, and is cleared at the start of each run.
+
 ## Server output
 
 When ``IperfConfiguration/getServerOutput`` is `true`, the server's textual result
@@ -474,6 +507,8 @@ even when requested, and is cleared at the start of each run.
 This guide walks the full consumer-facing path. A few compatibility or
 internal-value members are intentionally not featured: the misspelled
 `evaulate()` alias (use ``IperfIntervalResult/evaluate()``), the raw
-`IperfIntervalResult.reverse` integer flag (use ``IperfIntervalResult/mode``), the
+`IperfIntervalResult.reverse` integer flag, now read-only and derived from
+``IperfIntervalResult/mode`` — which is the one to read, since a bidirectional
+run reports the same `0` as an upload — the
 enums' `iperfConfigValue` bridging accessors, and ``IperfConfiguration/statsInterval``
 (covered above only as an ignored property).

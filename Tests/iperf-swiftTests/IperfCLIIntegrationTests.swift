@@ -245,7 +245,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     cliServer.terminate()
                 }
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            TestTools.settleServer(cliServer, port: port)
 
             var configuration = IperfConfiguration()
             configuration.address = "127.0.0.1"
@@ -377,7 +377,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         for iteration in 0..<5 {
             // The single-connection CLI server needs a moment to return to its
@@ -385,7 +385,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
             // stop() spam; without this settle the next connect can race the
             // server's reset and fail with IECONNECT under CI load.
             if iteration > 0 {
-                Thread.sleep(forTimeInterval: 0.3)
+                TestTools.settleServer(cliServer, port: port)
             }
 
             var configuration = IperfConfiguration()
@@ -447,7 +447,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: cliPort)
 
         let cliResult = try tools.run(
             tools.iperf3,
@@ -486,7 +486,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 wrapperServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(wrapperServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -649,7 +649,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         cliServer.standardOutput = cliServerOutput
         cliServer.standardError = cliServerOutput
         try cliServer.run()
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: cliServerPort)
         addTeardownBlock {
             if cliServer.isRunning {
                 cliServer.terminate()
@@ -867,7 +867,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.address = "127.0.0.1"
@@ -1137,7 +1137,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -1222,7 +1222,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -1296,7 +1296,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -1368,7 +1368,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -1411,7 +1411,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -1464,12 +1464,21 @@ final class IperfCLIIntegrationTests: XCTestCase {
         wait(for: [finished], timeout: 8)
         XCTAssertTrue(sawTwoStreams, "expected an interval reporting two parallel UDP streams")
         XCTAssertGreaterThan(runningPackets, 0)
-        // The run sent whole datagrams of blockSize bytes, so once every
-        // delivery is counted the two totals agree exactly — no tolerance, and
-        // the size of the sender-thread race does not matter. Divisibility
-        // alone would not pin the size: 400-byte datagrams also divide 800.
-        XCTAssertEqual(runningBytes, Int(runningPackets) * 800,
-                       "every UDP datagram should carry exactly blockSize bytes")
+        // The run sent whole datagrams of blockSize bytes. Counting every
+        // delivery reconstructs the totals for every interval but the last:
+        // the sender-thread race attributes a datagram to the packet count
+        // before its bytes, and the compensating bytes arrive in the next
+        // delivery, which the final interval does not have (see #145).
+        //
+        // So bound the residue rather than forbidding it. Divisibility alone
+        // would not pin the size — 400-byte datagrams also divide 800 — but
+        // the pair does: with 400-byte datagrams the shortfall would be
+        // packets × 400, orders of magnitude outside this bound.
+        XCTAssertEqual(runningBytes % 800, 0,
+                       "byte total is not a whole number of blockSize datagrams")
+        let shortfall = Int(runningPackets) * 800 - runningBytes
+        XCTAssertTrue((0...800).contains(shortfall),
+                      "byte and packet totals disagree by more than one datagram: \(shortfall)")
     }
 
     func testSwiftClientRetrievesServerOutput() throws {
@@ -1487,7 +1496,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -1555,7 +1564,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     cliServer.terminate()
                 }
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            TestTools.settleServer(cliServer, port: port)
 
             var configuration = IperfConfiguration()
             configuration.role = .client
@@ -1620,7 +1629,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -1854,7 +1863,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: cliPort)
 
         let cliResult = try tools.run(
             tools.iperf3,
@@ -1880,7 +1889,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 wrapperServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(wrapperServer, port: port)
 
         // Everything the CLI invocation above also states, and nothing more —
         // the stream count has to come from the default.
@@ -1937,6 +1946,51 @@ final class IperfCLIIntegrationTests: XCTestCase {
         )
     }
 
+    func testSettleServerReportsAServerThatLostItsPort() throws {
+        // The point of settleServer is that it fails where the problem is. If
+        // it ever stops checking, the tests it guards go back to proceeding
+        // without a server and failing later as something else, so the check
+        // itself needs a test.
+        // The collision is server against server: an iperf3 server binds the
+        // wildcard address, so it starts happily over a socket bound to
+        // 127.0.0.1 specifically — occupying the port that way proves nothing.
+        // A second wildcard server is what fails, with "Address already in
+        // use", and that is the shape freePort() can hand two tests.
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+
+        let holder = Process()
+        let holderOutput = Pipe()
+        holder.executableURL = URL(fileURLWithPath: tools.iperf3)
+        holder.arguments = ["-s", "-p", String(port)]
+        holder.standardOutput = holderOutput
+        holder.standardError = holderOutput
+        try holder.run()
+        addTeardownBlock {
+            if holder.isRunning {
+                holder.terminate()
+            }
+        }
+        TestTools.settleServer(holder, port: port)
+
+        let loser = Process()
+        let loserOutput = Pipe()
+        loser.executableURL = URL(fileURLWithPath: tools.iperf3)
+        loser.arguments = ["-s", "-p", String(port), "-1"]
+        loser.standardOutput = loserOutput
+        loser.standardError = loserOutput
+        try loser.run()
+        addTeardownBlock {
+            if loser.isRunning {
+                loser.terminate()
+            }
+        }
+
+        XCTExpectFailure("a server that cannot bind its port must be reported here") {
+            TestTools.settleServer(loser, port: port)
+        }
+    }
+
     func testDefaultDirectionMatchesTheCLI() throws {
         // iperf_defaults() never assigns reverse, so the engine's default
         // client is a sender. The wrapper defaulted to download for years,
@@ -1956,7 +2010,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: cliPort)
 
         let cliResult = try tools.run(
             tools.iperf3,
@@ -1982,7 +2036,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 wrapperServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(wrapperServer, port: port)
 
         // Everything the CLI invocation above also states, and nothing more —
         // the direction has to come from the default.
@@ -1995,7 +2049,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         let finished = expectation(description: "default-direction client finished")
         var didFinish = false
         let lock = NSLock()
-        var observedReverseFlags: Set<Int32> = []
+        var observedModes: Set<IperfTestMode> = []
         let client = IperfRunner(with: configuration)
         addTeardownBlock {
             client.stop()
@@ -2006,9 +2060,12 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     return
                 }
                 lock.lock()
-                // Read back from the engine's own field rather than the Swift
-                // configuration, so this pins what actually ran.
-                observedReverseFlags.insert(result.reverse)
+                // `mode` is assigned straight from the engine's own reverse and
+                // bidirectional flags, so this pins what actually ran rather
+                // than what the Swift configuration asked for. Reading
+                // `result.reverse` would go one derivation further out, since
+                // it is computed from `mode`.
+                observedModes.insert(result.mode)
                 lock.unlock()
             },
             { error in
@@ -2028,15 +2085,284 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
         wait(for: [finished], timeout: 15)
         lock.lock()
-        let reverseFlags = observedReverseFlags
+        let modes = observedModes
         lock.unlock()
 
         XCTAssertEqual(cliReverse, 0, "the CLI's own default is no longer upload")
         XCTAssertEqual(
-            reverseFlags,
-            [Int32(cliReverse)],
+            modes,
+            [.upload],
             "the wrapper's default direction diverges from the CLI's"
         )
+    }
+
+    func testStreamRunTotalsReportAbsenceWhereTheCLIReportsZeros() throws {
+        // The engine accumulates per-stream run totals in one pass guarded by
+        // TCP, platform TCP info, and this endpoint being the sender. The CLI
+        // prints zeros when that pass never ran — a `-R` client reports
+        // mean_rtt 0 — which reads as a measurement. The wrapper reports the
+        // absence instead, and this pins both halves against the CLI.
+        let tools = try TestTools()
+
+        func cliSenderMeanRTT(flags: [String]) throws -> Int {
+            let port = try TestTools.freePort()
+            let server = Process()
+            let output = Pipe()
+            server.executableURL = URL(fileURLWithPath: tools.iperf3)
+            server.arguments = ["-s", "-p", String(port), "-1"]
+            server.standardOutput = output
+            server.standardError = output
+            try server.run()
+            addTeardownBlock {
+                if server.isRunning {
+                    server.terminate()
+                }
+            }
+            TestTools.settleServer(server, port: port)
+
+            let result = try tools.run(
+                tools.iperf3,
+                arguments: ["-c", "127.0.0.1", "-p", String(port), "-t", "1", "-J"] + flags
+            )
+            let json = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data(result.output.utf8)) as? [String: Any],
+                result.output
+            )
+            let end = try XCTUnwrap(json["end"] as? [String: Any])
+            let streams = try XCTUnwrap(end["streams"] as? [[String: Any]])
+            let sender = try XCTUnwrap(streams.first?["sender"] as? [String: Any])
+            return try XCTUnwrap(sender["mean_rtt"] as? Int)
+        }
+
+        // The CLI's own behaviour, which is the reason the wrapper distinguishes
+        // these two cases at all.
+        XCTAssertGreaterThan(
+            try cliSenderMeanRTT(flags: []),
+            0,
+            "the CLI no longer reports a sender RTT for an upload run"
+        )
+        XCTAssertEqual(
+            try cliSenderMeanRTT(flags: ["-R"]),
+            0,
+            "the CLI no longer reports zero for a receiving client"
+        )
+
+        func wrapperTotals(
+            _ mutate: (inout IperfConfiguration) -> Void
+        ) throws -> [IperfStreamRunResult] {
+            let port = try TestTools.freePort()
+            let server = Process()
+            let output = Pipe()
+            server.executableURL = URL(fileURLWithPath: tools.iperf3)
+            server.arguments = ["-s", "-p", String(port), "-1"]
+            server.standardOutput = output
+            server.standardError = output
+            try server.run()
+            addTeardownBlock {
+                if server.isRunning {
+                    server.terminate()
+                }
+            }
+            TestTools.settleServer(server, port: port)
+
+            var configuration = IperfConfiguration()
+            configuration.role = .client
+            configuration.address = "127.0.0.1"
+            configuration.port = port
+            configuration.duration = 1
+            mutate(&configuration)
+
+            let finished = expectation(description: "run finished")
+            var didFinish = false
+            let client = IperfRunner(with: configuration)
+            addTeardownBlock {
+                client.stop()
+            }
+            client.start(
+                { _ in },
+                { error in
+                    XCTFail("run failed: \(error.debugDescription)")
+                    if !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                },
+                { state in
+                    if state == .finished && !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                }
+            )
+            wait(for: [finished], timeout: 15)
+            return client.streamTotals ?? []
+        }
+
+        let uploadTotals = try wrapperTotals { $0.mode = .upload }
+        let sending = try XCTUnwrap(uploadTotals.first)
+        XCTAssertEqual(sending.direction, .upload)
+        let totals = try XCTUnwrap(
+            sending.tcpSenderTotals,
+            "a sending TCP stream should carry run totals"
+        )
+        XCTAssertGreaterThan(totals.rttSampleCount, 0)
+        XCTAssertLessThanOrEqual(totals.minRtt, totals.meanRtt)
+        XCTAssertLessThanOrEqual(totals.meanRtt, totals.maxRtt)
+        XCTAssertGreaterThan(totals.maxSendCongestionWindow, 0)
+
+        // Where the CLI prints zeros, the wrapper reports nothing at all.
+        let downloadTotals = try wrapperTotals { $0.mode = .download }
+        let receiving = try XCTUnwrap(downloadTotals.first)
+        XCTAssertEqual(receiving.direction, .download)
+        XCTAssertNil(
+            receiving.tcpSenderTotals,
+            "a receiving stream has no sender totals — the CLI's zeros are not measurements"
+        )
+
+        let udpTotals = try wrapperTotals {
+            $0.mode = .upload
+            $0.prot = .udp
+            $0.rate = 1_000_000
+        }
+        XCTAssertNil(
+            try XCTUnwrap(udpTotals.first).tcpSenderTotals,
+            "UDP carries no TCP sender totals"
+        )
+    }
+
+    func testEveryDirectionReportsTheCLIsFlagPair() throws {
+        // libiperf tracks direction as two flags and refuses the fourth
+        // combination — `-R` with `--bidir` fails as IEREVERSEBIDIR — so its
+        // reachable states are exactly IperfTestMode's three cases. This pins
+        // the whole mapping against the CLI, including that the derived
+        // `reverse` flag reproduces the engine's own value. Bidirectional is
+        // the case worth having: the engine reports reverse 0 there, the same
+        // as an upload, and only `bidir` tells them apart.
+        let tools = try TestTools()
+
+        let directions: [(
+            name: String,
+            flags: [String],
+            mode: IperfTestMode,
+            reverse: Int,
+            bidir: Int
+        )] = [
+            ("upload", [], .upload, 0, 0),
+            ("download", ["-R"], .download, 1, 0),
+            ("bidirectional", ["--bidir"], .bidirectional, 0, 1),
+        ]
+
+        for direction in directions {
+            let cliPort = try TestTools.freePort()
+            let cliServer = Process()
+            let cliServerOutput = Pipe()
+            cliServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+            cliServer.arguments = ["-s", "-p", String(cliPort), "-1"]
+            cliServer.standardOutput = cliServerOutput
+            cliServer.standardError = cliServerOutput
+            try cliServer.run()
+            addTeardownBlock {
+                if cliServer.isRunning {
+                    cliServer.terminate()
+                }
+            }
+            TestTools.settleServer(cliServer, port: cliPort)
+
+            let cliResult = try tools.run(
+                tools.iperf3,
+                arguments: ["-c", "127.0.0.1", "-p", String(cliPort), "-t", "1", "-J"]
+                    + direction.flags
+            )
+            let cliJSON = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data(cliResult.output.utf8)) as? [String: Any],
+                "\(direction.name): \(cliResult.output)"
+            )
+            let start = try XCTUnwrap(cliJSON["start"] as? [String: Any], direction.name)
+            let testStart = try XCTUnwrap(start["test_start"] as? [String: Any], direction.name)
+            let cliReverse = try XCTUnwrap(testStart["reverse"] as? Int, direction.name)
+            let cliBidir = try XCTUnwrap(testStart["bidir"] as? Int, direction.name)
+
+            // Fail loudly if a future engine changes the pair this mapping
+            // rests on, rather than silently comparing against the new one.
+            XCTAssertEqual(
+                [cliReverse, cliBidir],
+                [direction.reverse, direction.bidir],
+                "the CLI's flag pair for \(direction.name) is not what this mapping assumes"
+            )
+
+            let port = try TestTools.freePort()
+            let wrapperServer = Process()
+            let wrapperServerOutput = Pipe()
+            wrapperServer.executableURL = URL(fileURLWithPath: tools.iperf3)
+            wrapperServer.arguments = ["-s", "-p", String(port), "-1"]
+            wrapperServer.standardOutput = wrapperServerOutput
+            wrapperServer.standardError = wrapperServerOutput
+            try wrapperServer.run()
+            addTeardownBlock {
+                if wrapperServer.isRunning {
+                    wrapperServer.terminate()
+                }
+            }
+            TestTools.settleServer(wrapperServer, port: port)
+
+            var configuration = IperfConfiguration()
+            configuration.role = .client
+            configuration.address = "127.0.0.1"
+            configuration.port = port
+            configuration.duration = 1
+            configuration.mode = direction.mode
+
+            let finished = expectation(description: "\(direction.name) client finished")
+            var didFinish = false
+            let lock = NSLock()
+            var observedModes: Set<IperfTestMode> = []
+            var observedFlags: Set<Int32> = []
+            let client = IperfRunner(with: configuration)
+            addTeardownBlock {
+                client.stop()
+            }
+            client.start(
+                { result in
+                    guard !result.streams.isEmpty else {
+                        return
+                    }
+                    lock.lock()
+                    observedModes.insert(result.mode)
+                    observedFlags.insert(result.reverse)
+                    lock.unlock()
+                },
+                { error in
+                    XCTFail("\(direction.name) client failed: \(error.debugDescription)")
+                    if !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                },
+                { state in
+                    if state == .finished && !didFinish {
+                        didFinish = true
+                        finished.fulfill()
+                    }
+                }
+            )
+
+            wait(for: [finished], timeout: 15)
+            lock.lock()
+            let modes = observedModes
+            let flags = observedFlags
+            lock.unlock()
+
+            XCTAssertEqual(
+                modes,
+                [direction.mode],
+                "the engine ran a different direction than \(direction.name) configured"
+            )
+            XCTAssertEqual(
+                flags,
+                [Int32(cliReverse)],
+                "the derived reverse flag does not reproduce the CLI's for \(direction.name)"
+            )
+        }
     }
 
     func testSwiftClientDefaultsUDPToOneMegabitTarget() throws {
@@ -2057,7 +2383,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -2125,7 +2451,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -2193,7 +2519,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: cliPort)
 
         let cliResult = try tools.run(
             tools.iperf3,
@@ -2226,7 +2552,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 wrapperServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(wrapperServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.address = "127.0.0.1"
@@ -2364,7 +2690,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     cliServer.terminate()
                 }
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            TestTools.settleServer(cliServer, port: port)
 
             var configuration = IperfConfiguration()
             configuration.role = .client
@@ -2430,7 +2756,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         // Forcing IPv4 for an IPv6-only literal must fail to resolve, exactly
         // like `iperf3 -c ::1 -4`.
@@ -2727,7 +3053,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 server.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(server, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -2783,7 +3109,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 server.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(server, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -2834,7 +3160,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         // A long run that stop() must cut short well before it would end on
         // its own.
@@ -2901,7 +3227,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     cliServer.terminate()
                 }
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            TestTools.settleServer(cliServer, port: port)
 
             var configuration = IperfConfiguration()
             configuration.address = "127.0.0.1"
@@ -2955,7 +3281,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.address = "127.0.0.1"
@@ -3016,7 +3342,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         let byteCap: UInt64 = 5_000_000
         var configuration = IperfConfiguration()
@@ -3033,15 +3359,19 @@ final class IperfCLIIntegrationTests: XCTestCase {
         let finished = expectation(description: "byte-limited client finished")
         var didFinish = false
         var totalBytes = 0
+        let lock = NSLock()
         let client = IperfRunner(with: configuration)
         addTeardownBlock {
             client.stop()
         }
         client.start(
             { result in
-                if result.state == .TEST_RUNNING {
-                    totalBytes += result.totalBytes
+                guard result.state == .TEST_RUNNING else {
+                    return
                 }
+                lock.lock()
+                totalBytes += result.totalBytes
+                lock.unlock()
             },
             { error in
                 XCTFail("byte-limited client failed: \(error.debugDescription)")
@@ -3059,9 +3389,12 @@ final class IperfCLIIntegrationTests: XCTestCase {
         )
 
         wait(for: [finished], timeout: 10)
+        lock.lock()
+        let transferred = totalBytes
+        lock.unlock()
         // The transfer terminates on the byte count, so it must move at least
         // the requested amount and not run open-endedly toward a time limit.
-        XCTAssertGreaterThanOrEqual(totalBytes, Int(byteCap),
+        XCTAssertGreaterThanOrEqual(transferred, Int(byteCap),
                                     "a --bytes run should transmit at least the requested byte count")
     }
 
@@ -3090,7 +3423,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         // 6 MB at 4 Mbit/s is roughly 12 seconds — past DURATION's 10, and
         // short enough to keep the suite moving.
@@ -3107,6 +3440,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         let finished = expectation(description: "paced byte-limited client finished")
         var didFinish = false
         var totalBytes = 0
+        let lock = NSLock()
         let started = Date()
         let client = IperfRunner(with: configuration)
         addTeardownBlock {
@@ -3114,9 +3448,12 @@ final class IperfCLIIntegrationTests: XCTestCase {
         }
         client.start(
             { result in
-                if result.state == .TEST_RUNNING {
-                    totalBytes += result.totalBytes
+                guard result.state == .TEST_RUNNING else {
+                    return
                 }
+                lock.lock()
+                totalBytes += result.totalBytes
+                lock.unlock()
             },
             { error in
                 XCTFail("paced byte-limited client failed: \(error.debugDescription)")
@@ -3135,14 +3472,25 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
         wait(for: [finished], timeout: 40)
         let elapsed = Date().timeIntervalSince(started)
+        lock.lock()
+        let transferred = totalBytes
+        lock.unlock()
 
-        XCTAssertGreaterThanOrEqual(
-            totalBytes, Int(byteCap),
-            "the byte target was cut short — the engine's default duration is still ending the run"
-        )
+        // The wall clock is the signal: a run ended by DURATION stops at ten
+        // seconds, and reverting the fix produced exactly that (10.006s).
         XCTAssertGreaterThan(
             elapsed, 11,
             "the run ended near DURATION, so the byte count was not the only end condition"
+        )
+        // Corroboration, deliberately not an exact match against byteCap.
+        // Summing reporter deltas is the only way to obtain a run total today
+        // (see #149) and the reconstruction depends on how the engine slices
+        // the final intervals, so pin it to the failure mode instead: at this
+        // test's 4 Mbit/s pacing a DURATION-capped run moves about 5,000,000
+        // bytes in its ten seconds. The pre-fix run reported 4,587,520.
+        XCTAssertGreaterThan(
+            transferred, 5_000_000,
+            "transferred no more than a DURATION-capped run would have"
         )
     }
 
@@ -3203,7 +3551,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -3271,7 +3619,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         let logfileURL = tools.directory.appendingPathComponent("client-\(port).log")
 
@@ -3386,7 +3734,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 cliServer.terminate()
             }
         }
-        Thread.sleep(forTimeInterval: 0.3)
+        TestTools.settleServer(cliServer, port: port)
 
         var configuration = IperfConfiguration()
         configuration.role = .client
@@ -3540,7 +3888,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     cliServer.terminate()
                 }
             }
-            Thread.sleep(forTimeInterval: 0.3)
+            TestTools.settleServer(cliServer, port: port)
 
             var configuration = IperfConfiguration()
             configuration.address = "127.0.0.1"
@@ -3755,6 +4103,41 @@ private final class TestTools {
 
         let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         return ProcessResult(status: process.terminationStatus, output: output)
+    }
+
+    /// Settles after starting a server and fails if it did not survive.
+    ///
+    /// ``freePort()`` releases the port before the caller binds it, so a server
+    /// can lose the race and exit immediately. Waiting a fixed interval and
+    /// carrying on hides that: the test proceeds without a server and fails
+    /// later as whatever the client makes of an absent peer, which names the
+    /// wrong thing — a lost server has surfaced as a client-side "Unable to
+    /// start stream listener". Checking the process here reports it where it
+    /// happened.
+    ///
+    /// This confirms the server is alive rather than accepting connections,
+    /// which is deliberate. Probing with a connection would consume the single
+    /// client a `-1` server is willing to serve, and probing with a `bind`
+    /// could take the port from a server that has not claimed it yet. Both
+    /// would break what they measure.
+    static func settleServer(
+        _ process: Process,
+        port: Int,
+        for interval: TimeInterval = 0.3,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        Thread.sleep(forTimeInterval: interval)
+        guard process.isRunning else {
+            XCTFail(
+                "the iperf3 server on port \(port) exited during startup "
+                    + "(status \(process.terminationStatus)) — most likely the port "
+                    + "was taken between freePort() releasing it and the server binding it",
+                file: file,
+                line: line
+            )
+            return
+        }
     }
 
     static func freePort() throws -> Int {
