@@ -146,6 +146,7 @@ public class IperfRunner {
 
     private var storedServerOutput: String?
     private var storedJSONOutput: String?
+    private var storedStreamTotals: [IperfStreamRunResult]?
 
     // The stream measurements behind the most recent delivered interval
     // result, used to recognize a re-read of the engine's unchanged entry.
@@ -173,7 +174,22 @@ public class IperfRunner {
     public var jsonOutput: String? {
         withState { storedJSONOutput }
     }
-    
+
+    /// Per-stream totals for the run, as `iperf3` reports them in
+    /// `end.streams[]`.
+    ///
+    /// Refreshed from the engine on every reporter callback, so it holds the
+    /// run's final figures once the runner reports
+    /// ``IperfRunnerState/finished`` and keeps whatever had accumulated when a
+    /// run ends early. `nil` before the first interval arrives, and cleared
+    /// when another run starts.
+    ///
+    /// These are run totals, not interval values: read
+    /// ``IperfIntervalResult/streams`` for what a single interval measured.
+    public var streamTotals: [IperfStreamRunResult]? {
+        withState { storedStreamTotals }
+    }
+
     // MARK: Initializers
 
     /// Creates a runner with the configuration used by ``start(_:_:_:)``.
@@ -311,24 +327,40 @@ public class IperfRunner {
         guard var stream: UnsafeMutablePointer<iperf_stream> = runningTest.streams.slh_first else {
             return
         }
+        var runTotals: [IperfStreamRunResult] = []
         while true {
+            let localEndpointIsSender = stream.pointee.sender != 0
+            let direction: IperfDirection = configuration.role == .client
+                ? (localEndpointIsSender ? .upload : .download)
+                : (localEndpointIsSender ? .download : .upload)
+
             let intervalResultsP: UnsafeMutablePointer<iperf_interval_results>? = extract_iperf_interval_results(OpaquePointer(stream))
             if let intervalResults = intervalResultsP?.pointee {
                 if intervalResults.omitted == 0 {
                     var streamResult = IperfStreamIntervalResult(intervalResults)
-                    let localEndpointIsSender = stream.pointee.sender != 0
-                    streamResult.direction = configuration.role == .client
-                        ? (localEndpointIsSender ? .upload : .download)
-                        : (localEndpointIsSender ? .download : .upload)
+                    streamResult.direction = direction
                     result.streams.append(streamResult)
                 }
             }
+
+            // Run totals live on the stream's result rather than on any
+            // interval, and the engine keeps them current, so re-reading them
+            // each time leaves the newest figures behind when the run ends —
+            // including when it ends early.
+            runTotals.append(
+                IperfStreamRunResult(
+                    direction: direction,
+                    tcpSenderTotals: Self.tcpSenderTotals(of: stream)
+                )
+            )
+
             if stream.pointee.streams.sle_next == nil {
                 break
             }
             stream = stream.pointee.streams.sle_next
         }
-        
+        storedStreamTotals = runTotals
+
         // Calculate sum/average over streams
         result.evaluate()
 
@@ -409,6 +441,38 @@ public class IperfRunner {
             return body()
         }
         return stateQueue.sync(execute: body)
+    }
+
+    /// Reads one stream's run totals, or `nil` when the engine never sampled
+    /// TCP info for it.
+    ///
+    /// `iperf_api.c` accumulates every one of these in a single pass guarded by
+    /// three conditions at once: the protocol is TCP, the platform exposes TCP
+    /// info, and this endpoint is the one sending. A receiving endpoint and any
+    /// UDP stream therefore leave the whole group untouched, and the sample
+    /// count is what distinguishes that from a run whose figures are genuinely
+    /// zero. The CLI prints zeros either way.
+    static func tcpSenderTotals(
+        of stream: UnsafeMutablePointer<iperf_stream>
+    ) -> IperfTCPSenderTotals? {
+        guard let streamResult = stream.pointee.result else {
+            return nil
+        }
+        let sampleCount = Int(streamResult.pointee.stream_count_rtt)
+        guard sampleCount > 0 else {
+            return nil
+        }
+        return IperfTCPSenderTotals(
+            minRtt: Int(streamResult.pointee.stream_min_rtt),
+            // Integer division over the engine's running sum, as the CLI does.
+            meanRtt: Int(streamResult.pointee.stream_sum_rtt) / sampleCount,
+            maxRtt: Int(streamResult.pointee.stream_max_rtt),
+            rttSampleCount: sampleCount,
+            maxSendCongestionWindow: Int(streamResult.pointee.stream_max_snd_cwnd),
+            maxSendWindow: Int(streamResult.pointee.stream_max_snd_wnd),
+            retransmits: Int(streamResult.pointee.stream_retrans),
+            reorder: Int(streamResult.pointee.stream_reorder)
+        )
     }
 
     static func durationSeconds(_ duration: TimeInterval?) -> Int32? {
@@ -1103,6 +1167,7 @@ public class IperfRunner {
         storedServerOutput = nil
         previousDeliveredStreams = nil
         storedJSONOutput = nil
+        storedStreamTotals = nil
         state = .initialising
 
         if let error = configurationError() {

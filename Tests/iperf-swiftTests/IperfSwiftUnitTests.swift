@@ -923,6 +923,45 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertTrue(configuration.dontFragment)
     }
 
+    func testStreamRunTotalsUseTheCLIsMeanAndSampleGuard() {
+        var streamResult = iperf_stream_result()
+        streamResult.stream_min_rtt = 100
+        streamResult.stream_max_rtt = 400
+        streamResult.stream_sum_rtt = 1_000
+        streamResult.stream_count_rtt = 4
+        streamResult.stream_max_snd_cwnd = 65_536
+        streamResult.stream_max_snd_wnd = 131_072
+        streamResult.stream_retrans = 7
+        streamResult.stream_reorder = 2
+
+        var stream = iperf_stream()
+        withUnsafeMutablePointer(to: &streamResult) { resultPointer in
+            stream.result = resultPointer
+            let totals = IperfRunner.tcpSenderTotals(of: &stream)
+
+            // Integer division over the engine's running sum, matching the
+            // expression the CLI prints as mean_rtt.
+            XCTAssertEqual(totals?.meanRtt, 250)
+            XCTAssertEqual(totals?.minRtt, 100)
+            XCTAssertEqual(totals?.maxRtt, 400)
+            XCTAssertEqual(totals?.rttSampleCount, 4)
+            XCTAssertEqual(totals?.maxSendCongestionWindow, 65_536)
+            XCTAssertEqual(totals?.maxSendWindow, 131_072)
+            XCTAssertEqual(totals?.retransmits, 7)
+            XCTAssertEqual(totals?.reorder, 2)
+
+            // No samples means the engine's guarded pass never ran for this
+            // stream, so none of the zeros beside it are measurements.
+            resultPointer.pointee.stream_count_rtt = 0
+            XCTAssertNil(IperfRunner.tcpSenderTotals(of: &stream))
+        }
+
+        // A stream the engine never attached a result to reports nothing.
+        var resultless = iperf_stream()
+        resultless.result = nil
+        XCTAssertNil(IperfRunner.tcpSenderTotals(of: &resultless))
+    }
+
     func testResultReverseFlagDerivesFromMode() {
         var result = IperfIntervalResult()
 

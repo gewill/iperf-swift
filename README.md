@@ -24,7 +24,7 @@ maintained. Development continues here without upstream involvement.
 - Upload, download (`--reverse`), and bidirectional (`--bidir`) tests
 - iperf3 RSA authentication with OAEP and optional legacy PKCS#1 v1.5 padding
 - DSCP marking and network-interface binding
-- Per-interval callbacks with per-stream results
+- Per-interval callbacks with per-stream results, plus per-stream run totals
 - JSON streaming with optional complete final output
 - macOS TCP statistics
 - Self-contained package: the iperf3 engine is bundled and OpenSSL ships as an
@@ -134,6 +134,21 @@ in `download.averageJitter` while the sent direction reports zero; the
 top-level `averageJitter` averages that zero in. The existing `reverse`
 property remains a compatibility accessor for selecting upload or download
 mode.
+
+Interval results describe one interval. For the figures `iperf3` prints in its
+`end.streams[]` summary, read `runner.streamTotals` after the run:
+
+```swift
+for stream in runner.streamTotals ?? [] {
+    guard let totals = stream.tcpSenderTotals else { continue }
+    print("\(stream.direction): mean RTT \(totals.meanRtt) µs")
+}
+```
+
+`tcpSenderTotals` is `nil` unless the engine sampled TCP info for that stream,
+which it does only while *sending* over TCP: a `.download` client and any UDP
+stream have none. The CLI prints zeros in those cases, which read as
+measurements rather than as absent data.
 
 ## Server example
 

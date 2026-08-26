@@ -461,6 +461,31 @@ The bundled iperf3 3.21 engine error codes are mapped to their corresponding
 ``IperfError`` cases. ``IperfError/UNKNOWN`` is reserved for an engine code
 that is not declared by the bundled version.
 
+## Per-stream run totals
+
+Interval results describe one reporting interval. For the figures `iperf3`
+prints in its `end.streams[]` summary — the round-trip time range, the largest
+windows, retransmits and reordering — read ``IperfRunner/streamTotals`` once the
+run has finished:
+
+```swift
+for stream in runner.streamTotals ?? [] {
+    guard let totals = stream.tcpSenderTotals else { continue }
+    print("\(stream.direction): mean RTT \(totals.meanRtt) µs over \(totals.rttSampleCount) samples")
+}
+```
+
+``IperfStreamRunResult/tcpSenderTotals`` is `nil` unless the engine actually
+sampled TCP info for that stream, which it does only while *sending* over TCP on
+a platform that exposes it. A client running ``IperfTestMode/download`` receives,
+so it has none; neither does any UDP stream. The CLI prints zeros in those
+cases, which read as measurements — hence the optional.
+
+The values in ``IperfTCPSenderTotals`` are the kernel's smoothed round-trip
+estimate rather than raw latency samples; see the type's documentation. The
+property refreshes on every reporter callback, so it holds whatever accumulated
+when a run ends early, and is cleared at the start of each run.
+
 ## Server output
 
 When ``IperfConfiguration/getServerOutput`` is `true`, the server's textual result
