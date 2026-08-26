@@ -9,6 +9,15 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.16] - 2026-08-26
+
+A results and test-reliability release. The engine's per-stream run totals
+become readable, one result property stops being able to contradict itself,
+another stops pretending to be a measurement, and the figure a state was
+documented to guarantee is corrected to what it actually marks. Five test
+changes remove reconstructions and fixed sleeps that had produced flakes rather
+than findings.
+
 **Breaking:** `IperfIntervalResult.reverse` is read-only. Assign
 `IperfIntervalResult.mode` instead.
 
@@ -69,6 +78,11 @@ package release number.
   bind on the server's port can still succeed. The state is unchanged; a caller
   that must know a server is reachable should probe the port rather than read
   this as that signal.
+- Internal: the testing rule in `AGENTS.md` now requires confirming a server
+  started, and `CLAUDE.md` records the Claude Code defaults that conflict with
+  this repository ([#157]). The rule already said to use a random port and clean
+  it up in teardown, which forty call sites followed without ever checking the
+  server came up — the gap [#155] was.
 - Internal: the wildcard server default now has a lifecycle test ([#158]). A
   server that never sets `address` binds the wildcard address — the point of the
   3.21.15 change — and every one of the twenty-two server configurations in the
@@ -749,6 +763,7 @@ unchanged from 3.21.6.
 - Embedded engine updated to iperf3 3.14.
 
 [Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.14...HEAD
+[3.21.16]: https://github.com/gewill/iperf-swift/compare/v3.21.15...v3.21.16
 [3.21.15]: https://github.com/gewill/iperf-swift/compare/v3.21.14...v3.21.15
 [3.21.14]: https://github.com/gewill/iperf-swift/compare/v3.21.13...v3.21.14
 [3.21.13]: https://github.com/gewill/iperf-swift/compare/v3.21.12...v3.21.13
@@ -830,6 +845,7 @@ unchanged from 3.21.6.
 [#149]: https://github.com/gewill/iperf-swift/issues/149
 [#150]: https://github.com/gewill/iperf-swift/issues/150
 [#151]: https://github.com/gewill/iperf-swift/issues/151
+[#157]: https://github.com/gewill/iperf-swift/pull/157
 [#158]: https://github.com/gewill/iperf-swift/issues/158
 [#160]: https://github.com/gewill/iperf-swift/issues/160
 [#155]: https://github.com/gewill/iperf-swift/issues/155
