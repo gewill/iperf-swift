@@ -61,6 +61,16 @@ package release number.
 
 ### Fixed
 
+- Internal: the wildcard server default now has a lifecycle test ([#158]). A
+  server that never sets `address` binds the wildcard address — the point of the
+  3.21.15 change — and every one of the twenty-two server configurations in the
+  suite set the address explicitly, so the default a consumer gets was never
+  run. The test asserts the port is held before asserting `stop()` releases it,
+  since a release check that cannot fail proves nothing. It probes IPv6, the
+  family the engine binds: an IPv4 wildcard bind sometimes succeeds alongside a
+  running server, because the engine sets `SO_REUSEADDR` and the two families
+  coexist on one port. It also waits for the listener rather than trusting
+  `.running`, which the runner reports before the listener is confirmed.
 - Internal: a CLI server that fails to start is now reported where it happens
   ([#155]). `freePort()` releases its port before the caller binds it, so a
   server can lose the race and exit; forty call sites then waited a fixed
@@ -812,5 +822,6 @@ unchanged from 3.21.6.
 [#149]: https://github.com/gewill/iperf-swift/issues/149
 [#150]: https://github.com/gewill/iperf-swift/issues/150
 [#151]: https://github.com/gewill/iperf-swift/issues/151
+[#158]: https://github.com/gewill/iperf-swift/issues/158
 [#155]: https://github.com/gewill/iperf-swift/issues/155
 [#84]: https://github.com/gewill/iperfman/issues/84
