@@ -61,6 +61,21 @@ package release number.
 
 ### Fixed
 
+- Internal: a CLI server that fails to start is now reported where it happens
+  ([#155]). `freePort()` releases its port before the caller binds it, so a
+  server can lose the race and exit; forty call sites then waited a fixed
+  interval and carried on without one, and the run failed later as whatever the
+  client made of an absent peer — a lost server surfaced once as a client-side
+  "Unable to start stream listener", which sent the investigation to the wrong
+  place. They now check the process survived startup instead.
+
+  The check is a liveness check rather than a connection probe on purpose:
+  connecting would consume the single client a `-1` server will serve, and a
+  `bind` probe cannot tell listening from not, since an `iperf3` server binds
+  the wildcard address and a specific-address bind succeeds either way. The
+  collision that matters is server against server — two tests handed the same
+  port, the second failing with "Address already in use" — and a test
+  reproduces exactly that to prove the check fires.
 - Internal: the non-finite duration test no longer depends on DNS ([#150]). It
   reached the network through an unresolvable name, so the resolver's latency
   sat inside its two-second bound — the same run took 0.012s locally and over
@@ -797,4 +812,5 @@ unchanged from 3.21.6.
 [#149]: https://github.com/gewill/iperf-swift/issues/149
 [#150]: https://github.com/gewill/iperf-swift/issues/150
 [#151]: https://github.com/gewill/iperf-swift/issues/151
+[#155]: https://github.com/gewill/iperf-swift/issues/155
 [#84]: https://github.com/gewill/iperfman/issues/84
