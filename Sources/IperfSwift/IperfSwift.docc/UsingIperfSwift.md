@@ -357,6 +357,13 @@ stored. Keep this callback fast for the same reason as the reporter callback.
 ``IperfRunnerState/finished`` follows the run's last reporter callback, so the
 interval results of a completed run are all delivered by the time it arrives.
 
+``IperfRunnerState/running`` marks the point where the configuration has been
+accepted and the run handed to the engine — not the point where a server is
+listening or a client has connected. Those happen after it, and either failing
+arrives later as ``IperfRunnerState/error``. A caller that has to know a server
+is reachable — starting a client against it, for instance — should probe the
+port rather than treat this state as that signal.
+
 ## Reading interval results
 
 Each reporter callback delivers an ``IperfIntervalResult``:
