@@ -974,6 +974,25 @@ final class IperfSwiftUnitTests: XCTestCase {
         }
     }
 
+    func testOmitResetStartsTheNextIntervalAtTheResetTime() {
+        var test = iperf_test()
+        var stream = iperf_stream()
+        var result = iperf_stream_result()
+        result.start_time = iperf_time(secs: 1, usecs: 0)
+        result.end_time = iperf_time(secs: 2, usecs: 0)
+        withUnsafeMutablePointer(to: &result) { resultPointer in
+            stream.result = resultPointer
+            withUnsafeMutablePointer(to: &stream) { streamPointer in
+                test.streams.slh_first = streamPointer
+                iperf_reset_stats(&test)
+                // Statistics use end_time when an earlier omitted interval exists.
+                XCTAssertEqual(resultPointer.pointee.start_time.secs, resultPointer.pointee.end_time.secs)
+                XCTAssertEqual(resultPointer.pointee.start_time.usecs, resultPointer.pointee.end_time.usecs)
+                XCTAssertGreaterThan(resultPointer.pointee.start_time.secs, 2)
+            }
+        }
+    }
+
     func testStreamRunTotalsUseTheCLIsMeanAndSampleGuard() {
         var streamResult = iperf_stream_result()
         streamResult.stream_min_rtt = 100

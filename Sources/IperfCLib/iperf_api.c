@@ -3725,6 +3725,8 @@ iperf_reset_stats(struct iperf_test *test)
 	}
 	rp->stream_retrans = 0;
 	rp->start_time = now;
+	/* The next non-omitted interval must start at the omit reset. */
+	rp->end_time = now;
     }
 }
 

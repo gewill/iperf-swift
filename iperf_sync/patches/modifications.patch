@@ -157,6 +157,13 @@ diff -ru a/iperf_api.c b/iperf_api.c
      if (test->server_rsa_private_key)
        EVP_PKEY_free(test->server_rsa_private_key);
      test->server_rsa_private_key = NULL;
+@@ -3726,3 +3726,5 @@
+-	rp->start_time = now;
++	rp->start_time = now;
++	/* The next non-omitted interval must start at the omit reset. */
++	rp->end_time = now;
+     }
+ }
 diff -ru a/iperf_auth.c b/iperf_auth.c
 --- a/iperf_auth.c	2026-05-15 23:42:06
 +++ b/iperf_auth.c	2026-05-15 23:42:06
