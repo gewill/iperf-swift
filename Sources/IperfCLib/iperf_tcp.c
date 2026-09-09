@@ -74,7 +74,7 @@ iperf_tcp_recv(struct iperf_stream *sp)
     /* Only count bytes received while we're in the correct state. */
     if (sp->test->state == TEST_RUNNING) {
 	      sp->result->bytes_received += r;
-	      sp->result->bytes_received_this_interval += r;
+	      atomic_fetch_add(&sp->result->bytes_received_this_interval, r);
     }
     else {
 	      if (sp->test->debug)
@@ -107,7 +107,7 @@ iperf_tcp_send(struct iperf_stream *sp)
 
     sp->pending_size -= r;
     sp->result->bytes_sent += r;
-    sp->result->bytes_sent_this_interval += r;
+    atomic_fetch_add(&sp->result->bytes_sent_this_interval, r);
 
     if (sp->test->debug_level >=  DEBUG_LEVEL_DEBUG)
 	      printf("sent %d bytes of %d, pending %d, total %" PRIu64 "\n",

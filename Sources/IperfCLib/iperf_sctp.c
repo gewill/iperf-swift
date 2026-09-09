@@ -63,7 +63,7 @@ iperf_sctp_recv(struct iperf_stream *sp)
     /* Only count bytes received while we're in the correct state. */
     if (sp->test->state == TEST_RUNNING) {
 	sp->result->bytes_received += r;
-	sp->result->bytes_received_this_interval += r;
+	atomic_fetch_add(&sp->result->bytes_received_this_interval, r);
     }
     else {
 	if (sp->test->debug)
@@ -93,7 +93,7 @@ iperf_sctp_send(struct iperf_stream *sp)
         return r;
 
     sp->result->bytes_sent += r;
-    sp->result->bytes_sent_this_interval += r;
+    atomic_fetch_add(&sp->result->bytes_sent_this_interval, r);
 
     return r;
 #else

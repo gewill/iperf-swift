@@ -458,3 +458,103 @@ diff -ru a/net.c b/net.c
              return -1;
          }
      }
+diff -ru a/iperf_api.c b/iperf_api.c
+--- a/iperf_api.c
++++ b/iperf_api.c
+@@ -3716,7 +3716,8 @@
+ 	rp = sp->result;
+         rp->bytes_sent_omit = rp->bytes_sent;
+         rp->bytes_received = 0;
+-        rp->bytes_sent_this_interval = rp->bytes_received_this_interval = 0;
++        atomic_store(&rp->bytes_sent_this_interval, 0);
++        atomic_store(&rp->bytes_received_this_interval, 0);
+ 	if (test->sender_has_retransmits == 1) {
+ 	    struct iperf_interval_results ir; /* temporary results structure */
+ 	    save_tcpinfo(sp, &ir);
+@@ -3752,10 +3753,13 @@
+     temp.pmtu = 0;
+     SLIST_FOREACH(sp, &test->streams, streams) {
+         rp = sp->result;
+-	temp.bytes_transferred = sp->sender ? rp->bytes_sent_this_interval : rp->bytes_received_this_interval;
++        /* Updates after the exchange belong to the next interval. */
++        iperf_size_t sent = atomic_exchange(&rp->bytes_sent_this_interval, 0);
++        iperf_size_t received = atomic_exchange(&rp->bytes_received_this_interval, 0);
++        temp.bytes_transferred = sp->sender ? sent : received;
+ 
+         // Total bytes transferred this interval
+-	total_interval_bytes_transferred += rp->bytes_sent_this_interval + rp->bytes_received_this_interval;
++	total_interval_bytes_transferred += sent + received;
+ 
+ 	irp = TAILQ_LAST(&rp->interval_results, irlisthead);
+         /* result->end_time contains timestamp of previous interval */
+@@ -3850,7 +3854,6 @@
+ #endif /* HAVE_SCTP_H */
+ 
+         add_to_interval_list(rp, &temp);
+-        rp->bytes_sent_this_interval = rp->bytes_received_this_interval = 0;
+     }
+ 
+     /* Verify that total server's throughput is not above specified limit */
+diff -ru a/iperf_tcp.c b/iperf_tcp.c
+--- a/iperf_tcp.c
++++ b/iperf_tcp.c
+@@ -74,7 +74,7 @@
+     /* Only count bytes received while we're in the correct state. */
+     if (sp->test->state == TEST_RUNNING) {
+ 	      sp->result->bytes_received += r;
+-	      sp->result->bytes_received_this_interval += r;
++	      atomic_fetch_add(&sp->result->bytes_received_this_interval, r);
+     }
+     else {
+ 	      if (sp->test->debug)
+@@ -107,7 +107,7 @@
+ 
+     sp->pending_size -= r;
+     sp->result->bytes_sent += r;
+-    sp->result->bytes_sent_this_interval += r;
++    atomic_fetch_add(&sp->result->bytes_sent_this_interval, r);
+ 
+     if (sp->test->debug_level >=  DEBUG_LEVEL_DEBUG)
+ 	      printf("sent %d bytes of %d, pending %d, total %" PRIu64 "\n",
+diff -ru a/iperf_udp.c b/iperf_udp.c
+--- a/iperf_udp.c
++++ b/iperf_udp.c
+@@ -116,7 +116,7 @@
+ 	}
+ 
+ 	sp->result->bytes_received += r;
+-	sp->result->bytes_received_this_interval += r;
++	atomic_fetch_add(&sp->result->bytes_received_this_interval, r);
+ 
+ 	if (sp->test->debug)
+ 	    printf("received %d bytes of %d, total %" PRIu64 "\n", r, size, sp->result->bytes_received);
+@@ -343,7 +343,7 @@
+     }
+ 
+     sp->result->bytes_sent += r;
+-    sp->result->bytes_sent_this_interval += r;
++    atomic_fetch_add(&sp->result->bytes_sent_this_interval, r);
+ 
+     if (sp->test->debug_level >=  DEBUG_LEVEL_DEBUG)
+ 	printf("sent %d bytes of %d, total %" PRIu64 "\n", r, size, sp->result->bytes_sent);
+diff -ru a/iperf_sctp.c b/iperf_sctp.c
+--- a/iperf_sctp.c
++++ b/iperf_sctp.c
+@@ -63,7 +63,7 @@
+     /* Only count bytes received while we're in the correct state. */
+     if (sp->test->state == TEST_RUNNING) {
+ 	sp->result->bytes_received += r;
+-	sp->result->bytes_received_this_interval += r;
++	atomic_fetch_add(&sp->result->bytes_received_this_interval, r);
+     }
+     else {
+ 	if (sp->test->debug)
+@@ -93,7 +93,7 @@
+         return r;
+ 
+     sp->result->bytes_sent += r;
+-    sp->result->bytes_sent_this_interval += r;
++    atomic_fetch_add(&sp->result->bytes_sent_this_interval, r);
+ 
+     return r;
+ #else
