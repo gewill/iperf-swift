@@ -923,6 +923,57 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertTrue(configuration.dontFragment)
     }
 
+    func testConcurrentIntervalSnapshotsPreserveEveryByte() throws {
+        for sender in [false, true] {
+            let test = try XCTUnwrap(iperf_new_test())
+            XCTAssertEqual(iperf_defaults(test), 0)
+            test.pointee.protocol.pointee.id = Pudp
+            let stream = UnsafeMutablePointer<iperf_stream>.allocate(capacity: 1)
+            stream.initialize(to: iperf_stream())
+            let result = UnsafeMutablePointer<iperf_stream_result>.allocate(capacity: 1)
+            result.initialize(to: iperf_stream_result())
+            stream.pointee.sender = sender ? 1 : 0
+            stream.pointee.result = result
+            test.pointee.streams.slh_first = stream
+            defer {
+                free(result.pointee.interval_results.tqh_first)
+                test.pointee.streams.slh_first = nil
+                iperf_free_test(test)
+                result.deinitialize(count: 1)
+                result.deallocate()
+                stream.deinitialize(count: 1)
+                stream.deallocate()
+            }
+            withUnsafeMutablePointer(to: &result.pointee.interval_results.tqh_first) { first in
+                result.pointee.interval_results.tqh_last = first
+                iperf_time_now(&result.pointee.start_time)
+                func exercise(_ counter: UnsafeMutablePointer<atomic_iperf_size_t>) {
+                    let writes = 1_000_000
+                    var reported: Int64 = 0
+                    DispatchQueue.concurrentPerform(iterations: 2) { worker in
+                        if worker == 0 {
+                            for _ in 0..<writes { _ = atomic_fetch_add(counter, 1) }
+                        } else {
+                            for _ in 0..<20_000 {
+                                iperf_stats_callback(test)
+                                reported += Int64(result.pointee.interval_results.tqh_first.pointee.bytes_transferred)
+                            }
+                        }
+                    }
+                    // Both workers joined; include bytes arriving after the last snapshot.
+                    iperf_stats_callback(test)
+                    reported += Int64(result.pointee.interval_results.tqh_first.pointee.bytes_transferred)
+                    XCTAssertEqual(reported, Int64(writes), "sender=\(sender)")
+                }
+                if sender {
+                    withUnsafeMutablePointer(to: &result.pointee.bytes_sent_this_interval, exercise)
+                } else {
+                    withUnsafeMutablePointer(to: &result.pointee.bytes_received_this_interval, exercise)
+                }
+            }
+        }
+    }
+
     func testStreamRunTotalsUseTheCLIsMeanAndSampleGuard() {
         var streamResult = iperf_stream_result()
         streamResult.stream_min_rtt = 100

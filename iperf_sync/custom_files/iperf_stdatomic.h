@@ -37,6 +37,11 @@ static inline uint64_t atomic_fetch_add(atomic_uint_fast64_t *object, uint64_t v
     return __atomic_fetch_add(object, value, __ATOMIC_SEQ_CST);
 }
 
+static inline uint64_t atomic_exchange(atomic_uint_fast64_t *object, uint64_t value)
+{
+    return __atomic_exchange_n(object, value, __ATOMIC_SEQ_CST);
+}
+
 #define atomic_load_explicit(object, order) atomic_load(object)
 #define atomic_store_explicit(object, value, order) atomic_store(object, value)
 #define atomic_fetch_add_explicit(object, value, order) atomic_fetch_add(object, value)

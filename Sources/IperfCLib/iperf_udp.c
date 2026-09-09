@@ -116,7 +116,7 @@ iperf_udp_recv(struct iperf_stream *sp)
 	}
 
 	sp->result->bytes_received += r;
-	sp->result->bytes_received_this_interval += r;
+	atomic_fetch_add(&sp->result->bytes_received_this_interval, r);
 
 	if (sp->test->debug)
 	    printf("received %d bytes of %d, total %" PRIu64 "\n", r, size, sp->result->bytes_received);
@@ -343,7 +343,7 @@ iperf_udp_send(struct iperf_stream *sp)
     }
 
     sp->result->bytes_sent += r;
-    sp->result->bytes_sent_this_interval += r;
+    atomic_fetch_add(&sp->result->bytes_sent_this_interval, r);
 
     if (sp->test->debug_level >=  DEBUG_LEVEL_DEBUG)
 	printf("sent %d bytes of %d, total %" PRIu64 "\n", r, size, sp->result->bytes_sent);
