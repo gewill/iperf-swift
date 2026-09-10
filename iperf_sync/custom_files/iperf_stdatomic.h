@@ -42,6 +42,19 @@ static inline uint64_t atomic_exchange(atomic_uint_fast64_t *object, uint64_t va
     return __atomic_exchange_n(object, value, __ATOMIC_SEQ_CST);
 }
 
+/* Floating-point fields also keep their Swift-importable C layout. */
+static inline double iperf_atomic_load_double(const double *object)
+{
+    double value;
+    __atomic_load(object, &value, __ATOMIC_SEQ_CST);
+    return value;
+}
+
+static inline void iperf_atomic_store_double(double *object, double value)
+{
+    __atomic_store(object, &value, __ATOMIC_SEQ_CST);
+}
+
 #define atomic_load_explicit(object, order) atomic_load(object)
 #define atomic_store_explicit(object, value, order) atomic_store(object, value)
 #define atomic_fetch_add_explicit(object, value, order) atomic_fetch_add(object, value)

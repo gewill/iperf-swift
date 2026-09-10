@@ -2107,7 +2107,7 @@ iperf_check_throttle(struct iperf_stream *sp, struct iperf_time *nowP)
         return;
     iperf_time_diff(&sp->result->start_time_fixed, nowP, &temp_time);
     seconds = iperf_time_in_secs(&temp_time);
-    bits_sent = sp->result->bytes_sent * 8;
+    bits_sent = __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST) * 8;
     bits_per_second = bits_sent / seconds;
     missing_rate = sp->test->settings->rate - bits_per_second;
 
@@ -2790,15 +2790,15 @@ send_results(struct iperf_test *test)
 		    r = -1;
 		} else {
 		    cJSON_AddItemToArray(j_streams, j_stream);
-		    bytes_transferred = sp->sender ? (sp->result->bytes_sent - sp->result->bytes_sent_omit) : sp->result->bytes_received;
+		    bytes_transferred = sp->sender ? (__atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST) - sp->result->bytes_sent_omit) : __atomic_load_n(&sp->result->bytes_received, __ATOMIC_SEQ_CST);
 		    retransmits = (sp->sender && test->sender_has_retransmits) ? sp->result->stream_retrans : -1;
 		    cJSON_AddNumberToObject(j_stream, "id", sp->id);
 		    cJSON_AddNumberToObject(j_stream, "bytes", bytes_transferred);
 		    cJSON_AddNumberToObject(j_stream, "retransmits", retransmits);
-		    cJSON_AddNumberToObject(j_stream, "jitter", sp->jitter);
-		    cJSON_AddNumberToObject(j_stream, "errors", sp->cnt_error);
+		    cJSON_AddNumberToObject(j_stream, "jitter", iperf_atomic_load_double(&sp->jitter));
+		    cJSON_AddNumberToObject(j_stream, "errors", __atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST));
                     cJSON_AddNumberToObject(j_stream, "omitted_errors", sp->omitted_cnt_error);
-		    cJSON_AddNumberToObject(j_stream, "packets", sp->packet_count);
+		    cJSON_AddNumberToObject(j_stream, "packets", __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST));
                     cJSON_AddNumberToObject(j_stream, "omitted_packets", sp->omitted_packet_count);
 
 		    iperf_time_diff(&sp->result->start_time, &sp->result->start_time, &temp_time);
@@ -2937,10 +2937,10 @@ get_results(struct iperf_test *test)
 				r = -1;
 			    } else {
 				if (sp->sender) {
-				    sp->jitter = jitter;
-				    sp->cnt_error = cerror;
+				    iperf_atomic_store_double(&sp->jitter, jitter);
+				    __atomic_store_n(&sp->cnt_error, cerror, __ATOMIC_SEQ_CST);
 				    sp->peer_packet_count = pcount;
-				    sp->result->bytes_received = bytes_transferred;
+				    __atomic_store_n(&sp->result->bytes_received, bytes_transferred, __ATOMIC_SEQ_CST);
                                     if (j_omitted_packets != NULL) {
                                         sp->omitted_cnt_error = omitted_cerror;
                                         sp->peer_omitted_packet_count = omitted_pcount;
@@ -2948,9 +2948,9 @@ get_results(struct iperf_test *test)
                                         sp->peer_omitted_packet_count = sp->omitted_packet_count;
                                         if (sp->peer_omitted_packet_count > 0) {
                                             /* -1 indicates unknown error count since it includes the omitted count */
-                                            sp->omitted_cnt_error = (sp->cnt_error > 0) ? -1 : 0;
+                                            sp->omitted_cnt_error = (__atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST) > 0) ? -1 : 0;
                                         } else {
-                                            sp->omitted_cnt_error = sp->cnt_error;
+                                            sp->omitted_cnt_error = __atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST);
                                         }
                                     }
 				    /*
@@ -2970,7 +2970,7 @@ get_results(struct iperf_test *test)
 				    }
 				} else {
 				    sp->peer_packet_count = pcount;
-				    sp->result->bytes_sent = bytes_transferred;
+				    __atomic_store_n(&sp->result->bytes_sent, bytes_transferred, __ATOMIC_SEQ_CST);
 				    sp->result->stream_retrans = retransmits;
                                     if (j_omitted_packets != NULL) {
                                         sp->peer_omitted_packet_count = omitted_pcount;
@@ -3709,13 +3709,13 @@ iperf_reset_stats(struct iperf_test *test)
     __atomic_store_n(&test->blocks_sent, 0, __ATOMIC_SEQ_CST);
     iperf_time_now(&now);
     SLIST_FOREACH(sp, &test->streams, streams) {
-	sp->omitted_packet_count = sp->packet_count;
-        sp->omitted_cnt_error = sp->cnt_error;
-        sp->omitted_outoforder_packets = sp->outoforder_packets;
-	sp->jitter = 0;
+	sp->omitted_packet_count = __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST);
+        sp->omitted_cnt_error = __atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST);
+        sp->omitted_outoforder_packets = __atomic_load_n(&sp->outoforder_packets, __ATOMIC_SEQ_CST);
+	iperf_atomic_store_double(&sp->jitter, 0);
 	rp = sp->result;
-        rp->bytes_sent_omit = rp->bytes_sent;
-        rp->bytes_received = 0;
+        rp->bytes_sent_omit = __atomic_load_n(&rp->bytes_sent, __ATOMIC_SEQ_CST);
+        __atomic_store_n(&rp->bytes_received, 0, __ATOMIC_SEQ_CST);
         atomic_store(&rp->bytes_sent_this_interval, 0);
         atomic_store(&rp->bytes_received_this_interval, 0);
 	if (test->sender_has_retransmits == 1) {
@@ -3811,19 +3811,14 @@ iperf_stats_callback(struct iperf_test *test)
 		}
 	    }
 	} else {
-	    if (irp == NULL) {
-		temp.interval_packet_count = sp->packet_count;
-		temp.interval_outoforder_packets = sp->outoforder_packets;
-		temp.interval_cnt_error = sp->cnt_error;
-	    } else {
-		temp.interval_packet_count = sp->packet_count - irp->packet_count;
-		temp.interval_outoforder_packets = sp->outoforder_packets - irp->outoforder_packets;
-		temp.interval_cnt_error = sp->cnt_error - irp->cnt_error;
-	    }
-	    temp.packet_count = sp->packet_count;
-	    temp.jitter = sp->jitter;
-	    temp.outoforder_packets = sp->outoforder_packets;
-	    temp.cnt_error = sp->cnt_error;
+            /* Each cumulative field is sampled once for this interval. */
+            temp.packet_count = __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST);
+            temp.jitter = iperf_atomic_load_double(&sp->jitter);
+            temp.outoforder_packets = __atomic_load_n(&sp->outoforder_packets, __ATOMIC_SEQ_CST);
+            temp.cnt_error = __atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST);
+            temp.interval_packet_count = temp.packet_count - (irp ? irp->packet_count : 0);
+            temp.interval_outoforder_packets = temp.outoforder_packets - (irp ? irp->outoforder_packets : 0);
+            temp.interval_cnt_error = temp.cnt_error - (irp ? irp->cnt_error : 0);
 	}
 
 #if defined(HAVE_SCTP_H)
@@ -4250,13 +4245,13 @@ iperf_print_results(struct iperf_test *test)
                     cJSON_AddItemToArray(json_summary_streams, json_summary_stream);
                 }
 
-                bytes_sent = sp->result->bytes_sent - sp->result->bytes_sent_omit;
-                bytes_received = sp->result->bytes_received;
+                bytes_sent = __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST) - sp->result->bytes_sent_omit;
+                bytes_received = __atomic_load_n(&sp->result->bytes_received, __ATOMIC_SEQ_CST);
                 total_sent += bytes_sent;
                 total_received += bytes_received;
 
                 if (sp->sender) {
-                    sender_packet_count = sp->packet_count;
+                    sender_packet_count = __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST);
                     sender_omitted_packet_count = sp->omitted_packet_count;
                     receiver_packet_count = sp->peer_packet_count;
                     receiver_omitted_packet_count = sp->peer_omitted_packet_count;
@@ -4264,7 +4259,7 @@ iperf_print_results(struct iperf_test *test)
                 else {
                     sender_packet_count = sp->peer_packet_count;
                     sender_omitted_packet_count = sp->peer_omitted_packet_count;
-                    receiver_packet_count = sp->packet_count;
+                    receiver_packet_count = __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST);
                     receiver_omitted_packet_count = sp->omitted_packet_count;
                 }
 
@@ -4281,10 +4276,10 @@ iperf_print_results(struct iperf_test *test)
                     total_packets += (packet_count - sp->omitted_packet_count);
                     sender_total_packets += (sender_packet_count - sender_omitted_packet_count);
                     receiver_total_packets += (receiver_packet_count - receiver_omitted_packet_count);
-                    lost_packets += sp->cnt_error;
+                    lost_packets += __atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST);
                     if (sp->omitted_cnt_error > -1)
                          lost_packets -= sp->omitted_cnt_error;
-                    avg_jitter += sp->jitter;
+                    avg_jitter += iperf_atomic_load_double(&sp->jitter);
                 }
 
                 unit_snprintf(ubuf, UNIT_LEN, (double) bytes_sent, 'A');
@@ -4324,7 +4319,7 @@ iperf_print_results(struct iperf_test *test)
                 } else {
                     /* Sender summary, UDP. */
                     if (sender_packet_count - sender_omitted_packet_count > 0) {
-                        lost_percent = 100.0 * (sp->cnt_error - sp->omitted_cnt_error) / (sender_packet_count - sender_omitted_packet_count);
+                        lost_percent = 100.0 * (__atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST) - sp->omitted_cnt_error) / (sender_packet_count - sender_omitted_packet_count);
                     }
                     else {
                         lost_percent = 0.0;
@@ -4347,7 +4342,7 @@ iperf_print_results(struct iperf_test *test)
                          * instead.
                          */
                         int64_t packet_count = sender_packet_count ? sender_packet_count : receiver_packet_count;
-                        cJSON_AddItemToObject(json_summary_stream, "udp", iperf_json_printf("socket: %d  start: %f  end: %f  seconds: %f  bytes: %d  bits_per_second: %f  jitter_ms: %f  lost_packets: %d  packets: %d  lost_percent: %f  out_of_order: %d sender: %b", (int64_t) sp->socket, (double) start_time, (double) sender_time, (double) sender_time, (int64_t) bytes_sent, bandwidth * 8, (double) sp->jitter * 1000.0, (int64_t) (sp->cnt_error - sp->omitted_cnt_error), (int64_t) (packet_count - sp->omitted_packet_count), (double) lost_percent, (int64_t) (sp->outoforder_packets - sp->omitted_outoforder_packets), stream_must_be_sender));
+                        cJSON_AddItemToObject(json_summary_stream, "udp", iperf_json_printf("socket: %d  start: %f  end: %f  seconds: %f  bytes: %d  bits_per_second: %f  jitter_ms: %f  lost_packets: %d  packets: %d  lost_percent: %f  out_of_order: %d sender: %b", (int64_t) sp->socket, (double) start_time, (double) sender_time, (double) sender_time, (int64_t) bytes_sent, bandwidth * 8, (double) iperf_atomic_load_double(&sp->jitter) * 1000.0, (int64_t) (__atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST) - sp->omitted_cnt_error), (int64_t) (packet_count - sp->omitted_packet_count), (double) lost_percent, (int64_t) (__atomic_load_n(&sp->outoforder_packets, __ATOMIC_SEQ_CST) - sp->omitted_outoforder_packets), stream_must_be_sender));
                     }
                     else {
                         /*
@@ -4364,8 +4359,8 @@ iperf_print_results(struct iperf_test *test)
                         else {
                             iperf_printf(test, report_bw_udp_format, sp->socket, mbuf, start_time, sender_time, ubuf, nbuf, 0.0, (int64_t) 0, (sender_packet_count - sender_omitted_packet_count), (double) 0, report_sender);
                         }
-                        if ((sp->outoforder_packets - sp->omitted_outoforder_packets) > 0)
-                          iperf_printf(test, report_sum_outoforder, mbuf, start_time, sender_time, (sp->outoforder_packets - sp->omitted_outoforder_packets));
+                        if ((__atomic_load_n(&sp->outoforder_packets, __ATOMIC_SEQ_CST) - sp->omitted_outoforder_packets) > 0)
+                          iperf_printf(test, report_sum_outoforder, mbuf, start_time, sender_time, (__atomic_load_n(&sp->outoforder_packets, __ATOMIC_SEQ_CST) - sp->omitted_outoforder_packets));
                     }
                 }
 
@@ -4420,9 +4415,9 @@ iperf_print_results(struct iperf_test *test)
                      */
                     if (! test->json_output) {
                         if (test->omit == 0 && receiver_packet_count > 0) {
-                            lost_percent = 100.0 * sp->cnt_error / receiver_packet_count;
+                            lost_percent = 100.0 * __atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST) / receiver_packet_count;
                         } else if (receiver_packet_count - receiver_omitted_packet_count > 0 && sp->omitted_cnt_error > -1) {
-                            lost_percent = 100.0 * (sp->cnt_error - sp->omitted_cnt_error) / (receiver_packet_count - receiver_omitted_packet_count);
+                            lost_percent = 100.0 * (__atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST) - sp->omitted_cnt_error) / (receiver_packet_count - receiver_omitted_packet_count);
                         }
                         else {
                             lost_percent = 0.0;
@@ -4434,11 +4429,11 @@ iperf_print_results(struct iperf_test *test)
                         }
                         else {
                             if (test->omit == 0) {
-                                iperf_printf(test, report_bw_udp_format, sp->socket, mbuf, start_time, receiver_time, ubuf, nbuf, sp->jitter * 1000.0, sp->cnt_error, receiver_packet_count, lost_percent, report_receiver);
+                                iperf_printf(test, report_bw_udp_format, sp->socket, mbuf, start_time, receiver_time, ubuf, nbuf, iperf_atomic_load_double(&sp->jitter) * 1000.0, __atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST), receiver_packet_count, lost_percent, report_receiver);
                             } else if (sp->omitted_cnt_error > -1) {
-                                iperf_printf(test, report_bw_udp_format, sp->socket, mbuf, start_time, receiver_time, ubuf, nbuf, sp->jitter * 1000.0, (sp->cnt_error - sp->omitted_cnt_error), (receiver_packet_count - receiver_omitted_packet_count), lost_percent, report_receiver);
+                                iperf_printf(test, report_bw_udp_format, sp->socket, mbuf, start_time, receiver_time, ubuf, nbuf, iperf_atomic_load_double(&sp->jitter) * 1000.0, (__atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST) - sp->omitted_cnt_error), (receiver_packet_count - receiver_omitted_packet_count), lost_percent, report_receiver);
                             } else {
-                                iperf_printf(test, report_bw_udp_format_no_omitted_error, sp->socket, mbuf, start_time, receiver_time, ubuf, nbuf, sp->jitter * 1000.0, (receiver_packet_count - receiver_omitted_packet_count), report_receiver);
+                                iperf_printf(test, report_bw_udp_format_no_omitted_error, sp->socket, mbuf, start_time, receiver_time, ubuf, nbuf, iperf_atomic_load_double(&sp->jitter) * 1000.0, (receiver_packet_count - receiver_omitted_packet_count), report_receiver);
                             }
                         }
                     }

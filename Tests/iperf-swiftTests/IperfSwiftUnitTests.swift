@@ -954,6 +954,75 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertEqual(test.pointee.blocks_received, blocks)
     }
 
+    func testConcurrentUDPIntervalsPreserveEveryPacket() throws {
+        let test = try XCTUnwrap(iperf_new_test())
+        XCTAssertEqual(iperf_defaults(test), 0)
+        test.pointee.protocol.pointee.id = Pudp
+        test.pointee.settings.pointee.blksize = 12
+        iperf_set_test_state(test, Int8(TEST_RUNNING))
+        var sockets: [Int32] = [-1, -1]
+        XCTAssertEqual(socketpair(AF_UNIX, SOCK_DGRAM, 0, &sockets), 0)
+        let stream = UnsafeMutablePointer<iperf_stream>.allocate(capacity: 1)
+        stream.initialize(to: iperf_stream())
+        let result = UnsafeMutablePointer<iperf_stream_result>.allocate(capacity: 1)
+        result.initialize(to: iperf_stream_result())
+        let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: 12)
+        buffer.initialize(repeating: 0, count: 12)
+        stream.pointee.test = test
+        stream.pointee.settings = test.pointee.settings
+        stream.pointee.result = result
+        stream.pointee.socket = sockets[1]
+        stream.pointee.buffer = buffer
+        test.pointee.streams.slh_first = stream
+        defer {
+            close(sockets[0])
+            close(sockets[1])
+            free(result.pointee.interval_results.tqh_first)
+            test.pointee.streams.slh_first = nil
+            iperf_free_test(test)
+            buffer.deinitialize(count: 12)
+            buffer.deallocate()
+            result.deinitialize(count: 1)
+            result.deallocate()
+            stream.deinitialize(count: 1)
+            stream.deallocate()
+        }
+        withUnsafeMutablePointer(to: &result.pointee.interval_results.tqh_first) { first in
+            result.pointee.interval_results.tqh_last = first
+            iperf_time_now(&result.pointee.start_time)
+            let packets = 20_000
+            var reported: Int64 = 0
+            let receiving = DispatchGroup()
+            receiving.enter()
+            DispatchQueue.global().async {
+                defer { receiving.leave() }
+                for sequence in 1...packets {
+                    let header: [UInt32] = [0, 0, UInt32(sequence).bigEndian]
+                    let sent = header.withUnsafeBytes {
+                        Darwin.send(sockets[0], $0.baseAddress, $0.count, 0)
+                    }
+                    guard sent == 12 else {
+                        XCTFail("failed to send the local test datagram")
+                        return
+                    }
+                    XCTAssertEqual(iperf_udp_recv(stream), 12)
+                }
+            }
+            while receiving.wait(timeout: .now()) == .timedOut {
+                iperf_stats_callback(test)
+                reported += result.pointee.interval_results.tqh_first.pointee.interval_packet_count
+            }
+            iperf_stats_callback(test)
+            let final = result.pointee.interval_results.tqh_first.pointee
+            reported += final.interval_packet_count
+            XCTAssertEqual(reported, Int64(packets))
+            XCTAssertEqual(final.packet_count, Int64(packets))
+            XCTAssertEqual(final.cnt_error, 0)
+            XCTAssertEqual(final.outoforder_packets, 0)
+            XCTAssertTrue(final.jitter.isFinite)
+        }
+    }
+
     func testConcurrentIntervalSnapshotsPreserveEveryByte() throws {
         for sender in [false, true] {
             let test = try XCTUnwrap(iperf_new_test())
