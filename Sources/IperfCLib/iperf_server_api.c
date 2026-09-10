@@ -84,7 +84,7 @@ iperf_server_worker_run(void *s) {
     sigaddset(&set, SIGINT);
 #endif
     if (pthread_sigmask(SIG_BLOCK, &set, NULL) != 0) {
-	    i_errno = IEPTHREADSIGMASK;
+	    iperf_set_error(IEPTHREADSIGMASK);
 	    goto cleanup_and_fail;
     }
 
@@ -92,7 +92,7 @@ iperf_server_worker_run(void *s) {
     pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL);
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
 
-    while (! (test->done) && ! (sp->done)) {
+    while (! (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST)) && ! (__atomic_load_n(&sp->done, __ATOMIC_SEQ_CST))) {
         if (sp->sender) {
             if (iperf_send_mt(sp) < 0) {
                 goto cleanup_and_fail;
@@ -125,8 +125,8 @@ iperf_server_listen(struct iperf_test *test)
 	    test->settings->domain = AF_INET;
 	    goto retry;
 	} else {
-	    if (i_errno == IENONE)
-	        i_errno = IELISTEN;
+	    if (iperf_get_error() == IENONE)
+	        iperf_set_error(IELISTEN);
 	    return -1;
 	}
     }
@@ -162,14 +162,14 @@ iperf_accept(struct iperf_test *test)
 
     len = sizeof(addr);
     if ((s = accept(test->listener, (struct sockaddr *) &addr, &len)) < 0) {
-        i_errno = IEACCEPT;
+        iperf_set_error(IEACCEPT);
         return ret;
     }
     if (iperf_set_socket_no_sigpipe(s) < 0) {
         int saved_errno = errno;
         close(s);
         errno = saved_errno;
-        i_errno = IEACCEPT;
+        iperf_set_error(IEACCEPT);
         return ret;
     }
 
@@ -179,7 +179,7 @@ iperf_accept(struct iperf_test *test)
         // set TCP_NODELAY for lower latency on control messages
         int flag = 1;
         if (setsockopt(test->ctrl_sck, IPPROTO_TCP, TCP_NODELAY, (char *) &flag, sizeof(int))) {
-            i_errno = IESETNODELAY;
+            iperf_set_error(IESETNODELAY);
             goto error_handling;
         }
 
@@ -187,7 +187,7 @@ iperf_accept(struct iperf_test *test)
         int opt;
         if ((opt = test->settings->snd_timeout)) {
             if (setsockopt(s, IPPROTO_TCP, TCP_USER_TIMEOUT, &opt, sizeof(opt)) < 0) {
-                i_errno = IESETUSERTIMEOUT;
+                iperf_set_error(IESETUSERTIMEOUT);
                 goto error_handling;
             }
         }
@@ -205,7 +205,7 @@ iperf_accept(struct iperf_test *test)
              * or the inability to read the correct amount of data
              * (i.e. timed out).
              */
-            i_errno = IERECVCOOKIE;
+            iperf_set_error(IERECVCOOKIE);
             goto error_handling;
         }
         FD_SET(test->ctrl_sck, &test->read_set);
@@ -251,31 +251,34 @@ iperf_handle_message_server(struct iperf_test *test)
     struct iperf_stream *sp;
 
     if (test->debug_level >= DEBUG_LEVEL_INFO) {
-        iperf_printf(test, "Reading new State from the Client - current state is %d-%s\n", test->state, state_to_text(test->state));
+        iperf_printf(test, "Reading new State from the Client - current state is %d-%s\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)));
     }
 
     // XXX: Need to rethink how this behaves to fit API
-    if ((rval = Nread(test->ctrl_sck, (char*) &test->state, sizeof(signed char), Ptcp)) <= 0) {
+    signed char received_state;
+    if ((rval = Nread(test->ctrl_sck, (char*) &received_state, sizeof(signed char), Ptcp)) <= 0) {
         if (rval == 0) {
             iperf_err(test, "the client has unexpectedly closed the connection");
-            i_errno = IECTRLCLOSE;
+            iperf_set_error(IECTRLCLOSE);
             iperf_set_test_state(test, IPERF_DONE);
             return 0;
         } else {
-            i_errno = IERECVMESSAGE;
+            iperf_set_error(IERECVMESSAGE);
             return -1;
         }
     }
 
+    __atomic_store_n(&test->state, received_state, __ATOMIC_SEQ_CST);
+
     if (test->debug_level >= DEBUG_LEVEL_INFO) {
-        iperf_printf(test, "State change: server received and changed State to %d-%s\n", test->state, state_to_text(test->state));
+        iperf_printf(test, "State change: server received and changed State to %d-%s\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)));
     }
 
-    switch(test->state) {
+    switch(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)) {
         case TEST_START:
             break;
         case TEST_END:
-            test->done = 1;
+            __atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
             cpu_util(test->cpu_util);
             test->stats_callback(test);
             SLIST_FOREACH(sp, &test->streams, streams) {
@@ -296,15 +299,15 @@ iperf_handle_message_server(struct iperf_test *test)
         case IPERF_DONE:
             break;
         case CLIENT_TERMINATE:
-            i_errno = IECLIENTTERM;
+            iperf_set_error(IECLIENTTERM);
 
 	    // Temporarily be in DISPLAY_RESULTS phase so we can get
 	    // ending summary statistics.
-	    signed char oldstate = test->state;
+	    signed char oldstate = __atomic_load_n(&test->state, __ATOMIC_SEQ_CST);
 	    cpu_util(test->cpu_util);
-	    test->state = DISPLAY_RESULTS;
+	    __atomic_store_n(&test->state, DISPLAY_RESULTS, __ATOMIC_SEQ_CST);
 	    test->reporter_callback(test);
-	    test->state = oldstate;
+	    __atomic_store_n(&test->state, oldstate, __ATOMIC_SEQ_CST);
 
             // XXX: Remove this line below!
 	    iperf_err(test, "the client has terminated");
@@ -316,7 +319,7 @@ iperf_handle_message_server(struct iperf_test *test)
             iperf_set_test_state(test, IPERF_DONE);
             break;
         default:
-            i_errno = IEMESSAGE;
+            iperf_set_error(IEMESSAGE);
             return -1;
     }
 
@@ -331,13 +334,13 @@ server_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
     int32_t err;
 
     test->timer = NULL;
-    if (test->done)
+    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
         return;
-    test->done = 1;
+    __atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
     iperf_err(test, "error - server test duration expired - test is terminated by the server");
     if (iperf_set_send_state(test, SERVER_ERROR) == 0) {
-        i_errno = IESERVERTESTDURATIONEXPIRED;
-        err = htonl(i_errno);
+        iperf_set_error(IESERVERTESTDURATIONEXPIRED);
+        err = htonl(iperf_get_error());
         if (Nwrite(test->ctrl_sck, (char*) &err, sizeof(err), Ptcp) == sizeof(err)) {
             err = 0;
             Nwrite(test->ctrl_sck, (char*) &err, sizeof(err), Ptcp);
@@ -362,7 +365,7 @@ server_stats_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
 {
     struct iperf_test *test = client_data.p;
 
-    if (test->done)
+    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
         return;
     if (test->stats_callback)
 	test->stats_callback(test);
@@ -373,7 +376,7 @@ server_reporter_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
 {
     struct iperf_test *test = client_data.p;
 
-    if (test->done)
+    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
         return;
     if (test->reporter_callback)
 	test->reporter_callback(test);
@@ -389,16 +392,16 @@ create_server_timers(struct iperf_test * test)
     int grace_period = max_rtt * state_transitions;
 
     if (iperf_time_now(&now) < 0) {
-	i_errno = IEINITTEST;
+	iperf_set_error(IEINITTEST);
 	return -1;
     }
     cd.p = test;
     test->timer = test->stats_timer = test->reporter_timer = NULL;
     if (test->duration != 0 ) {
-        test->done = 0;
+        __atomic_store_n(&test->done, 0, __ATOMIC_SEQ_CST);
         test->timer = tmr_create(&now, server_timer_proc, cd, (test->duration + test->omit + grace_period) * SEC_TO_US, 0);
         if (test->timer == NULL) {
-            i_errno = IEINITTEST;
+            iperf_set_error(IEINITTEST);
             return -1;
         }
     }
@@ -407,14 +410,14 @@ create_server_timers(struct iperf_test * test)
     if (test->stats_interval != 0) {
         test->stats_timer = tmr_create(&now, server_stats_timer_proc, cd, test->stats_interval * SEC_TO_US, 1);
         if (test->stats_timer == NULL) {
-            i_errno = IEINITTEST;
+            iperf_set_error(IEINITTEST);
             return -1;
 	}
     }
     if (test->reporter_interval != 0) {
         test->reporter_timer = tmr_create(&now, server_reporter_timer_proc, cd, test->reporter_interval * SEC_TO_US, 1);
         if (test->reporter_timer == NULL) {
-            i_errno = IEINITTEST;
+            iperf_set_error(IEINITTEST);
             return -1;
 	}
     }
@@ -450,14 +453,14 @@ create_server_omit_timer(struct iperf_test * test)
 	test->omitting = 0;
     } else {
 	if (iperf_time_now(&now) < 0) {
-	    i_errno = IEINITTEST;
+	    iperf_set_error(IEINITTEST);
 	    return -1;
 	}
 	test->omitting = 1;
 	cd.p = test;
 	test->omit_timer = tmr_create(&now, server_omit_timer_proc, cd, test->omit * SEC_TO_US, 0);
 	if (test->omit_timer == NULL) {
-	    i_errno = IEINITTEST;
+	    iperf_set_error(IEINITTEST);
 	    return -1;
 	}
     }
@@ -472,9 +475,9 @@ cleanup_server(struct iperf_test *test)
     int32_t err;
 
     /* Try to send the error code to the client*/
-    if (i_errno != IENONE && test->ctrl_sck != -1) {
+    if (iperf_get_error() != IENONE && test->ctrl_sck != -1) {
         if (iperf_set_send_state(test, SERVER_ERROR) == 0) {
-            err = htonl(i_errno);
+            err = htonl(iperf_get_error());
             if (Nwrite(test->ctrl_sck, (char*) &err, sizeof(err), Ptcp) >= 0) {
                 err = htonl(errno);
                 Nwrite(test->ctrl_sck, (char*) &err, sizeof(err), Ptcp);
@@ -483,22 +486,22 @@ cleanup_server(struct iperf_test *test)
     }
 
     /* Cancel outstanding threads */
-    int i_errno_save = i_errno;
+    int i_errno_save = iperf_get_error();
     SLIST_FOREACH(sp, &test->streams, streams) {
         int rc;
-        sp->done = 1;
+        __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
         if (sp->thread_created == 1) {
             rc = pthread_cancel(sp->thr);
             if (rc != 0 && rc != ESRCH) {
-                i_errno = IEPTHREADCANCEL;
+                iperf_set_error(IEPTHREADCANCEL);
                 errno = rc;
-                iperf_err(test, "cleanup_server in pthread_cancel - %s", iperf_strerror(i_errno));
+                iperf_err(test, "cleanup_server in pthread_cancel - %s", iperf_strerror(iperf_get_error()));
             }
             rc = pthread_join(sp->thr, NULL);
             if (rc != 0 && rc != ESRCH) {
-                i_errno = IEPTHREADJOIN;
+                iperf_set_error(IEPTHREADJOIN);
                 errno = rc;
-                iperf_err(test, "cleanup_server in pthread_join - %s", iperf_strerror(i_errno));
+                iperf_err(test, "cleanup_server in pthread_join - %s", iperf_strerror(iperf_get_error()));
             }
             if (test->debug_level >= DEBUG_LEVEL_INFO) {
                 iperf_printf(test, "Thread FD %d stopped\n", sp->socket);
@@ -506,7 +509,7 @@ cleanup_server(struct iperf_test *test)
             sp->thread_created = 0;
         }
     }
-    i_errno = i_errno_save;
+    iperf_set_error(i_errno_save);
 
     if (test->debug_level >= DEBUG_LEVEL_INFO) {
         iperf_printf(test, "All threads stopped\n");
@@ -615,7 +618,7 @@ iperf_run_server(struct iperf_test *test)
 	cleanup_server(test);
         return -2;
     }
-    if (test->done) {
+    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST)) {
         cleanup_server(test);
         return 0;
     }
@@ -628,27 +631,27 @@ iperf_run_server(struct iperf_test *test)
     rec_streams_accepted = 0;
     rcv_timeout_us = (test->settings->rcv_timeout.secs * SEC_TO_US) + test->settings->rcv_timeout.usecs;
 
-    while (test->state != IPERF_DONE) {
+    while (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) != IPERF_DONE) {
 
     // Check if average transfer rate was exceeded (condition set in the callback routines)
 	if (test->bitrate_limit_exceeded) {
-        i_errno = IETOTALRATE;
+        iperf_set_error(IETOTALRATE);
         if (iperf_set_send_state(test, SERVER_ERROR) != 0) {
             cleanup_server(test);
             return -1;
         }
 
-        err = htonl(i_errno);
+        err = htonl(iperf_get_error());
         if (Nwrite(test->ctrl_sck, (char*) &err, sizeof(err), Ptcp) < 0) {
             cleanup_server(test);
-            i_errno = IECTRLWRITE;
+            iperf_set_error(IECTRLWRITE);
             return -1;
         }
 
         err = htonl(errno);
         if (Nwrite(test->ctrl_sck, (char*) &err, sizeof(err), Ptcp) < 0) {
             cleanup_server(test);
-            i_errno = IECTRLWRITE;
+            iperf_set_error(IECTRLWRITE);
             return -1;
         }
 
@@ -663,7 +666,7 @@ iperf_run_server(struct iperf_test *test)
 	timeout = tmr_timeout(&now);
 
         // Ensure select() will timeout to allow handling error cases that require server restart
-        if (test->state == IPERF_START) {       // In idle mode server may need to restart
+        if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == IPERF_START) {       // In idle mode server may need to restart
             if (timeout == NULL && test->settings->idle_timeout > 0) {
                 used_timeout.tv_sec = test->settings->idle_timeout;
                 used_timeout.tv_usec = 0;
@@ -687,14 +690,22 @@ iperf_run_server(struct iperf_test *test)
             timeout = &used_timeout;
         }
 
+        /* The engine owns listener close. Bound waits so an external stop
+         * request is observed even while idle; expiry still uses elapsed time. */
+        if (timeout == NULL || timeout->tv_sec >= 1) {
+            used_timeout.tv_sec = 1;
+            used_timeout.tv_usec = 0;
+            timeout = &used_timeout;
+        }
+
         result = select(test->max_fd + 1, &read_set, &write_set, NULL, timeout);
-        if (test->done) {
+        if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST)) {
             cleanup_server(test);
             return 0;
         }
         if (result < 0 && errno != EINTR) {
             cleanup_server(test);
-            i_errno = IESELECT;
+            iperf_set_error(IESELECT);
             return -1;
         } else if (result == 0) {
             /*
@@ -709,7 +720,7 @@ iperf_run_server(struct iperf_test *test)
                 t_usecs = iperf_time_in_usecs(&diff_time);
 
                 /* We're in the state where we're still accepting connections */
-                if (test->state == IPERF_START) {
+                if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == IPERF_START) {
                     if (test->settings->idle_timeout > 0 && t_usecs >= test->settings->idle_timeout * SEC_TO_US) {
                         test->server_forced_idle_restarts_count += 1;
                         if (test->debug)
@@ -727,9 +738,9 @@ iperf_run_server(struct iperf_test *test)
                  */
                 else if (test->mode != SENDER && t_usecs > rcv_timeout_us) {
                     /* Idle timeout if no new blocks received */
-                    if (test->blocks_received == last_receive_blocks) {
+                    if (__atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) == last_receive_blocks) {
                         test->server_forced_no_msg_restarts_count += 1;
-                        i_errno = IENOMSG;
+                        iperf_set_error(IENOMSG);
                         if (iperf_get_verbose(test))
                             iperf_err(test, "Server restart (#%d) during active test due to idle timeout for receiving data",
                                       test->server_forced_no_msg_restarts_count);
@@ -741,14 +752,14 @@ iperf_run_server(struct iperf_test *test)
         }
 
         /* See if the test is making progress */
-        if (test->blocks_received > last_receive_blocks) {
-            last_receive_blocks = test->blocks_received;
+        if (__atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) > last_receive_blocks) {
+            last_receive_blocks = __atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST);
             last_receive_time = now;
         }
 
 	if (result > 0) {
             if (FD_ISSET(test->listener, &read_set)) {
-                if (test->state != CREATE_STREAMS) {
+                if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) != CREATE_STREAMS) {
                     if (iperf_accept(test) < 0) {
 			cleanup_server(test);
                         return -1;
@@ -776,7 +787,7 @@ iperf_run_server(struct iperf_test *test)
                 FD_CLR(test->ctrl_sck, &read_set);
             }
 
-            if (test->state == CREATE_STREAMS) {
+            if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == CREATE_STREAMS) {
                 if (FD_ISSET(test->prot_listener, &read_set)) {
 
                     if ((s = test->protocol->accept(test)) < 0) {
@@ -802,7 +813,7 @@ iperf_run_server(struct iperf_test *test)
                                 close(s);
                                 cleanup_server(test);
                                 errno = saved_errno;
-                                i_errno = IESETUSERTIMEOUT;
+                                iperf_set_error(IESETUSERTIMEOUT);
                                 return -1;
                             }
                         }
@@ -830,7 +841,7 @@ iperf_run_server(struct iperf_test *test)
 				    close(s);
 				    cleanup_server(test);
 				    errno = saved_errno;
-				    i_errno = IESETCONGESTION;
+				    iperf_set_error(IESETCONGESTION);
 				    return -1;
 				}
 			    }
@@ -845,7 +856,7 @@ iperf_run_server(struct iperf_test *test)
 				close(s);
 				cleanup_server(test);
 				errno = saved_errno;
-				i_errno = IESETCONGESTION;
+				iperf_set_error(IESETCONGESTION);
 				return -1;
 			    }
                             /*
@@ -907,7 +918,7 @@ iperf_run_server(struct iperf_test *test)
                             iperf_close_test_listener(test);
                             if ((s = netannounce(test->settings->domain, Ptcp, test->bind_address, test->bind_dev, test->server_port)) < 0) {
 				cleanup_server(test);
-                                i_errno = IELISTEN;
+                                iperf_set_error(IELISTEN);
                                 return -1;
                             }
                             test->listener = s;
@@ -924,7 +935,7 @@ iperf_run_server(struct iperf_test *test)
                             iperf_err(test, "Client total requested throughput rate of %" PRIu64 " bps exceeded %" PRIu64 " bps limit",
                                       total_requested_rate, test->settings->bitrate_limit);
 			cleanup_server(test);
-			i_errno = IETOTALRATE;
+			iperf_set_error(IETOTALRATE);
 			return -1;
 		    }
 
@@ -960,13 +971,13 @@ iperf_run_server(struct iperf_test *test)
                     /* Create and spin up threads */
                     pthread_attr_t attr;
                     if (pthread_attr_init(&attr) != 0) {
-                        i_errno = IEPTHREADATTRINIT;
+                        iperf_set_error(IEPTHREADATTRINIT);
                         cleanup_server(test);
                     };
 
                     SLIST_FOREACH(sp, &test->streams, streams) {
                         if (pthread_create(&(sp->thr), &attr, &iperf_server_worker_run, sp) != 0) {
-                            i_errno = IEPTHREADCREATE;
+                            iperf_set_error(IEPTHREADCREATE);
                             cleanup_server(test);
                             return -1;
                         }
@@ -979,12 +990,12 @@ iperf_run_server(struct iperf_test *test)
                         iperf_printf(test, "All threads created\n");
                     }
                     if (pthread_attr_destroy(&attr) != 0) {
-                        i_errno = IEPTHREADATTRDESTROY;
+                        iperf_set_error(IEPTHREADATTRDESTROY);
                         cleanup_server(test);
                     };
 
                     /* Reset receive-progress baseline after workers are ready */
-                    last_receive_blocks = test->blocks_received;
+                    last_receive_blocks = __atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST);
                     iperf_time_now(&last_receive_time);
                 }
             }

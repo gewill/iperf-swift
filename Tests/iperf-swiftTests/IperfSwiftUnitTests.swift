@@ -143,6 +143,29 @@ private func formatted(_ declarations: Set<SourceErrorDeclaration>) -> String {
 }
 
 final class IperfSwiftUnitTests: XCTestCase {
+    func testStopRequestLeavesListenerForEngineCleanup() throws {
+        let test = try XCTUnwrap(iperf_new_test())
+        defer { iperf_free_test(test) }
+        let listener = socket(AF_INET, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(listener, 0)
+        guard listener >= 0 else { return }
+        test.pointee.listener = listener
+        test.pointee.prot_listener = listener
+        iperf_request_test_stop(test)
+        XCTAssertNotEqual(fcntl(listener, F_GETFD), -1)
+        XCTAssertEqual(test.pointee.listener, listener)
+        iperf_close_test_listener(test)
+        XCTAssertEqual(test.pointee.listener, -1)
+        XCTAssertEqual(test.pointee.prot_listener, -1)
+        XCTAssertEqual(fcntl(listener, F_GETFD), -1)
+        let replacement = socket(AF_INET, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(replacement, 0)
+        guard replacement >= 0 else { return }
+        defer { close(replacement) }
+        iperf_close_test_listener(test)
+        XCTAssertNotEqual(fcntl(replacement, F_GETFD), -1)
+    }
+
     func testPackagedOpenSSLUsesMajorVersionFour() {
         XCTAssertEqual(iperf_openssl_version_major(), 4)
     }
@@ -921,6 +944,176 @@ final class IperfSwiftUnitTests: XCTestCase {
 
         XCTAssertEqual(configuration.addressFamily, .ipv6)
         XCTAssertTrue(configuration.dontFragment)
+    }
+
+    func testConcurrentStreamsPreserveSessionByteAndBlockCounts() throws {
+        let test = try XCTUnwrap(iperf_new_test())
+        XCTAssertEqual(iperf_defaults(test), 0)
+        defer { iperf_free_test(test) }
+        test.pointee.multisend = 1
+        test.pointee.settings.pointee.rate = 0
+        let workers = 4
+        let transfers = 100_000
+        DispatchQueue.concurrentPerform(iterations: workers) { _ in
+            var stream = iperf_stream()
+            stream.test = test
+            stream.settings = test.pointee.settings
+            stream.green_light = 1
+            stream.snd = { _ in 7 }
+            stream.rcv = { _ in 7 }
+            for _ in 0..<transfers {
+                _ = iperf_send_mt(&stream)
+                _ = iperf_recv_mt(&stream)
+            }
+            // A receive timeout must not advance progress or the block count.
+            stream.rcv = { _ in 0 }
+            _ = iperf_recv_mt(&stream)
+        }
+        // All workers have joined before inspecting the plain C layout.
+        let blocks = workers * transfers
+        XCTAssertEqual(test.pointee.bytes_sent, blocks * 7)
+        XCTAssertEqual(test.pointee.bytes_received, blocks * 7)
+        XCTAssertEqual(test.pointee.blocks_sent, blocks)
+        XCTAssertEqual(test.pointee.blocks_received, blocks)
+    }
+
+    func testConcurrentUDPIntervalsPreserveEveryPacket() throws {
+        let test = try XCTUnwrap(iperf_new_test())
+        XCTAssertEqual(iperf_defaults(test), 0)
+        test.pointee.protocol.pointee.id = Pudp
+        test.pointee.settings.pointee.blksize = 12
+        iperf_set_test_state(test, Int8(TEST_RUNNING))
+        var sockets: [Int32] = [-1, -1]
+        XCTAssertEqual(socketpair(AF_UNIX, SOCK_DGRAM, 0, &sockets), 0)
+        let stream = UnsafeMutablePointer<iperf_stream>.allocate(capacity: 1)
+        stream.initialize(to: iperf_stream())
+        let result = UnsafeMutablePointer<iperf_stream_result>.allocate(capacity: 1)
+        result.initialize(to: iperf_stream_result())
+        let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: 12)
+        buffer.initialize(repeating: 0, count: 12)
+        stream.pointee.test = test
+        stream.pointee.settings = test.pointee.settings
+        stream.pointee.result = result
+        stream.pointee.socket = sockets[1]
+        stream.pointee.buffer = buffer
+        test.pointee.streams.slh_first = stream
+        defer {
+            close(sockets[0])
+            close(sockets[1])
+            free(result.pointee.interval_results.tqh_first)
+            test.pointee.streams.slh_first = nil
+            iperf_free_test(test)
+            buffer.deinitialize(count: 12)
+            buffer.deallocate()
+            result.deinitialize(count: 1)
+            result.deallocate()
+            stream.deinitialize(count: 1)
+            stream.deallocate()
+        }
+        withUnsafeMutablePointer(to: &result.pointee.interval_results.tqh_first) { first in
+            result.pointee.interval_results.tqh_last = first
+            iperf_time_now(&result.pointee.start_time)
+            let packets = 20_000
+            var reported: Int64 = 0
+            let receiving = DispatchGroup()
+            receiving.enter()
+            DispatchQueue.global().async {
+                defer { receiving.leave() }
+                for sequence in 1...packets {
+                    let header: [UInt32] = [0, 0, UInt32(sequence).bigEndian]
+                    let sent = header.withUnsafeBytes {
+                        Darwin.send(sockets[0], $0.baseAddress, $0.count, 0)
+                    }
+                    guard sent == 12 else {
+                        XCTFail("failed to send the local test datagram")
+                        return
+                    }
+                    XCTAssertEqual(iperf_udp_recv(stream), 12)
+                }
+            }
+            while receiving.wait(timeout: .now()) == .timedOut {
+                iperf_stats_callback(test)
+                reported += result.pointee.interval_results.tqh_first.pointee.interval_packet_count
+            }
+            iperf_stats_callback(test)
+            let final = result.pointee.interval_results.tqh_first.pointee
+            reported += final.interval_packet_count
+            XCTAssertEqual(reported, Int64(packets))
+            XCTAssertEqual(final.packet_count, Int64(packets))
+            XCTAssertEqual(final.cnt_error, 0)
+            XCTAssertEqual(final.outoforder_packets, 0)
+            XCTAssertTrue(final.jitter.isFinite)
+        }
+    }
+
+    func testConcurrentIntervalSnapshotsPreserveEveryByte() throws {
+        for sender in [false, true] {
+            let test = try XCTUnwrap(iperf_new_test())
+            XCTAssertEqual(iperf_defaults(test), 0)
+            test.pointee.protocol.pointee.id = Pudp
+            let stream = UnsafeMutablePointer<iperf_stream>.allocate(capacity: 1)
+            stream.initialize(to: iperf_stream())
+            let result = UnsafeMutablePointer<iperf_stream_result>.allocate(capacity: 1)
+            result.initialize(to: iperf_stream_result())
+            stream.pointee.sender = sender ? 1 : 0
+            stream.pointee.result = result
+            test.pointee.streams.slh_first = stream
+            defer {
+                free(result.pointee.interval_results.tqh_first)
+                test.pointee.streams.slh_first = nil
+                iperf_free_test(test)
+                result.deinitialize(count: 1)
+                result.deallocate()
+                stream.deinitialize(count: 1)
+                stream.deallocate()
+            }
+            withUnsafeMutablePointer(to: &result.pointee.interval_results.tqh_first) { first in
+                result.pointee.interval_results.tqh_last = first
+                iperf_time_now(&result.pointee.start_time)
+                func exercise(_ counter: UnsafeMutablePointer<atomic_iperf_size_t>) {
+                    let writes = 1_000_000
+                    var reported: Int64 = 0
+                    DispatchQueue.concurrentPerform(iterations: 2) { worker in
+                        if worker == 0 {
+                            for _ in 0..<writes { _ = atomic_fetch_add(counter, 1) }
+                        } else {
+                            for _ in 0..<20_000 {
+                                iperf_stats_callback(test)
+                                reported += Int64(result.pointee.interval_results.tqh_first.pointee.bytes_transferred)
+                            }
+                        }
+                    }
+                    // Both workers joined; include bytes arriving after the last snapshot.
+                    iperf_stats_callback(test)
+                    reported += Int64(result.pointee.interval_results.tqh_first.pointee.bytes_transferred)
+                    XCTAssertEqual(reported, Int64(writes), "sender=\(sender)")
+                }
+                if sender {
+                    withUnsafeMutablePointer(to: &result.pointee.bytes_sent_this_interval, exercise)
+                } else {
+                    withUnsafeMutablePointer(to: &result.pointee.bytes_received_this_interval, exercise)
+                }
+            }
+        }
+    }
+
+    func testOmitResetStartsTheNextIntervalAtTheResetTime() {
+        var test = iperf_test()
+        var stream = iperf_stream()
+        var result = iperf_stream_result()
+        result.start_time = iperf_time(secs: 1, usecs: 0)
+        result.end_time = iperf_time(secs: 2, usecs: 0)
+        withUnsafeMutablePointer(to: &result) { resultPointer in
+            stream.result = resultPointer
+            withUnsafeMutablePointer(to: &stream) { streamPointer in
+                test.streams.slh_first = streamPointer
+                iperf_reset_stats(&test)
+                // Statistics use end_time when an earlier omitted interval exists.
+                XCTAssertEqual(resultPointer.pointee.start_time.secs, resultPointer.pointee.end_time.secs)
+                XCTAssertEqual(resultPointer.pointee.start_time.usecs, resultPointer.pointee.end_time.usecs)
+                XCTAssertGreaterThan(resultPointer.pointee.start_time.secs, 2)
+            }
+        }
     }
 
     func testStreamRunTotalsUseTheCLIsMeanAndSampleGuard() {

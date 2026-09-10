@@ -157,6 +157,13 @@ diff -ru a/iperf_api.c b/iperf_api.c
      if (test->server_rsa_private_key)
        EVP_PKEY_free(test->server_rsa_private_key);
      test->server_rsa_private_key = NULL;
+@@ -3726,3 +3726,5 @@
+-	rp->start_time = now;
++	rp->start_time = now;
++	/* The next non-omitted interval must start at the omit reset. */
++	rp->end_time = now;
+     }
+ }
 diff -ru a/iperf_auth.c b/iperf_auth.c
 --- a/iperf_auth.c	2026-05-15 23:42:06
 +++ b/iperf_auth.c	2026-05-15 23:42:06
@@ -451,3 +458,1733 @@ diff -ru a/net.c b/net.c
              return -1;
          }
      }
+diff -ru a/iperf_api.c b/iperf_api.c
+--- a/iperf_api.c
++++ b/iperf_api.c
+@@ -3716,7 +3716,8 @@
+ 	rp = sp->result;
+         rp->bytes_sent_omit = rp->bytes_sent;
+         rp->bytes_received = 0;
+-        rp->bytes_sent_this_interval = rp->bytes_received_this_interval = 0;
++        atomic_store(&rp->bytes_sent_this_interval, 0);
++        atomic_store(&rp->bytes_received_this_interval, 0);
+ 	if (test->sender_has_retransmits == 1) {
+ 	    struct iperf_interval_results ir; /* temporary results structure */
+ 	    save_tcpinfo(sp, &ir);
+@@ -3752,10 +3753,13 @@
+     temp.pmtu = 0;
+     SLIST_FOREACH(sp, &test->streams, streams) {
+         rp = sp->result;
+-	temp.bytes_transferred = sp->sender ? rp->bytes_sent_this_interval : rp->bytes_received_this_interval;
++        /* Updates after the exchange belong to the next interval. */
++        iperf_size_t sent = atomic_exchange(&rp->bytes_sent_this_interval, 0);
++        iperf_size_t received = atomic_exchange(&rp->bytes_received_this_interval, 0);
++        temp.bytes_transferred = sp->sender ? sent : received;
+ 
+         // Total bytes transferred this interval
+-	total_interval_bytes_transferred += rp->bytes_sent_this_interval + rp->bytes_received_this_interval;
++	total_interval_bytes_transferred += sent + received;
+ 
+ 	irp = TAILQ_LAST(&rp->interval_results, irlisthead);
+         /* result->end_time contains timestamp of previous interval */
+@@ -3850,7 +3854,6 @@
+ #endif /* HAVE_SCTP_H */
+ 
+         add_to_interval_list(rp, &temp);
+-        rp->bytes_sent_this_interval = rp->bytes_received_this_interval = 0;
+     }
+ 
+     /* Verify that total server's throughput is not above specified limit */
+diff -ru a/iperf_tcp.c b/iperf_tcp.c
+--- a/iperf_tcp.c
++++ b/iperf_tcp.c
+@@ -74,7 +74,7 @@
+     /* Only count bytes received while we're in the correct state. */
+     if (sp->test->state == TEST_RUNNING) {
+ 	      sp->result->bytes_received += r;
+-	      sp->result->bytes_received_this_interval += r;
++	      atomic_fetch_add(&sp->result->bytes_received_this_interval, r);
+     }
+     else {
+ 	      if (sp->test->debug)
+@@ -107,7 +107,7 @@
+ 
+     sp->pending_size -= r;
+     sp->result->bytes_sent += r;
+-    sp->result->bytes_sent_this_interval += r;
++    atomic_fetch_add(&sp->result->bytes_sent_this_interval, r);
+ 
+     if (sp->test->debug_level >=  DEBUG_LEVEL_DEBUG)
+ 	      printf("sent %d bytes of %d, pending %d, total %" PRIu64 "\n",
+diff -ru a/iperf_udp.c b/iperf_udp.c
+--- a/iperf_udp.c
++++ b/iperf_udp.c
+@@ -116,7 +116,7 @@
+ 	}
+ 
+ 	sp->result->bytes_received += r;
+-	sp->result->bytes_received_this_interval += r;
++	atomic_fetch_add(&sp->result->bytes_received_this_interval, r);
+ 
+ 	if (sp->test->debug)
+ 	    printf("received %d bytes of %d, total %" PRIu64 "\n", r, size, sp->result->bytes_received);
+@@ -343,7 +343,7 @@
+     }
+ 
+     sp->result->bytes_sent += r;
+-    sp->result->bytes_sent_this_interval += r;
++    atomic_fetch_add(&sp->result->bytes_sent_this_interval, r);
+ 
+     if (sp->test->debug_level >=  DEBUG_LEVEL_DEBUG)
+ 	printf("sent %d bytes of %d, total %" PRIu64 "\n", r, size, sp->result->bytes_sent);
+diff -ru a/iperf_sctp.c b/iperf_sctp.c
+--- a/iperf_sctp.c
++++ b/iperf_sctp.c
+@@ -63,7 +63,7 @@
+     /* Only count bytes received while we're in the correct state. */
+     if (sp->test->state == TEST_RUNNING) {
+ 	sp->result->bytes_received += r;
+-	sp->result->bytes_received_this_interval += r;
++	atomic_fetch_add(&sp->result->bytes_received_this_interval, r);
+     }
+     else {
+ 	if (sp->test->debug)
+@@ -93,7 +93,7 @@
+         return r;
+ 
+     sp->result->bytes_sent += r;
+-    sp->result->bytes_sent_this_interval += r;
++    atomic_fetch_add(&sp->result->bytes_sent_this_interval, r);
+ 
+     return r;
+ #else
+diff --git a/include/iperf_api.h b/include/iperf_api.h
+index ea09714..b974832 100644
+--- a/include/iperf_api.h
++++ b/include/iperf_api.h
+@@ -186,0 +187,3 @@ void	iperf_set_test_state( struct iperf_test* ipt, signed char state );
++signed char iperf_get_test_state(struct iperf_test *ipt);
++int iperf_get_test_done(struct iperf_test *ipt);
++void iperf_request_test_stop(struct iperf_test *ipt);
+diff --git a/iperf_api.c b/iperf_api.c
+index 6fa8c1c..a935c5d 100644
+--- a/iperf_api.c
++++ b/iperf_api.c
+@@ -489 +489 @@ iperf_set_test_state(struct iperf_test *ipt, signed char state)
+-                     state, state_to_text(state), ipt->state, state_to_text(ipt->state));
++                     state, state_to_text(state), __atomic_load_n(&ipt->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&ipt->state, __ATOMIC_SEQ_CST)));
+@@ -491 +491 @@ iperf_set_test_state(struct iperf_test *ipt, signed char state)
+-    ipt->state = state;
++    __atomic_store_n(&ipt->state, state, __ATOMIC_SEQ_CST);
+@@ -2106 +2106 @@ iperf_check_throttle(struct iperf_stream *sp, struct iperf_time *nowP)
+-    if (sp->test->done || sp->test->settings->rate == 0)
++    if (__atomic_load_n(&sp->test->done, __ATOMIC_SEQ_CST) || sp->test->settings->rate == 0)
+@@ -2172 +2172 @@ iperf_check_total_rate(struct iperf_test *test, iperf_size_t last_interval_bytes
+-    if (test->done || test->settings->bitrate_limit == 0)    // Continue only if check should be done
++    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST) || test->settings->bitrate_limit == 0)    // Continue only if check should be done
+@@ -2241 +2241 @@ iperf_send_mt(struct iperf_stream *sp)
+-        if (multisend > 1 && test->settings->bytes != 0 && test->bytes_sent >= test->settings->bytes)
++        if (multisend > 1 && test->settings->bytes != 0 && __atomic_load_n(&test->bytes_sent, __ATOMIC_SEQ_CST) >= test->settings->bytes)
+@@ -2243 +2243 @@ iperf_send_mt(struct iperf_stream *sp)
+-        if (multisend > 1 && test->settings->blocks != 0 && test->blocks_sent >= test->settings->blocks)
++        if (multisend > 1 && test->settings->blocks != 0 && __atomic_load_n(&test->blocks_sent, __ATOMIC_SEQ_CST) >= test->settings->blocks)
+@@ -2251 +2251 @@ iperf_send_mt(struct iperf_stream *sp)
+-        test->bytes_sent += r;
++        __atomic_fetch_add(&test->bytes_sent, r, __ATOMIC_SEQ_CST);
+@@ -2253 +2253 @@ iperf_send_mt(struct iperf_stream *sp)
+-            ++test->blocks_sent;
++            __atomic_fetch_add(&test->blocks_sent, 1, __ATOMIC_SEQ_CST);
+@@ -2288,2 +2288,2 @@ iperf_recv_mt(struct iperf_stream *sp)
+-	        test->bytes_received += r;
+-	        ++test->blocks_received;
++	        __atomic_fetch_add(&test->bytes_received, r, __ATOMIC_SEQ_CST);
++	        __atomic_fetch_add(&test->blocks_received, 1, __ATOMIC_SEQ_CST);
+@@ -3592 +3592 @@ iperf_reset_test(struct iperf_test *test)
+-    test->done = 0;
++    __atomic_store_n(&test->done, 0, __ATOMIC_SEQ_CST);
+@@ -3612 +3612 @@ iperf_reset_test(struct iperf_test *test)
+-    test->state = 0;
++    __atomic_store_n(&test->state, 0, __ATOMIC_SEQ_CST);
+@@ -3618,2 +3618,2 @@ iperf_reset_test(struct iperf_test *test)
+-    test->bytes_sent = 0;
+-    test->blocks_sent = 0;
++    __atomic_store_n(&test->bytes_sent, 0, __ATOMIC_SEQ_CST);
++    __atomic_store_n(&test->blocks_sent, 0, __ATOMIC_SEQ_CST);
+@@ -3621,2 +3621,2 @@ iperf_reset_test(struct iperf_test *test)
+-    test->bytes_received = 0;
+-    test->blocks_received = 0;
++    __atomic_store_n(&test->bytes_received, 0, __ATOMIC_SEQ_CST);
++    __atomic_store_n(&test->blocks_received, 0, __ATOMIC_SEQ_CST);
+@@ -3708,2 +3708,2 @@ iperf_reset_stats(struct iperf_test *test)
+-    test->bytes_sent = 0;
+-    test->blocks_sent = 0;
++    __atomic_store_n(&test->bytes_sent, 0, __ATOMIC_SEQ_CST);
++    __atomic_store_n(&test->blocks_sent, 0, __ATOMIC_SEQ_CST);
+@@ -4662 +4662 @@ iperf_reporter_callback(struct iperf_test *test)
+-    switch (test->state) {
++    switch (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)) {
+@@ -5088 +5088 @@ diskfile_send(struct iperf_stream *sp)
+-    if (sp->diskfile_left < sp->test->settings->blksize && !sp->test->done) {
++    if (sp->diskfile_left < sp->test->settings->blksize && !__atomic_load_n(&sp->test->done, __ATOMIC_SEQ_CST)) {
+@@ -5110 +5110 @@ diskfile_send(struct iperf_stream *sp)
+-    	    sp->test->done = 1;
++	    __atomic_store_n(&sp->test->done, 1, __ATOMIC_SEQ_CST);
+@@ -5119 +5119 @@ diskfile_send(struct iperf_stream *sp)
+-    if( sp->test->done || buffer_left == 0 ){
++    if( __atomic_load_n(&sp->test->done, __ATOMIC_SEQ_CST) || buffer_left == 0 ){
+@@ -5122 +5122 @@ diskfile_send(struct iperf_stream *sp)
+-        sp->test->done = 1;
++        __atomic_store_n(&sp->test->done, 1, __ATOMIC_SEQ_CST);
+@@ -5191 +5191 @@ iperf_got_sigend(struct iperf_test *test, int sig)
+-      (test->role == 's' && test->state == TEST_RUNNING)) {
++      (test->role == 's' && __atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING)) {
+@@ -5193 +5193 @@ iperf_got_sigend(struct iperf_test *test, int sig)
+-	test->done = 1;
++	__atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
+@@ -5204 +5204,2 @@ iperf_got_sigend(struct iperf_test *test, int sig)
+-	(void) Nwrite(test->ctrl_sck, (char*) &test->state, sizeof(signed char), Ptcp);
++	signed char outgoing_state = __atomic_load_n(&test->state, __ATOMIC_SEQ_CST);
++	(void) Nwrite(test->ctrl_sck, (char*) &outgoing_state, sizeof(signed char), Ptcp);
+@@ -5688,0 +5690,16 @@ iperf_set_control_keepalive(struct iperf_test *test)
++
++/* Swift and native workers share these control flags. Keep the public C layout. */
++signed char iperf_get_test_state(struct iperf_test *ipt)
++{
++    return __atomic_load_n(&ipt->state, __ATOMIC_SEQ_CST);
++}
++
++int iperf_get_test_done(struct iperf_test *ipt)
++{
++    return __atomic_load_n(&ipt->done, __ATOMIC_SEQ_CST);
++}
++
++void iperf_request_test_stop(struct iperf_test *ipt)
++{
++    __atomic_store_n(&ipt->done, 1, __ATOMIC_SEQ_CST);
++}
+diff --git a/iperf_client_api.c b/iperf_client_api.c
+index 48acfce..ae92b01 100644
+--- a/iperf_client_api.c
++++ b/iperf_client_api.c
+@@ -81 +81 @@ iperf_client_worker_run(void *s) {
+-    while (! (test->done) && ! (sp->done)) {
++    while (! (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST)) && ! (__atomic_load_n(&sp->done, __ATOMIC_SEQ_CST))) {
+@@ -186 +186 @@ test_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
+-    test->done = 1;
++    __atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
+@@ -194 +194 @@ client_stats_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
+-    if (test->done)
++    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
+@@ -205 +205 @@ client_reporter_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
+-    if (test->done)
++    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
+@@ -230 +230 @@ create_client_timers(struct iperf_test * test)
+-	test->done = 0;
++	__atomic_store_n(&test->done, 0, __ATOMIC_SEQ_CST);
+@@ -316 +316 @@ iperf_handle_message_client(struct iperf_test *test)
+-        iperf_printf(test, "Reading new State from the Server - current state is %d-%s\n", test->state, state_to_text(test->state));
++        iperf_printf(test, "Reading new State from the Server - current state is %d-%s\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)));
+@@ -320 +320,2 @@ iperf_handle_message_client(struct iperf_test *test)
+-    if ((rval = read(test->ctrl_sck, (char*) &test->state, sizeof(signed char))) <= 0) {
++    signed char received_state;
++    if ((rval = read(test->ctrl_sck, (char*) &received_state, sizeof(signed char))) <= 0) {
+@@ -329,0 +331,2 @@ iperf_handle_message_client(struct iperf_test *test)
++    __atomic_store_n(&test->state, received_state, __ATOMIC_SEQ_CST);
++
+@@ -331 +334 @@ iperf_handle_message_client(struct iperf_test *test)
+-        iperf_printf(test, "State change: client received and changed State to %d-%s\n", test->state, state_to_text(test->state));
++        iperf_printf(test, "State change: client received and changed State to %d-%s\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)));
+@@ -334 +337 @@ iperf_handle_message_client(struct iperf_test *test)
+-    switch (test->state) {
++    switch (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)) {
+@@ -383 +386 @@ iperf_handle_message_client(struct iperf_test *test)
+-	    signed char oldstate = test->state;
++	    signed char oldstate = __atomic_load_n(&test->state, __ATOMIC_SEQ_CST);
+@@ -385 +388 @@ iperf_handle_message_client(struct iperf_test *test)
+-	    test->state = DISPLAY_RESULTS;
++	    __atomic_store_n(&test->state, DISPLAY_RESULTS, __ATOMIC_SEQ_CST);
+@@ -387 +390 @@ iperf_handle_message_client(struct iperf_test *test)
+-	    test->state = oldstate;
++	    __atomic_store_n(&test->state, oldstate, __ATOMIC_SEQ_CST);
+@@ -573 +576 @@ iperf_client_end(struct iperf_test *test)
+-    if (test->state > 0) {
++    if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) > 0) {
+@@ -649 +652 @@ iperf_run_client(struct iperf_test * test)
+-    while (test->state != IPERF_DONE) {
++    while (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) != IPERF_DONE) {
+@@ -656 +659 @@ iperf_run_client(struct iperf_test * test)
+-        if (test->state == TEST_RUNNING && rcv_timeout_us > 0) {
++        if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING && rcv_timeout_us > 0) {
+@@ -681 +684 @@ iperf_run_client(struct iperf_test * test)
+-                    (test->state == TEST_RUNNING && !test->reverse) ? &write_set : NULL,
++                    (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING && !test->reverse) ? &write_set : NULL,
+@@ -690 +693 @@ iperf_run_client(struct iperf_test * test)
+-        } else if (result == 0 && test->state == TEST_RUNNING && rcv_timeout_us > 0) {
++        } else if (result == 0 && __atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING && rcv_timeout_us > 0) {
+@@ -701 +704 @@ iperf_run_client(struct iperf_test * test)
+-                    if (test->blocks_received == last_receive_blocks) {
++                    if (__atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) == last_receive_blocks) {
+@@ -711,2 +714,2 @@ iperf_run_client(struct iperf_test * test)
+-        if (test->blocks_received > last_receive_blocks) {
+-            last_receive_blocks = test->blocks_received;
++        if (__atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) > last_receive_blocks) {
++            last_receive_blocks = __atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST);
+@@ -725 +728 @@ iperf_run_client(struct iperf_test * test)
+-	if (test->state == TEST_RUNNING) {
++	if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING) {
+@@ -771,5 +774,5 @@ iperf_run_client(struct iperf_test * test)
+-	        (test->done ||
+-	         (test->settings->bytes != 0 && (test->bytes_sent >= test->settings->bytes ||
+-						 test->bytes_received >= test->settings->bytes)) ||
+-	         (test->settings->blocks != 0 && (test->blocks_sent >= test->settings->blocks ||
+-						  test->blocks_received >= test->settings->blocks)))) {
++	        (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST) ||
++	         (test->settings->bytes != 0 && (__atomic_load_n(&test->bytes_sent, __ATOMIC_SEQ_CST) >= test->settings->bytes ||
++						 __atomic_load_n(&test->bytes_received, __ATOMIC_SEQ_CST) >= test->settings->bytes)) ||
++	         (test->settings->blocks != 0 && (__atomic_load_n(&test->blocks_sent, __ATOMIC_SEQ_CST) >= test->settings->blocks ||
++						  __atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) >= test->settings->blocks)))) {
+@@ -781 +784 @@ iperf_run_client(struct iperf_test * test)
+-                        sp->done = 1;
++                        __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
+@@ -809 +812 @@ iperf_run_client(struct iperf_test * test)
+-		test->done = 1;
++		__atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
+@@ -822 +825 @@ iperf_run_client(struct iperf_test * test)
+-            sp->done = 1;
++            __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
+@@ -865 +868 @@ iperf_run_client(struct iperf_test * test)
+-        if (sp->done) {
++        if (__atomic_load_n(&sp->done, __ATOMIC_SEQ_CST)) {
+@@ -868 +871 @@ iperf_run_client(struct iperf_test * test)
+-        sp->done = 1;
++        __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
+diff --git a/iperf_sctp.c b/iperf_sctp.c
+index f05fec9..969c512 100644
+--- a/iperf_sctp.c
++++ b/iperf_sctp.c
+@@ -64 +64 @@ iperf_sctp_recv(struct iperf_stream *sp)
+-    if (sp->test->state == TEST_RUNNING) {
++    if (__atomic_load_n(&sp->test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING) {
+@@ -70 +70 @@ iperf_sctp_recv(struct iperf_stream *sp)
+-	    printf("Late receive, state = %d\n", sp->test->state);
++	    printf("Late receive, state = %d\n", __atomic_load_n(&sp->test->state, __ATOMIC_SEQ_CST));
+diff --git a/iperf_server_api.c b/iperf_server_api.c
+index 26a5539..12ac169 100644
+--- a/iperf_server_api.c
++++ b/iperf_server_api.c
+@@ -95 +95 @@ iperf_server_worker_run(void *s) {
+-    while (! (test->done) && ! (sp->done)) {
++    while (! (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST)) && ! (__atomic_load_n(&sp->done, __ATOMIC_SEQ_CST))) {
+@@ -254 +254 @@ iperf_handle_message_server(struct iperf_test *test)
+-        iperf_printf(test, "Reading new State from the Client - current state is %d-%s\n", test->state, state_to_text(test->state));
++        iperf_printf(test, "Reading new State from the Client - current state is %d-%s\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)));
+@@ -258 +258,2 @@ iperf_handle_message_server(struct iperf_test *test)
+-    if ((rval = Nread(test->ctrl_sck, (char*) &test->state, sizeof(signed char), Ptcp)) <= 0) {
++    signed char received_state;
++    if ((rval = Nread(test->ctrl_sck, (char*) &received_state, sizeof(signed char), Ptcp)) <= 0) {
+@@ -269,0 +271,2 @@ iperf_handle_message_server(struct iperf_test *test)
++    __atomic_store_n(&test->state, received_state, __ATOMIC_SEQ_CST);
++
+@@ -271 +274 @@ iperf_handle_message_server(struct iperf_test *test)
+-        iperf_printf(test, "State change: server received and changed State to %d-%s\n", test->state, state_to_text(test->state));
++        iperf_printf(test, "State change: server received and changed State to %d-%s\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)));
+@@ -274 +277 @@ iperf_handle_message_server(struct iperf_test *test)
+-    switch(test->state) {
++    switch(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)) {
+@@ -278 +281 @@ iperf_handle_message_server(struct iperf_test *test)
+-            test->done = 1;
++            __atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
+@@ -303 +306 @@ iperf_handle_message_server(struct iperf_test *test)
+-	    signed char oldstate = test->state;
++	    signed char oldstate = __atomic_load_n(&test->state, __ATOMIC_SEQ_CST);
+@@ -305 +308 @@ iperf_handle_message_server(struct iperf_test *test)
+-	    test->state = DISPLAY_RESULTS;
++	    __atomic_store_n(&test->state, DISPLAY_RESULTS, __ATOMIC_SEQ_CST);
+@@ -307 +310 @@ iperf_handle_message_server(struct iperf_test *test)
+-	    test->state = oldstate;
++	    __atomic_store_n(&test->state, oldstate, __ATOMIC_SEQ_CST);
+@@ -334 +337 @@ server_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
+-    if (test->done)
++    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
+@@ -336 +339 @@ server_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
+-    test->done = 1;
++    __atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
+@@ -365 +368 @@ server_stats_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
+-    if (test->done)
++    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
+@@ -376 +379 @@ server_reporter_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
+-    if (test->done)
++    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
+@@ -398 +401 @@ create_server_timers(struct iperf_test * test)
+-        test->done = 0;
++        __atomic_store_n(&test->done, 0, __ATOMIC_SEQ_CST);
+@@ -489 +492 @@ cleanup_server(struct iperf_test *test)
+-        sp->done = 1;
++        __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
+@@ -618 +621 @@ iperf_run_server(struct iperf_test *test)
+-    if (test->done) {
++    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST)) {
+@@ -631 +634 @@ iperf_run_server(struct iperf_test *test)
+-    while (test->state != IPERF_DONE) {
++    while (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) != IPERF_DONE) {
+@@ -666 +669 @@ iperf_run_server(struct iperf_test *test)
+-        if (test->state == IPERF_START) {       // In idle mode server may need to restart
++        if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == IPERF_START) {       // In idle mode server may need to restart
+@@ -691 +694 @@ iperf_run_server(struct iperf_test *test)
+-        if (test->done) {
++        if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST)) {
+@@ -712 +715 @@ iperf_run_server(struct iperf_test *test)
+-                if (test->state == IPERF_START) {
++                if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == IPERF_START) {
+@@ -730 +733 @@ iperf_run_server(struct iperf_test *test)
+-                    if (test->blocks_received == last_receive_blocks) {
++                    if (__atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) == last_receive_blocks) {
+@@ -744,2 +747,2 @@ iperf_run_server(struct iperf_test *test)
+-        if (test->blocks_received > last_receive_blocks) {
+-            last_receive_blocks = test->blocks_received;
++        if (__atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) > last_receive_blocks) {
++            last_receive_blocks = __atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST);
+@@ -751 +754 @@ iperf_run_server(struct iperf_test *test)
+-                if (test->state != CREATE_STREAMS) {
++                if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) != CREATE_STREAMS) {
+@@ -779 +782 @@ iperf_run_server(struct iperf_test *test)
+-            if (test->state == CREATE_STREAMS) {
++            if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == CREATE_STREAMS) {
+@@ -987 +990 @@ iperf_run_server(struct iperf_test *test)
+-                    last_receive_blocks = test->blocks_received;
++                    last_receive_blocks = __atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST);
+diff --git a/iperf_tcp.c b/iperf_tcp.c
+index 41b1544..fa99d84 100644
+--- a/iperf_tcp.c
++++ b/iperf_tcp.c
+@@ -75 +75 @@ iperf_tcp_recv(struct iperf_stream *sp)
+-    if (sp->test->state == TEST_RUNNING) {
++    if (__atomic_load_n(&sp->test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING) {
+@@ -81 +81 @@ iperf_tcp_recv(struct iperf_stream *sp)
+-	          printf("Late receive, state = %d-%s\n", sp->test->state, state_to_text(sp->test->state));
++	          printf("Late receive, state = %d-%s\n", __atomic_load_n(&sp->test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&sp->test->state, __ATOMIC_SEQ_CST)));
+diff --git a/iperf_udp.c b/iperf_udp.c
+index 07ff1ed..41a2f8e 100644
+--- a/iperf_udp.c
++++ b/iperf_udp.c
+@@ -108 +108 @@ iperf_udp_recv(struct iperf_stream *sp)
+-    if (test->state == TEST_RUNNING) {
++    if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING) {
+@@ -236 +236 @@ iperf_udp_recv(struct iperf_stream *sp)
+-	    printf("Late receive, state = %d\n", test->state);
++	    printf("Late receive, state = %d\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST));
+diff --git a/iperf_api.c b/iperf_api.c
+index a935c5d..497114c 100644
+--- a/iperf_api.c
++++ b/iperf_api.c
+@@ -2110 +2110 @@ iperf_check_throttle(struct iperf_stream *sp, struct iperf_time *nowP)
+-    bits_sent = sp->result->bytes_sent * 8;
++    bits_sent = __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST) * 8;
+@@ -2793 +2793 @@ send_results(struct iperf_test *test)
+-		    bytes_transferred = sp->sender ? (sp->result->bytes_sent - sp->result->bytes_sent_omit) : sp->result->bytes_received;
++		    bytes_transferred = sp->sender ? (__atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST) - sp->result->bytes_sent_omit) : __atomic_load_n(&sp->result->bytes_received, __ATOMIC_SEQ_CST);
+@@ -2798,2 +2798,2 @@ send_results(struct iperf_test *test)
+-		    cJSON_AddNumberToObject(j_stream, "jitter", sp->jitter);
+-		    cJSON_AddNumberToObject(j_stream, "errors", sp->cnt_error);
++		    cJSON_AddNumberToObject(j_stream, "jitter", iperf_atomic_load_double(&sp->jitter));
++		    cJSON_AddNumberToObject(j_stream, "errors", __atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST));
+@@ -2801 +2801 @@ send_results(struct iperf_test *test)
+-		    cJSON_AddNumberToObject(j_stream, "packets", sp->packet_count);
++		    cJSON_AddNumberToObject(j_stream, "packets", __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST));
+@@ -2940,2 +2940,2 @@ get_results(struct iperf_test *test)
+-				    sp->jitter = jitter;
+-				    sp->cnt_error = cerror;
++				    iperf_atomic_store_double(&sp->jitter, jitter);
++				    __atomic_store_n(&sp->cnt_error, cerror, __ATOMIC_SEQ_CST);
+@@ -2943 +2943 @@ get_results(struct iperf_test *test)
+-				    sp->result->bytes_received = bytes_transferred;
++				    __atomic_store_n(&sp->result->bytes_received, bytes_transferred, __ATOMIC_SEQ_CST);
+@@ -2951 +2951 @@ get_results(struct iperf_test *test)
+-                                            sp->omitted_cnt_error = (sp->cnt_error > 0) ? -1 : 0;
++                                            sp->omitted_cnt_error = (__atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST) > 0) ? -1 : 0;
+@@ -2953 +2953 @@ get_results(struct iperf_test *test)
+-                                            sp->omitted_cnt_error = sp->cnt_error;
++                                            sp->omitted_cnt_error = __atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST);
+@@ -2973 +2973 @@ get_results(struct iperf_test *test)
+-				    sp->result->bytes_sent = bytes_transferred;
++				    __atomic_store_n(&sp->result->bytes_sent, bytes_transferred, __ATOMIC_SEQ_CST);
+@@ -3712,4 +3712,4 @@ iperf_reset_stats(struct iperf_test *test)
+-	sp->omitted_packet_count = sp->packet_count;
+-        sp->omitted_cnt_error = sp->cnt_error;
+-        sp->omitted_outoforder_packets = sp->outoforder_packets;
+-	sp->jitter = 0;
++	sp->omitted_packet_count = __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST);
++        sp->omitted_cnt_error = __atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST);
++        sp->omitted_outoforder_packets = __atomic_load_n(&sp->outoforder_packets, __ATOMIC_SEQ_CST);
++	iperf_atomic_store_double(&sp->jitter, 0);
+@@ -3717,2 +3717,2 @@ iperf_reset_stats(struct iperf_test *test)
+-        rp->bytes_sent_omit = rp->bytes_sent;
+-        rp->bytes_received = 0;
++        rp->bytes_sent_omit = __atomic_load_n(&rp->bytes_sent, __ATOMIC_SEQ_CST);
++        __atomic_store_n(&rp->bytes_received, 0, __ATOMIC_SEQ_CST);
+@@ -3814,13 +3814,8 @@ iperf_stats_callback(struct iperf_test *test)
+-	    if (irp == NULL) {
+-		temp.interval_packet_count = sp->packet_count;
+-		temp.interval_outoforder_packets = sp->outoforder_packets;
+-		temp.interval_cnt_error = sp->cnt_error;
+-	    } else {
+-		temp.interval_packet_count = sp->packet_count - irp->packet_count;
+-		temp.interval_outoforder_packets = sp->outoforder_packets - irp->outoforder_packets;
+-		temp.interval_cnt_error = sp->cnt_error - irp->cnt_error;
+-	    }
+-	    temp.packet_count = sp->packet_count;
+-	    temp.jitter = sp->jitter;
+-	    temp.outoforder_packets = sp->outoforder_packets;
+-	    temp.cnt_error = sp->cnt_error;
++            /* Each cumulative field is sampled once for this interval. */
++            temp.packet_count = __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST);
++            temp.jitter = iperf_atomic_load_double(&sp->jitter);
++            temp.outoforder_packets = __atomic_load_n(&sp->outoforder_packets, __ATOMIC_SEQ_CST);
++            temp.cnt_error = __atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST);
++            temp.interval_packet_count = temp.packet_count - (irp ? irp->packet_count : 0);
++            temp.interval_outoforder_packets = temp.outoforder_packets - (irp ? irp->outoforder_packets : 0);
++            temp.interval_cnt_error = temp.cnt_error - (irp ? irp->cnt_error : 0);
+@@ -4253,2 +4248,2 @@ iperf_print_results(struct iperf_test *test)
+-                bytes_sent = sp->result->bytes_sent - sp->result->bytes_sent_omit;
+-                bytes_received = sp->result->bytes_received;
++                bytes_sent = __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST) - sp->result->bytes_sent_omit;
++                bytes_received = __atomic_load_n(&sp->result->bytes_received, __ATOMIC_SEQ_CST);
+@@ -4259 +4254 @@ iperf_print_results(struct iperf_test *test)
+-                    sender_packet_count = sp->packet_count;
++                    sender_packet_count = __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST);
+@@ -4267 +4262 @@ iperf_print_results(struct iperf_test *test)
+-                    receiver_packet_count = sp->packet_count;
++                    receiver_packet_count = __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST);
+@@ -4284 +4279 @@ iperf_print_results(struct iperf_test *test)
+-                    lost_packets += sp->cnt_error;
++                    lost_packets += __atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST);
+@@ -4287 +4282 @@ iperf_print_results(struct iperf_test *test)
+-                    avg_jitter += sp->jitter;
++                    avg_jitter += iperf_atomic_load_double(&sp->jitter);
+@@ -4327 +4322 @@ iperf_print_results(struct iperf_test *test)
+-                        lost_percent = 100.0 * (sp->cnt_error - sp->omitted_cnt_error) / (sender_packet_count - sender_omitted_packet_count);
++                        lost_percent = 100.0 * (__atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST) - sp->omitted_cnt_error) / (sender_packet_count - sender_omitted_packet_count);
+@@ -4350 +4345 @@ iperf_print_results(struct iperf_test *test)
+-                        cJSON_AddItemToObject(json_summary_stream, "udp", iperf_json_printf("socket: %d  start: %f  end: %f  seconds: %f  bytes: %d  bits_per_second: %f  jitter_ms: %f  lost_packets: %d  packets: %d  lost_percent: %f  out_of_order: %d sender: %b", (int64_t) sp->socket, (double) start_time, (double) sender_time, (double) sender_time, (int64_t) bytes_sent, bandwidth * 8, (double) sp->jitter * 1000.0, (int64_t) (sp->cnt_error - sp->omitted_cnt_error), (int64_t) (packet_count - sp->omitted_packet_count), (double) lost_percent, (int64_t) (sp->outoforder_packets - sp->omitted_outoforder_packets), stream_must_be_sender));
++                        cJSON_AddItemToObject(json_summary_stream, "udp", iperf_json_printf("socket: %d  start: %f  end: %f  seconds: %f  bytes: %d  bits_per_second: %f  jitter_ms: %f  lost_packets: %d  packets: %d  lost_percent: %f  out_of_order: %d sender: %b", (int64_t) sp->socket, (double) start_time, (double) sender_time, (double) sender_time, (int64_t) bytes_sent, bandwidth * 8, (double) iperf_atomic_load_double(&sp->jitter) * 1000.0, (int64_t) (__atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST) - sp->omitted_cnt_error), (int64_t) (packet_count - sp->omitted_packet_count), (double) lost_percent, (int64_t) (__atomic_load_n(&sp->outoforder_packets, __ATOMIC_SEQ_CST) - sp->omitted_outoforder_packets), stream_must_be_sender));
+@@ -4367,2 +4362,2 @@ iperf_print_results(struct iperf_test *test)
+-                        if ((sp->outoforder_packets - sp->omitted_outoforder_packets) > 0)
+-                          iperf_printf(test, report_sum_outoforder, mbuf, start_time, sender_time, (sp->outoforder_packets - sp->omitted_outoforder_packets));
++                        if ((__atomic_load_n(&sp->outoforder_packets, __ATOMIC_SEQ_CST) - sp->omitted_outoforder_packets) > 0)
++                          iperf_printf(test, report_sum_outoforder, mbuf, start_time, sender_time, (__atomic_load_n(&sp->outoforder_packets, __ATOMIC_SEQ_CST) - sp->omitted_outoforder_packets));
+@@ -4423 +4418 @@ iperf_print_results(struct iperf_test *test)
+-                            lost_percent = 100.0 * sp->cnt_error / receiver_packet_count;
++                            lost_percent = 100.0 * __atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST) / receiver_packet_count;
+@@ -4425 +4420 @@ iperf_print_results(struct iperf_test *test)
+-                            lost_percent = 100.0 * (sp->cnt_error - sp->omitted_cnt_error) / (receiver_packet_count - receiver_omitted_packet_count);
++                            lost_percent = 100.0 * (__atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST) - sp->omitted_cnt_error) / (receiver_packet_count - receiver_omitted_packet_count);
+@@ -4437 +4432 @@ iperf_print_results(struct iperf_test *test)
+-                                iperf_printf(test, report_bw_udp_format, sp->socket, mbuf, start_time, receiver_time, ubuf, nbuf, sp->jitter * 1000.0, sp->cnt_error, receiver_packet_count, lost_percent, report_receiver);
++                                iperf_printf(test, report_bw_udp_format, sp->socket, mbuf, start_time, receiver_time, ubuf, nbuf, iperf_atomic_load_double(&sp->jitter) * 1000.0, __atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST), receiver_packet_count, lost_percent, report_receiver);
+@@ -4439 +4434 @@ iperf_print_results(struct iperf_test *test)
+-                                iperf_printf(test, report_bw_udp_format, sp->socket, mbuf, start_time, receiver_time, ubuf, nbuf, sp->jitter * 1000.0, (sp->cnt_error - sp->omitted_cnt_error), (receiver_packet_count - receiver_omitted_packet_count), lost_percent, report_receiver);
++                                iperf_printf(test, report_bw_udp_format, sp->socket, mbuf, start_time, receiver_time, ubuf, nbuf, iperf_atomic_load_double(&sp->jitter) * 1000.0, (__atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST) - sp->omitted_cnt_error), (receiver_packet_count - receiver_omitted_packet_count), lost_percent, report_receiver);
+@@ -4441 +4436 @@ iperf_print_results(struct iperf_test *test)
+-                                iperf_printf(test, report_bw_udp_format_no_omitted_error, sp->socket, mbuf, start_time, receiver_time, ubuf, nbuf, sp->jitter * 1000.0, (receiver_packet_count - receiver_omitted_packet_count), report_receiver);
++                                iperf_printf(test, report_bw_udp_format_no_omitted_error, sp->socket, mbuf, start_time, receiver_time, ubuf, nbuf, iperf_atomic_load_double(&sp->jitter) * 1000.0, (receiver_packet_count - receiver_omitted_packet_count), report_receiver);
+diff --git a/iperf_sctp.c b/iperf_sctp.c
+index 969c512..d786f45 100644
+--- a/iperf_sctp.c
++++ b/iperf_sctp.c
+@@ -65 +65 @@ iperf_sctp_recv(struct iperf_stream *sp)
+-	sp->result->bytes_received += r;
++	__atomic_fetch_add(&sp->result->bytes_received, r, __ATOMIC_SEQ_CST);
+@@ -95 +95 @@ iperf_sctp_send(struct iperf_stream *sp)
+-    sp->result->bytes_sent += r;
++    __atomic_fetch_add(&sp->result->bytes_sent, r, __ATOMIC_SEQ_CST);
+diff --git a/iperf_tcp.c b/iperf_tcp.c
+index fa99d84..ab47819 100644
+--- a/iperf_tcp.c
++++ b/iperf_tcp.c
+@@ -76 +76 @@ iperf_tcp_recv(struct iperf_stream *sp)
+-	      sp->result->bytes_received += r;
++	      __atomic_fetch_add(&sp->result->bytes_received, r, __ATOMIC_SEQ_CST);
+@@ -109 +109 @@ iperf_tcp_send(struct iperf_stream *sp)
+-    sp->result->bytes_sent += r;
++    __atomic_fetch_add(&sp->result->bytes_sent, r, __ATOMIC_SEQ_CST);
+@@ -114 +114 @@ iperf_tcp_send(struct iperf_stream *sp)
+-	          r, sp->settings->blksize, sp->pending_size, sp->result->bytes_sent);
++	          r, sp->settings->blksize, sp->pending_size, __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST));
+diff --git a/iperf_udp.c b/iperf_udp.c
+index 41a2f8e..0a4d224 100644
+--- a/iperf_udp.c
++++ b/iperf_udp.c
+@@ -114 +114 @@ iperf_udp_recv(struct iperf_stream *sp)
+-	if (sp->result->bytes_received == 0) {
++	if (__atomic_load_n(&sp->result->bytes_received, __ATOMIC_SEQ_CST) == 0) {
+@@ -118 +118 @@ iperf_udp_recv(struct iperf_stream *sp)
+-	sp->result->bytes_received += r;
++	__atomic_fetch_add(&sp->result->bytes_received, r, __ATOMIC_SEQ_CST);
+@@ -122 +122 @@ iperf_udp_recv(struct iperf_stream *sp)
+-	    printf("received %d bytes of %d, total %" PRIu64 "\n", r, size, sp->result->bytes_received);
++	    printf("received %d bytes of %d, total %" PRIu64 "\n", r, size, __atomic_load_n(&sp->result->bytes_received, __ATOMIC_SEQ_CST));
+@@ -172 +172 @@ iperf_udp_recv(struct iperf_stream *sp)
+-	    if (pcount >= sp->packet_count + 1) {
++	    if (pcount >= __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST) + 1) {
+@@ -175 +175 @@ iperf_udp_recv(struct iperf_stream *sp)
+-		if (pcount > sp->packet_count + 1) {
++		if (pcount > __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST) + 1) {
+@@ -177 +177 @@ iperf_udp_recv(struct iperf_stream *sp)
+-		    sp->cnt_error += (pcount - 1) - sp->packet_count;
++		    __atomic_fetch_add(&sp->cnt_error, (pcount - 1) - __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST), __ATOMIC_SEQ_CST);
+@@ -179 +179 @@ iperf_udp_recv(struct iperf_stream *sp)
+-                        fprintf(stderr, "LOST %" PRIu64 " PACKETS - received packet %" PRIu64 " but expected sequence %" PRIu64 " on stream %d\n", (pcount - sp->packet_count + 1), pcount, sp->packet_count + 1, sp->socket);
++                        fprintf(stderr, "LOST %" PRIu64 " PACKETS - received packet %" PRIu64 " but expected sequence %" PRIu64 " on stream %d\n", (pcount - __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST) + 1), pcount, __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST) + 1, sp->socket);
+@@ -182 +182 @@ iperf_udp_recv(struct iperf_stream *sp)
+-		sp->packet_count = pcount;
++		__atomic_store_n(&sp->packet_count, pcount, __ATOMIC_SEQ_CST);
+@@ -189 +189 @@ iperf_udp_recv(struct iperf_stream *sp)
+-		sp->outoforder_packets++;
++		__atomic_fetch_add(&sp->outoforder_packets, 1, __ATOMIC_SEQ_CST);
+@@ -197,2 +197,2 @@ iperf_udp_recv(struct iperf_stream *sp)
+-		if (sp->cnt_error > 0)
+-		    sp->cnt_error--;
++		if (__atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST) > 0)
++		    __atomic_fetch_sub(&sp->cnt_error, 1, __ATOMIC_SEQ_CST);
+@@ -202 +202 @@ iperf_udp_recv(struct iperf_stream *sp)
+-                    fprintf(stderr, "OUT OF ORDER - received packet %" PRIu64 " but expected sequence %" PRIu64 " on stream %d\n", pcount, sp->packet_count + 1, sp->socket);
++                    fprintf(stderr, "OUT OF ORDER - received packet %" PRIu64 " but expected sequence %" PRIu64 " on stream %d\n", pcount, __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST) + 1, sp->socket);
+@@ -227 +227,7 @@ iperf_udp_recv(struct iperf_stream *sp)
+-	    sp->jitter += (d - sp->jitter) / 16.0;
++	    /* Retry if the omit reset changed jitter during this update. */
++            double previous_jitter = iperf_atomic_load_double(&sp->jitter);
++            double next_jitter;
++            do {
++                next_jitter = previous_jitter + (d - previous_jitter) / 16.0;
++            } while (!__atomic_compare_exchange(&sp->jitter, &previous_jitter,
++                         &next_jitter, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST));
+@@ -294 +300 @@ iperf_udp_send(struct iperf_stream *sp)
+-	++sp->packet_count;
++	__atomic_fetch_add(&sp->packet_count, 1, __ATOMIC_SEQ_CST);
+@@ -302 +308 @@ iperf_udp_send(struct iperf_stream *sp)
+-	    pcount = htobe64(sp->packet_count);
++	    pcount = htobe64(__atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST));
+@@ -312 +318 @@ iperf_udp_send(struct iperf_stream *sp)
+-	    pcount = htonl(sp->packet_count);
++	    pcount = htonl(__atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST));
+@@ -336 +342 @@ iperf_udp_send(struct iperf_stream *sp)
+-        --sp->packet_count;     /* Don't count messages that no data was sent from them.
++        __atomic_fetch_sub(&sp->packet_count, 1, __ATOMIC_SEQ_CST);     /* Don't count messages that no data was sent from them.
+@@ -345 +351 @@ iperf_udp_send(struct iperf_stream *sp)
+-    sp->result->bytes_sent += r;
++    __atomic_fetch_add(&sp->result->bytes_sent, r, __ATOMIC_SEQ_CST);
+@@ -349 +355 @@ iperf_udp_send(struct iperf_stream *sp)
+-	printf("sent %d bytes of %d, total %" PRIu64 "\n", r, size, sp->result->bytes_sent);
++	printf("sent %d bytes of %d, total %" PRIu64 "\n", r, size, __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST));
+diff --git a/include/iperf_api.h b/include/iperf_api.h
+index b974832..2702da2 100644
+--- a/include/iperf_api.h
++++ b/include/iperf_api.h
+@@ -409,0 +410 @@ char *iperf_strerror(int);
++/* Internal callers use the accessors; retain the storage symbol for C ABI. */
+@@ -410,0 +412,2 @@ extern int i_errno;
++int iperf_get_error(void);
++void iperf_set_error(int error);
+diff --git a/iperf_api.c b/iperf_api.c
+index 497114c..affbbcc 100644
+--- a/iperf_api.c
++++ b/iperf_api.c
+@@ -906 +906 @@ get_protocol(struct iperf_test *test, int prot_id)
+-        i_errno = IEPROTOCOL;
++        iperf_set_error(IEPROTOCOL);
+@@ -924 +924 @@ set_protocol(struct iperf_test *test, int prot_id)
+-    i_errno = IEPROTOCOL;
++    iperf_set_error(IEPROTOCOL);
+@@ -1245 +1245 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-		    i_errno = IEBADPORT;
++		    iperf_set_error(IEBADPORT);
+@@ -1252 +1252 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-		    i_errno = IEBADFORMAT;
++		    iperf_set_error(IEBADFORMAT);
+@@ -1267 +1267 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-		    i_errno = IEBADFORMAT;
++		    iperf_set_error(IEBADFORMAT);
+@@ -1276 +1276 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IEINTERVAL;
++                    iperf_set_error(IEINTERVAL);
+@@ -1307 +1307 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IESERVCLIENT;
++                    iperf_set_error(IESERVCLIENT);
+@@ -1314 +1314 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IESERVCLIENT;
++                    iperf_set_error(IESERVCLIENT);
+@@ -1329 +1329 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IEBINDDEVNOSUPPORT;
++                    iperf_set_error(IEBINDDEVNOSUPPORT);
+@@ -1346 +1346 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                i_errno = IEUNIMP;
++                iperf_set_error(IEUNIMP);
+@@ -1353 +1353 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                if (i_errno != 0) {
++                if (iperf_get_error() != 0) {
+@@ -1358 +1358 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                i_errno = IEUNIMP;
++                iperf_set_error(IEUNIMP);
+@@ -1369 +1369 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-			i_errno = IEBURST;
++			iperf_set_error(IEBURST);
+@@ -1374 +1374 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                if (i_errno != 0) {
++                if (iperf_get_error() != 0) {
+@@ -1388 +1388 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-			i_errno = IETOTALINTERVAL;
++			iperf_set_error(IETOTALINTERVAL);
+@@ -1393 +1393 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-		if (i_errno != 0) {
++		if (iperf_get_error() != 0) {
+@@ -1401 +1401 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IEDURATION;
++                    iperf_set_error(IEDURATION);
+@@ -1409 +1409 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                if (i_errno != 0) {
++                if (iperf_get_error() != 0) {
+@@ -1416 +1416 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                if (i_errno != 0) {
++                if (iperf_get_error() != 0) {
+@@ -1423 +1423 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                if (i_errno != 0) {
++                if (iperf_get_error() != 0) {
+@@ -1431 +1431 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IENUMSTREAMS;
++                    iperf_set_error(IENUMSTREAMS);
+@@ -1438 +1438 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IEREVERSEBIDIR;
++                    iperf_set_error(IEREVERSEBIDIR);
+@@ -1446 +1446 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IEREVERSEBIDIR;
++                    iperf_set_error(IEREVERSEBIDIR);
+@@ -1457 +1457 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                if (i_errno != 0) {
++                if (iperf_get_error() != 0) {
+@@ -1461 +1461 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IEBUFSIZE;
++                    iperf_set_error(IEBUFSIZE);
+@@ -1480 +1480 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IEBINDDEVNOSUPPORT;
++                    iperf_set_error(IEBINDDEVNOSUPPORT);
+@@ -1495 +1495 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-		    i_errno = IEBADPORT;
++		    iperf_set_error(IEBADPORT);
+@@ -1503 +1503 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IEMSS;
++                    iperf_set_error(IEMSS);
+@@ -1523 +1523 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-		    i_errno = IEBADTOS;
++		    iperf_set_error(IEBADTOS);
+@@ -1531 +1531 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-			i_errno = IEBADTOS;
++			iperf_set_error(IEBADTOS);
+@@ -1545 +1545 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IESETFLOW;
++                    iperf_set_error(IESETFLOW);
+@@ -1550 +1550 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                i_errno = IEUNIMP;
++                iperf_set_error(IEUNIMP);
+@@ -1557 +1557 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-		    i_errno = IESETSCTPBINDX;
++		    iperf_set_error(IESETSCTPBINDX);
+@@ -1563 +1563 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-		    i_errno = IESETSCTPBINDX;
++		    iperf_set_error(IESETSCTPBINDX);
+@@ -1570 +1570 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IENOSENDFILE;
++                    iperf_set_error(IENOSENDFILE);
+@@ -1592 +1592 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IEOMIT;
++                    iperf_set_error(IEOMIT);
+@@ -1603 +1603 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IEIDLETIMEOUT;
++                    iperf_set_error(IEIDLETIMEOUT);
+@@ -1611 +1611 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IEDURATION;
++                    iperf_set_error(IEDURATION);
+@@ -1619 +1619 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IERCVTIMEOUT;
++                    iperf_set_error(IERCVTIMEOUT);
+@@ -1630 +1630 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IESNDTIMEOUT;
++                    iperf_set_error(IESNDTIMEOUT);
+@@ -1664 +1664 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                        i_errno = IECNTLKA;
++                        iperf_set_error(IECNTLKA);
+@@ -1674 +1674 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                    i_errno = IEAFFINITY;
++                    iperf_set_error(IEAFFINITY);
+@@ -1681 +1681 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-			i_errno = IEAFFINITY;
++			iperf_set_error(IEAFFINITY);
+@@ -1687 +1687 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                i_errno = IEUNIMP;
++                iperf_set_error(IEUNIMP);
+@@ -1700 +1700 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-		i_errno = IEUNIMP;
++		iperf_set_error(IEUNIMP);
+@@ -1736 +1736 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-		i_errno = IEUNIMP;
++		iperf_set_error(IEUNIMP);
+@@ -1743 +1743 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-		if (i_errno != 0) {
++		if (iperf_get_error() != 0) {
+@@ -1748 +1748 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-		i_errno = IEUNIMP;
++		iperf_set_error(IEUNIMP);
+@@ -1777 +1777 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                i_errno = IESKEWTHRESHOLD;
++                iperf_set_error(IESKEWTHRESHOLD);
+@@ -1795 +1795 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-		if (i_errno != 0) {
++		if (iperf_get_error() != 0) {
+@@ -1802 +1802 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-		if (i_errno != 0) {
++		if (iperf_get_error() != 0) {
+@@ -1832 +1832 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-        i_errno = IESERVERONLY;
++        iperf_set_error(IESERVERONLY);
+@@ -1836 +1836 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-        i_errno = IECLIENTONLY;
++        iperf_set_error(IECLIENTONLY);
+@@ -1840 +1840 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-        i_errno = IECLIENTONLY;
++        iperf_set_error(IECLIENTONLY);
+@@ -1858 +1858 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-        i_errno = IECLIENTONLY;
++        iperf_set_error(IECLIENTONLY);
+@@ -1862 +1862 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-        i_errno = IESETCLIENTAUTH;
++        iperf_set_error(IESETCLIENTAUTH);
+@@ -1870 +1870 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-            i_errno = IESETCLIENTAUTH;
++            iperf_set_error(IESETCLIENTAUTH);
+@@ -1877 +1877 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-            i_errno = IESETCLIENTAUTH;
++            iperf_set_error(IESETCLIENTAUTH);
+@@ -1889 +1889 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-        i_errno = IESERVERONLY;
++        iperf_set_error(IESERVERONLY);
+@@ -1892 +1892 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-        i_errno = IESERVERONLY;
++        iperf_set_error(IESERVERONLY);
+@@ -1895 +1895 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-        i_errno = IERVRSONLYRCVTIMEOUT;
++        iperf_set_error(IERVRSONLYRCVTIMEOUT);
+@@ -1899 +1899 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-         i_errno = IESETSERVERAUTH;
++         iperf_set_error(IESETSERVERAUTH);
+@@ -1912 +1912 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-                i_errno = IESERVERAUTHUSERS;
++                iperf_set_error(IESERVERAUTHUSERS);
+@@ -1924 +1924 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-            i_errno = IESETSERVERAUTH;
++            iperf_set_error(IESETSERVERAUTH);
+@@ -1944 +1944 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-        i_errno = IEUDPFILETRANSFER;
++        iperf_set_error(IEUDPFILETRANSFER);
+@@ -1958 +1958 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-	i_errno = IEBLOCKSIZE;
++	iperf_set_error(IEBLOCKSIZE);
+@@ -1964 +1964 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-	i_errno = IEUDPBLOCKSIZE;
++	iperf_set_error(IEUDPBLOCKSIZE);
+@@ -2014 +2014 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-        i_errno = IEENDCONDITIONS;
++        iperf_set_error(IEENDCONDITIONS);
+@@ -2025 +2025 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
+-        i_errno = IENOROLE;
++        iperf_set_error(IENOROLE);
+@@ -2060 +2060 @@ int iperf_open_logfile(struct iperf_test *test)
+-        i_errno = IELOGFILE;
++        iperf_set_error(IELOGFILE);
+@@ -2081 +2081 @@ iperf_set_send_state(struct iperf_test *test, signed char state)
+-	    i_errno = IESENDMESSAGE;
++	    iperf_set_error(IESENDMESSAGE);
+@@ -2248 +2248 @@ iperf_send_mt(struct iperf_stream *sp)
+-            i_errno = IESTREAMWRITE;
++            iperf_set_error(IESTREAMWRITE);
+@@ -2280 +2280 @@ iperf_recv_mt(struct iperf_stream *sp)
+-		i_errno = IESTREAMREAD;
++		iperf_set_error(IESTREAMREAD);
+@@ -2308 +2308 @@ iperf_init_test(struct iperf_test *test)
+-	i_errno = IEINITTEST;
++	iperf_set_error(IEINITTEST);
+@@ -2453 +2453 @@ send_parameters(struct iperf_test *test)
+-	i_errno = IESENDPARAMS;
++	iperf_set_error(IESENDPARAMS);
+@@ -2534 +2534 @@ send_parameters(struct iperf_test *test)
+-		i_errno = IESENDPARAMS;
++		iperf_set_error(IESENDPARAMS);
+@@ -2552 +2552 @@ send_parameters(struct iperf_test *test)
+-	    i_errno = IESENDPARAMS;
++	    iperf_set_error(IESENDPARAMS);
+@@ -2571 +2571 @@ get_parameters(struct iperf_test *test)
+-	i_errno = IERECVPARAMS;
++	iperf_set_error(IERECVPARAMS);
+@@ -2586 +2586 @@ get_parameters(struct iperf_test *test)
+-                i_errno = IEUDPFILETRANSFER;
++                iperf_set_error(IEUDPFILETRANSFER);
+@@ -2697 +2697 @@ get_parameters(struct iperf_test *test)
+-        i_errno = IEMAXSERVERTESTDURATIONEXCEEDED;
++        iperf_set_error(IEMAXSERVERTESTDURATIONEXCEEDED);
+@@ -2705 +2705 @@ get_parameters(struct iperf_test *test)
+-        i_errno = IETOTALRATE;
++        iperf_set_error(IETOTALRATE);
+@@ -2711 +2711 @@ get_parameters(struct iperf_test *test)
+-        i_errno = IETOTALRATE;
++        iperf_set_error(IETOTALRATE);
+@@ -2737 +2737 @@ send_results(struct iperf_test *test)
+-	i_errno = IEPACKAGERESULTS;
++	iperf_set_error(IEPACKAGERESULTS);
+@@ -2782 +2782 @@ send_results(struct iperf_test *test)
+-	    i_errno = IEPACKAGERESULTS;
++	    iperf_set_error(IEPACKAGERESULTS);
+@@ -2789 +2789 @@ send_results(struct iperf_test *test)
+-		    i_errno = IEPACKAGERESULTS;
++		    iperf_set_error(IEPACKAGERESULTS);
+@@ -2819 +2819 @@ send_results(struct iperf_test *test)
+-		i_errno = IESENDRESULTS;
++		iperf_set_error(IESENDRESULTS);
+@@ -2865 +2865 @@ get_results(struct iperf_test *test)
+-	i_errno = IERECVRESULTS;
++	iperf_set_error(IERECVRESULTS);
+@@ -2873 +2873 @@ get_results(struct iperf_test *test)
+-	    i_errno = IERECVRESULTS;
++	    iperf_set_error(IERECVRESULTS);
+@@ -2895 +2895 @@ get_results(struct iperf_test *test)
+-		i_errno = IERECVRESULTS;
++		iperf_set_error(IERECVRESULTS);
+@@ -2902 +2902 @@ get_results(struct iperf_test *test)
+-			i_errno = IERECVRESULTS;
++			iperf_set_error(IERECVRESULTS);
+@@ -2916 +2916 @@ get_results(struct iperf_test *test)
+-			    i_errno = IERECVRESULTS;
++			    iperf_set_error(IERECVRESULTS);
+@@ -2920 +2920 @@ get_results(struct iperf_test *test)
+-                            i_errno = IERECVRESULTS;
++                            iperf_set_error(IERECVRESULTS);
+@@ -2936 +2936 @@ get_results(struct iperf_test *test)
+-				i_errno = IESTREAMID;
++				iperf_set_error(IESTREAMID);
+@@ -3214 +3214 @@ iperf_new_test()
+-        i_errno = IENEWTEST;
++        iperf_set_error(IENEWTEST);
+@@ -3238 +3238 @@ iperf_new_test()
+-	i_errno = IENEWTEST;
++	iperf_set_error(IENEWTEST);
+@@ -3247 +3247 @@ iperf_new_test()
+-	i_errno = IENEWTEST;
++	iperf_set_error(IENEWTEST);
+@@ -4846 +4846 @@ iperf_new_stream(struct iperf_test *test, int s, int sender)
+-        i_errno = IECREATESTREAM;
++        iperf_set_error(IECREATESTREAM);
+@@ -4858 +4858 @@ iperf_new_stream(struct iperf_test *test, int s, int sender)
+-        i_errno = IECREATESTREAM;
++        iperf_set_error(IECREATESTREAM);
+@@ -4868 +4868 @@ iperf_new_stream(struct iperf_test *test, int s, int sender)
+-        i_errno = IECREATESTREAM;
++        iperf_set_error(IECREATESTREAM);
+@@ -4874 +4874 @@ iperf_new_stream(struct iperf_test *test, int s, int sender)
+-        i_errno = IECREATESTREAM;
++        iperf_set_error(IECREATESTREAM);
+@@ -4887 +4887 @@ iperf_new_stream(struct iperf_test *test, int s, int sender)
+-        i_errno = IECREATESTREAM;
++        iperf_set_error(IECREATESTREAM);
+@@ -4894 +4894 @@ iperf_new_stream(struct iperf_test *test, int s, int sender)
+-        i_errno = IECREATESTREAM;
++        iperf_set_error(IECREATESTREAM);
+@@ -4910 +4910 @@ iperf_new_stream(struct iperf_test *test, int s, int sender)
+-	    i_errno = IEFILE;
++	    iperf_set_error(IEFILE);
+@@ -4952 +4952 @@ iperf_common_sockopts(struct iperf_test *test, int s)
+-                i_errno = IESETCOS;
++                iperf_set_error(IESETCOS);
+@@ -4964 +4964 @@ iperf_common_sockopts(struct iperf_test *test, int s)
+-            i_errno = IESETCOS;
++            iperf_set_error(IESETCOS);
+@@ -4969 +4969 @@ iperf_common_sockopts(struct iperf_test *test, int s)
+-                i_errno = IESETTOS;
++                iperf_set_error(IESETTOS);
+@@ -4986 +4986 @@ iperf_init_stream(struct iperf_stream *sp, struct iperf_test *test)
+-        i_errno = IEINITSTREAM;
++        iperf_set_error(IEINITSTREAM);
+@@ -4991 +4991 @@ iperf_init_stream(struct iperf_stream *sp, struct iperf_test *test)
+-        i_errno = IEINITSTREAM;
++        iperf_set_error(IEINITSTREAM);
+@@ -5009 +5009 @@ iperf_init_stream(struct iperf_stream *sp, struct iperf_test *test)
+-            i_errno = IESETDONTFRAGMENT;
++            iperf_set_error(IESETDONTFRAGMENT);
+@@ -5016 +5016 @@ iperf_init_stream(struct iperf_stream *sp, struct iperf_test *test)
+-            i_errno = IESETDONTFRAGMENT;
++            iperf_set_error(IESETDONTFRAGMENT);
+@@ -5023 +5023 @@ iperf_init_stream(struct iperf_stream *sp, struct iperf_test *test)
+-            i_errno = IESETDONTFRAGMENT;
++            iperf_set_error(IESETDONTFRAGMENT);
+@@ -5027 +5027 @@ iperf_init_stream(struct iperf_stream *sp, struct iperf_test *test)
+-	i_errno = IESETDONTFRAGMENT;
++	iperf_set_error(IESETDONTFRAGMENT);
+@@ -5202 +5202 @@ iperf_got_sigend(struct iperf_test *test, int sig)
+-    i_errno = (test->role == 'c') ? IECLIENTTERM : IESERVERTERM;
++    iperf_set_error((test->role == 'c') ? IECLIENTTERM : IESERVERTERM);
+@@ -5218 +5218 @@ iperf_got_sigend(struct iperf_test *test, int sig)
+-        iperf_signormalexit(test, "interrupt - %s by signal %s(%d)", iperf_strerror(i_errno), strsignal(sig), sig);
++        iperf_signormalexit(test, "interrupt - %s by signal %s(%d)", iperf_strerror(iperf_get_error()), strsignal(sig), sig);
+@@ -5220 +5220 @@ iperf_got_sigend(struct iperf_test *test, int sig)
+-        iperf_errexit(test, "interrupt - %s by signal %s(%d)", iperf_strerror(i_errno), strsignal(sig), sig);
++        iperf_errexit(test, "interrupt - %s by signal %s(%d)", iperf_strerror(iperf_get_error()), strsignal(sig), sig);
+@@ -5409 +5409 @@ iperf_setaffinity(struct iperf_test *test, int affinity)
+-	i_errno = IEAFFINITY;
++	iperf_set_error(IEAFFINITY);
+@@ -5418 +5418 @@ iperf_setaffinity(struct iperf_test *test, int affinity)
+-        i_errno = IEAFFINITY;
++        iperf_set_error(IEAFFINITY);
+@@ -5427 +5427 @@ iperf_setaffinity(struct iperf_test *test, int affinity)
+-        i_errno = IEAFFINITY;
++        iperf_set_error(IEAFFINITY);
+@@ -5436 +5436 @@ iperf_setaffinity(struct iperf_test *test, int affinity)
+-		i_errno = IEAFFINITY;
++		iperf_set_error(IEAFFINITY);
+@@ -5441 +5441 @@ iperf_setaffinity(struct iperf_test *test, int affinity)
+-    i_errno = IEAFFINITY;
++    iperf_set_error(IEAFFINITY);
+@@ -5457 +5457 @@ iperf_clearaffinity(struct iperf_test *test)
+-	i_errno = IEAFFINITY;
++	iperf_set_error(IEAFFINITY);
+@@ -5464 +5464 @@ iperf_clearaffinity(struct iperf_test *test)
+-        i_errno = IEAFFINITY;
++        iperf_set_error(IEAFFINITY);
+@@ -5475 +5475 @@ iperf_clearaffinity(struct iperf_test *test)
+-		i_errno = IEAFFINITY;
++		iperf_set_error(IEAFFINITY);
+@@ -5480 +5480 @@ iperf_clearaffinity(struct iperf_test *test)
+-    i_errno = IEAFFINITY;
++    iperf_set_error(IEAFFINITY);
+@@ -5619 +5619 @@ iperf_set_control_keepalive(struct iperf_test *test)
+-            i_errno = IESETCNTLKA;
++            iperf_set_error(IESETCNTLKA);
+@@ -5627 +5627 @@ iperf_set_control_keepalive(struct iperf_test *test)
+-                i_errno = IESETCNTLKAINTERVAL;
++                iperf_set_error(IESETCNTLKAINTERVAL);
+@@ -5634 +5634 @@ iperf_set_control_keepalive(struct iperf_test *test)
+-                i_errno = IESETCNTLKAINTERVAL;
++                iperf_set_error(IESETCNTLKAINTERVAL);
+@@ -5641 +5641 @@ iperf_set_control_keepalive(struct iperf_test *test)
+-                i_errno = IESETCNTLKACOUNT;
++                iperf_set_error(IESETCNTLKACOUNT);
+@@ -5651 +5651 @@ iperf_set_control_keepalive(struct iperf_test *test)
+-                i_errno = IECNTLKA;
++                iperf_set_error(IECNTLKA);
+@@ -5659 +5659 @@ iperf_set_control_keepalive(struct iperf_test *test)
+-                i_errno = IESETCNTLKAKEEPIDLE;
++                iperf_set_error(IESETCNTLKAKEEPIDLE);
+@@ -5665 +5665 @@ iperf_set_control_keepalive(struct iperf_test *test)
+-                i_errno = IESETCNTLKAINTERVAL;
++                iperf_set_error(IESETCNTLKAINTERVAL);
+@@ -5671 +5671 @@ iperf_set_control_keepalive(struct iperf_test *test)
+-                i_errno = IESETCNTLKACOUNT;
++                iperf_set_error(IESETCNTLKACOUNT);
+diff --git a/iperf_client_api.c b/iperf_client_api.c
+index ae92b01..032d710 100644
+--- a/iperf_client_api.c
++++ b/iperf_client_api.c
+@@ -73 +73 @@ iperf_client_worker_run(void *s) {
+-	    i_errno = IEPTHREADSIGMASK;
++	    iperf_set_error(IEPTHREADSIGMASK);
+@@ -135 +135 @@ iperf_create_streams(struct iperf_test *test, int sender)
+-		    i_errno = IESETCONGESTION;
++		    iperf_set_error(IESETCONGESTION);
+@@ -148 +148 @@ iperf_create_streams(struct iperf_test *test, int sender)
+-		    i_errno = IESETCONGESTION;
++		    iperf_set_error(IESETCONGESTION);
+@@ -219 +219 @@ create_client_timers(struct iperf_test * test)
+-        i_errno = IEINITTEST;
++        iperf_set_error(IEINITTEST);
+@@ -224 +224 @@ create_client_timers(struct iperf_test * test)
+-	i_errno = IEINITTEST;
++	iperf_set_error(IEINITTEST);
+@@ -233 +233 @@ create_client_timers(struct iperf_test * test)
+-            i_errno = IEINITTEST;
++            iperf_set_error(IEINITTEST);
+@@ -240 +240 @@ create_client_timers(struct iperf_test * test)
+-            i_errno = IEINITTEST;
++            iperf_set_error(IEINITTEST);
+@@ -247 +247 @@ create_client_timers(struct iperf_test * test)
+-            i_errno = IEINITTEST;
++            iperf_set_error(IEINITTEST);
+@@ -288 +288 @@ create_client_omit_timer(struct iperf_test * test)
+-	    i_errno = IEINITTEST;
++	    iperf_set_error(IEINITTEST);
+@@ -295 +295 @@ create_client_omit_timer(struct iperf_test * test)
+-	    i_errno = IEINITTEST;
++	    iperf_set_error(IEINITTEST);
+@@ -311 +311 @@ iperf_handle_message_client(struct iperf_test *test)
+-	i_errno = IEINITTEST;
++	iperf_set_error(IEINITTEST);
+@@ -323 +323 @@ iperf_handle_message_client(struct iperf_test *test)
+-            i_errno = IECTRLCLOSE;
++            iperf_set_error(IECTRLCLOSE);
+@@ -326 +326 @@ iperf_handle_message_client(struct iperf_test *test)
+-            i_errno = IERECVMESSAGE;
++            iperf_set_error(IERECVMESSAGE);
+@@ -380 +380 @@ iperf_handle_message_client(struct iperf_test *test)
+-            i_errno = IESERVERTERM;
++            iperf_set_error(IESERVERTERM);
+@@ -393 +393 @@ iperf_handle_message_client(struct iperf_test *test)
+-            i_errno = IEACCESSDENIED;
++            iperf_set_error(IEACCESSDENIED);
+@@ -397 +397 @@ iperf_handle_message_client(struct iperf_test *test)
+-                i_errno = IECTRLREAD;
++                iperf_set_error(IECTRLREAD);
+@@ -400 +400 @@ iperf_handle_message_client(struct iperf_test *test)
+-	    i_errno = ntohl(err);
++	    iperf_set_error(ntohl(err));
+@@ -402 +402 @@ iperf_handle_message_client(struct iperf_test *test)
+-                i_errno = IECTRLREAD;
++                iperf_set_error(IECTRLREAD);
+@@ -407 +407 @@ iperf_handle_message_client(struct iperf_test *test)
+-                iperf_err(test, "SERVER ERROR - %s, errno: %s", iperf_strerror(i_errno), strerror(errno));
++                iperf_err(test, "SERVER ERROR - %s, errno: %s", iperf_strerror(iperf_get_error()), strerror(errno));
+@@ -409 +409 @@ iperf_handle_message_client(struct iperf_test *test)
+-                iperf_err(test, "SERVER ERROR - %s", iperf_strerror(i_errno));
++                iperf_err(test, "SERVER ERROR - %s", iperf_strerror(iperf_get_error()));
+@@ -413 +413 @@ iperf_handle_message_client(struct iperf_test *test)
+-            i_errno = IEMESSAGE;
++            iperf_set_error(IEMESSAGE);
+@@ -444,2 +444,2 @@ iperf_connect(struct iperf_test *test)
+-        if (i_errno == IENONE)
+-            i_errno = IECONNECT;
++        if (iperf_get_error() == IENONE)
++            iperf_set_error(IECONNECT);
+@@ -452 +452 @@ iperf_connect(struct iperf_test *test)
+-        i_errno = IESETNODELAY;
++        iperf_set_error(IESETNODELAY);
+@@ -465 +465 @@ iperf_connect(struct iperf_test *test)
+-            i_errno = IESETUSERTIMEOUT;
++            iperf_set_error(IESETUSERTIMEOUT);
+@@ -472 +472 @@ iperf_connect(struct iperf_test *test)
+-        i_errno = IESENDCOOKIE;
++        iperf_set_error(IESENDCOOKIE);
+@@ -691 +691 @@ iperf_run_client(struct iperf_test * test)
+-  	    i_errno = IESELECT;
++	    iperf_set_error(IESELECT);
+@@ -705 +705 @@ iperf_run_client(struct iperf_test * test)
+-                        i_errno = IENOMSG;
++                        iperf_set_error(IENOMSG);
+@@ -737 +737 @@ iperf_run_client(struct iperf_test * test)
+-                    i_errno = IEPTHREADATTRINIT;
++                    iperf_set_error(IEPTHREADATTRINIT);
+@@ -743 +743 @@ iperf_run_client(struct iperf_test * test)
+-                        i_errno = IEPTHREADCREATE;
++                        iperf_set_error(IEPTHREADCREATE);
+@@ -755 +755 @@ iperf_run_client(struct iperf_test * test)
+-                    i_errno = IEPTHREADATTRDESTROY;
++                    iperf_set_error(IEPTHREADATTRDESTROY);
+@@ -788 +788 @@ iperf_run_client(struct iperf_test * test)
+-                                i_errno = IEPTHREADCANCEL;
++                                iperf_set_error(IEPTHREADCANCEL);
+@@ -790 +790 @@ iperf_run_client(struct iperf_test * test)
+-                                iperf_err(test, "sender cancel in pthread_cancel - %s", iperf_strerror(i_errno));
++                                iperf_err(test, "sender cancel in pthread_cancel - %s", iperf_strerror(iperf_get_error()));
+@@ -795 +795 @@ iperf_run_client(struct iperf_test * test)
+-                                i_errno = IEPTHREADJOIN;
++                                iperf_set_error(IEPTHREADJOIN);
+@@ -797 +797 @@ iperf_run_client(struct iperf_test * test)
+-                                iperf_err(test, "sender cancel in pthread_join - %s", iperf_strerror(i_errno));
++                                iperf_err(test, "sender cancel in pthread_join - %s", iperf_strerror(iperf_get_error()));
+@@ -829 +829 @@ iperf_run_client(struct iperf_test * test)
+-                    i_errno = IEPTHREADCANCEL;
++                    iperf_set_error(IEPTHREADCANCEL);
+@@ -831 +831 @@ iperf_run_client(struct iperf_test * test)
+-                    iperf_err(test, "receiver cancel in pthread_cancel - %s", iperf_strerror(i_errno));
++                    iperf_err(test, "receiver cancel in pthread_cancel - %s", iperf_strerror(iperf_get_error()));
+@@ -836 +836 @@ iperf_run_client(struct iperf_test * test)
+-                    i_errno = IEPTHREADJOIN;
++                    iperf_set_error(IEPTHREADJOIN);
+@@ -838 +838 @@ iperf_run_client(struct iperf_test * test)
+-                    iperf_err(test, "receiver cancel in pthread_join - %s", iperf_strerror(i_errno));
++                    iperf_err(test, "receiver cancel in pthread_join - %s", iperf_strerror(iperf_get_error()));
+@@ -866 +866 @@ iperf_run_client(struct iperf_test * test)
+-    i_errno_save = i_errno;
++    i_errno_save = iperf_get_error();
+@@ -876 +876 @@ iperf_run_client(struct iperf_test * test)
+-                i_errno = IEPTHREADCANCEL;
++                iperf_set_error(IEPTHREADCANCEL);
+@@ -878 +878 @@ iperf_run_client(struct iperf_test * test)
+-                iperf_err(test, "cleanup_and_fail in pthread_cancel - %s", iperf_strerror(i_errno));
++                iperf_err(test, "cleanup_and_fail in pthread_cancel - %s", iperf_strerror(iperf_get_error()));
+@@ -882 +882 @@ iperf_run_client(struct iperf_test * test)
+-                i_errno = IEPTHREADJOIN;
++                iperf_set_error(IEPTHREADJOIN);
+@@ -884 +884 @@ iperf_run_client(struct iperf_test * test)
+-                iperf_err(test, "cleanup_and_fail in pthread_join - %s", iperf_strerror(i_errno));
++                iperf_err(test, "cleanup_and_fail in pthread_join - %s", iperf_strerror(iperf_get_error()));
+@@ -895 +895 @@ iperf_run_client(struct iperf_test * test)
+-    i_errno = i_errno_save;
++    iperf_set_error(i_errno_save);
+@@ -899 +899 @@ iperf_run_client(struct iperf_test * test)
+-        cJSON_AddStringToObject(test->json_top, "error", iperf_strerror(i_errno));
++        cJSON_AddStringToObject(test->json_top, "error", iperf_strerror(iperf_get_error()));
+diff --git a/iperf_error.c b/iperf_error.c
+index 40ca492..856f636 100644
+--- a/iperf_error.c
++++ b/iperf_error.c
+@@ -160,0 +161,11 @@ int i_errno = 0;
++
++/* Keep one shared error slot; worker failures must reach the control thread. */
++int iperf_get_error(void)
++{
++    return __atomic_load_n(&i_errno, __ATOMIC_SEQ_CST);
++}
++
++void iperf_set_error(int error)
++{
++    __atomic_store_n(&i_errno, error, __ATOMIC_SEQ_CST);
++}
+diff --git a/iperf_sctp.c b/iperf_sctp.c
+index d786f45..3cfeb5d 100644
+--- a/iperf_sctp.c
++++ b/iperf_sctp.c
+@@ -75 +75 @@ iperf_sctp_recv(struct iperf_stream *sp)
+-    i_errno = IENOSCTP;
++    iperf_set_error(IENOSCTP);
+@@ -100 +100 @@ iperf_sctp_send(struct iperf_stream *sp)
+-    i_errno = IENOSCTP;
++    iperf_set_error(IENOSCTP);
+@@ -124 +124 @@ iperf_sctp_accept(struct iperf_test * test)
+-        i_errno = IESTREAMCONNECT;
++        iperf_set_error(IESTREAMCONNECT);
+@@ -129 +129 @@ iperf_sctp_accept(struct iperf_test * test)
+-        i_errno = IERECVCOOKIE;
++        iperf_set_error(IERECVCOOKIE);
+@@ -136 +136 @@ iperf_sctp_accept(struct iperf_test * test)
+-            i_errno = IESENDMESSAGE;
++            iperf_set_error(IESENDMESSAGE);
+@@ -145 +145 @@ iperf_sctp_accept(struct iperf_test * test)
+-    i_errno = IENOSCTP;
++    iperf_set_error(IENOSCTP);
+@@ -181 +181 @@ iperf_sctp_listen(struct iperf_test *test)
+-        i_errno = IESTREAMLISTEN;
++        iperf_set_error(IESTREAMLISTEN);
+@@ -187 +187 @@ iperf_sctp_listen(struct iperf_test *test)
+-        i_errno = IESTREAMLISTEN;
++        iperf_set_error(IESTREAMLISTEN);
+@@ -198 +198 @@ iperf_sctp_listen(struct iperf_test *test)
+-            i_errno = IESETBUF;
++            iperf_set_error(IESETBUF);
+@@ -206 +206 @@ iperf_sctp_listen(struct iperf_test *test)
+-            i_errno = IESETBUF;
++            iperf_set_error(IESETBUF);
+@@ -216 +216 @@ iperf_sctp_listen(struct iperf_test *test)
+-            i_errno = IEBINDDEV;
++            iperf_set_error(IEBINDDEV);
+@@ -235 +235 @@ iperf_sctp_listen(struct iperf_test *test)
+-	    i_errno = IEPROTOCOL;
++	    iperf_set_error(IEPROTOCOL);
+@@ -247 +247 @@ iperf_sctp_listen(struct iperf_test *test)
+-        i_errno = IEREUSEADDR;
++        iperf_set_error(IEREUSEADDR);
+@@ -264 +264 @@ iperf_sctp_listen(struct iperf_test *test)
+-        i_errno = IESTREAMLISTEN;
++        iperf_set_error(IESTREAMLISTEN);
+@@ -271 +271 @@ iperf_sctp_listen(struct iperf_test *test)
+-        i_errno = IESTREAMLISTEN;
++        iperf_set_error(IESTREAMLISTEN);
+@@ -279 +279 @@ iperf_sctp_listen(struct iperf_test *test)
+-    i_errno = IENOSCTP;
++    iperf_set_error(IENOSCTP);
+@@ -302 +302 @@ iperf_sctp_connect(struct iperf_test *test)
+-            i_errno = IESTREAMCONNECT;
++            iperf_set_error(IESTREAMCONNECT);
+@@ -314 +314 @@ iperf_sctp_connect(struct iperf_test *test)
+-        i_errno = IESTREAMCONNECT;
++        iperf_set_error(IESTREAMCONNECT);
+@@ -322 +322 @@ iperf_sctp_connect(struct iperf_test *test)
+-        i_errno = IESTREAMCONNECT;
++        iperf_set_error(IESTREAMCONNECT);
+@@ -333 +333 @@ iperf_sctp_connect(struct iperf_test *test)
+-            i_errno = IESETBUF;
++            iperf_set_error(IESETBUF);
+@@ -341 +341 @@ iperf_sctp_connect(struct iperf_test *test)
+-            i_errno = IESETBUF;
++            iperf_set_error(IESETBUF);
+@@ -352 +352 @@ iperf_sctp_connect(struct iperf_test *test)
+-            i_errno = IEBINDDEV;
++            iperf_set_error(IEBINDDEV);
+@@ -373 +373 @@ iperf_sctp_connect(struct iperf_test *test)
+-            i_errno = IESTREAMCONNECT;
++            iperf_set_error(IESTREAMCONNECT);
+@@ -405 +405 @@ iperf_sctp_connect(struct iperf_test *test)
+-            i_errno = IEPROTOCOL;
++            iperf_set_error(IEPROTOCOL);
+@@ -414 +414 @@ iperf_sctp_connect(struct iperf_test *test)
+-            i_errno = IESTREAMCONNECT;
++            iperf_set_error(IESTREAMCONNECT);
+@@ -426 +426 @@ iperf_sctp_connect(struct iperf_test *test)
+-             i_errno = IESETNODELAY;
++             iperf_set_error(IESETNODELAY);
+@@ -459 +459 @@ iperf_sctp_connect(struct iperf_test *test)
+-            i_errno = IESETMSS;
++            iperf_set_error(IESETMSS);
+@@ -475 +475 @@ iperf_sctp_connect(struct iperf_test *test)
+-            i_errno = IESETMSS;
++            iperf_set_error(IESETMSS);
+@@ -492 +492 @@ iperf_sctp_connect(struct iperf_test *test)
+-                i_errno = IESETSCTPNSTREAM;
++                iperf_set_error(IESETSCTPNSTREAM);
+@@ -512 +512 @@ iperf_sctp_connect(struct iperf_test *test)
+-        i_errno = IESTREAMCONNECT;
++        iperf_set_error(IESTREAMCONNECT);
+@@ -522 +522 @@ iperf_sctp_connect(struct iperf_test *test)
+-        i_errno = IESENDCOOKIE;
++        iperf_set_error(IESENDCOOKIE);
+@@ -540 +540 @@ iperf_sctp_connect(struct iperf_test *test)
+-        i_errno = IESETSCTPDISABLEFRAG;
++        iperf_set_error(IESETSCTPDISABLEFRAG);
+@@ -547 +547 @@ iperf_sctp_connect(struct iperf_test *test)
+-    i_errno = IENOSCTP;
++    iperf_set_error(IENOSCTP);
+@@ -560 +560 @@ iperf_sctp_init(struct iperf_test *test)
+-    i_errno = IENOSCTP;
++    iperf_set_error(IENOSCTP);
+@@ -619 +619 @@ iperf_sctp_bindx(struct iperf_test *test, int s, int is_server)
+-            i_errno = IESETSCTPBINDX;
++            iperf_set_error(IESETSCTPBINDX);
+@@ -626 +626 @@ iperf_sctp_bindx(struct iperf_test *test, int s, int is_server)
+-            i_errno = IESETSCTPBINDX;
++            iperf_set_error(IESETSCTPBINDX);
+@@ -631 +631 @@ iperf_sctp_bindx(struct iperf_test *test, int s, int is_server)
+-            i_errno = IESETSCTPBINDX;
++            iperf_set_error(IESETSCTPBINDX);
+@@ -648 +648 @@ iperf_sctp_bindx(struct iperf_test *test, int s, int is_server)
+-            i_errno = IESETSCTPBINDX;
++            iperf_set_error(IESETSCTPBINDX);
+@@ -663 +663 @@ iperf_sctp_bindx(struct iperf_test *test, int s, int is_server)
+-            i_errno = IESETSCTPBINDX;
++            iperf_set_error(IESETSCTPBINDX);
+@@ -679 +679 @@ iperf_sctp_bindx(struct iperf_test *test, int s, int is_server)
+-            i_errno = IESETSCTPBINDX;
++            iperf_set_error(IESETSCTPBINDX);
+@@ -699 +699 @@ iperf_sctp_bindx(struct iperf_test *test, int s, int is_server)
+-        i_errno = IESETSCTPBINDX;
++        iperf_set_error(IESETSCTPBINDX);
+@@ -721 +721 @@ out:
+-    i_errno = IENOSCTP;
++    iperf_set_error(IENOSCTP);
+diff --git a/iperf_server_api.c b/iperf_server_api.c
+index 12ac169..919aa19 100644
+--- a/iperf_server_api.c
++++ b/iperf_server_api.c
+@@ -87 +87 @@ iperf_server_worker_run(void *s) {
+-	    i_errno = IEPTHREADSIGMASK;
++	    iperf_set_error(IEPTHREADSIGMASK);
+@@ -128,2 +128,2 @@ iperf_server_listen(struct iperf_test *test)
+-	    if (i_errno == IENONE)
+-	        i_errno = IELISTEN;
++	    if (iperf_get_error() == IENONE)
++	        iperf_set_error(IELISTEN);
+@@ -165 +165 @@ iperf_accept(struct iperf_test *test)
+-        i_errno = IEACCEPT;
++        iperf_set_error(IEACCEPT);
+@@ -172 +172 @@ iperf_accept(struct iperf_test *test)
+-        i_errno = IEACCEPT;
++        iperf_set_error(IEACCEPT);
+@@ -182 +182 @@ iperf_accept(struct iperf_test *test)
+-            i_errno = IESETNODELAY;
++            iperf_set_error(IESETNODELAY);
+@@ -190 +190 @@ iperf_accept(struct iperf_test *test)
+-                i_errno = IESETUSERTIMEOUT;
++                iperf_set_error(IESETUSERTIMEOUT);
+@@ -208 +208 @@ iperf_accept(struct iperf_test *test)
+-            i_errno = IERECVCOOKIE;
++            iperf_set_error(IERECVCOOKIE);
+@@ -262 +262 @@ iperf_handle_message_server(struct iperf_test *test)
+-            i_errno = IECTRLCLOSE;
++            iperf_set_error(IECTRLCLOSE);
+@@ -266 +266 @@ iperf_handle_message_server(struct iperf_test *test)
+-            i_errno = IERECVMESSAGE;
++            iperf_set_error(IERECVMESSAGE);
+@@ -302 +302 @@ iperf_handle_message_server(struct iperf_test *test)
+-            i_errno = IECLIENTTERM;
++            iperf_set_error(IECLIENTTERM);
+@@ -322 +322 @@ iperf_handle_message_server(struct iperf_test *test)
+-            i_errno = IEMESSAGE;
++            iperf_set_error(IEMESSAGE);
+@@ -342,2 +342,2 @@ server_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
+-        i_errno = IESERVERTESTDURATIONEXPIRED;
+-        err = htonl(i_errno);
++        iperf_set_error(IESERVERTESTDURATIONEXPIRED);
++        err = htonl(iperf_get_error());
+@@ -395 +395 @@ create_server_timers(struct iperf_test * test)
+-	i_errno = IEINITTEST;
++	iperf_set_error(IEINITTEST);
+@@ -404 +404 @@ create_server_timers(struct iperf_test * test)
+-            i_errno = IEINITTEST;
++            iperf_set_error(IEINITTEST);
+@@ -413 +413 @@ create_server_timers(struct iperf_test * test)
+-            i_errno = IEINITTEST;
++            iperf_set_error(IEINITTEST);
+@@ -420 +420 @@ create_server_timers(struct iperf_test * test)
+-            i_errno = IEINITTEST;
++            iperf_set_error(IEINITTEST);
+@@ -456 +456 @@ create_server_omit_timer(struct iperf_test * test)
+-	    i_errno = IEINITTEST;
++	    iperf_set_error(IEINITTEST);
+@@ -463 +463 @@ create_server_omit_timer(struct iperf_test * test)
+-	    i_errno = IEINITTEST;
++	    iperf_set_error(IEINITTEST);
+@@ -478 +478 @@ cleanup_server(struct iperf_test *test)
+-    if (i_errno != IENONE && test->ctrl_sck != -1) {
++    if (iperf_get_error() != IENONE && test->ctrl_sck != -1) {
+@@ -480 +480 @@ cleanup_server(struct iperf_test *test)
+-            err = htonl(i_errno);
++            err = htonl(iperf_get_error());
+@@ -489 +489 @@ cleanup_server(struct iperf_test *test)
+-    int i_errno_save = i_errno;
++    int i_errno_save = iperf_get_error();
+@@ -496 +496 @@ cleanup_server(struct iperf_test *test)
+-                i_errno = IEPTHREADCANCEL;
++                iperf_set_error(IEPTHREADCANCEL);
+@@ -498 +498 @@ cleanup_server(struct iperf_test *test)
+-                iperf_err(test, "cleanup_server in pthread_cancel - %s", iperf_strerror(i_errno));
++                iperf_err(test, "cleanup_server in pthread_cancel - %s", iperf_strerror(iperf_get_error()));
+@@ -502 +502 @@ cleanup_server(struct iperf_test *test)
+-                i_errno = IEPTHREADJOIN;
++                iperf_set_error(IEPTHREADJOIN);
+@@ -504 +504 @@ cleanup_server(struct iperf_test *test)
+-                iperf_err(test, "cleanup_server in pthread_join - %s", iperf_strerror(i_errno));
++                iperf_err(test, "cleanup_server in pthread_join - %s", iperf_strerror(iperf_get_error()));
+@@ -512 +512 @@ cleanup_server(struct iperf_test *test)
+-    i_errno = i_errno_save;
++    iperf_set_error(i_errno_save);
+@@ -638 +638 @@ iperf_run_server(struct iperf_test *test)
+-        i_errno = IETOTALRATE;
++        iperf_set_error(IETOTALRATE);
+@@ -644 +644 @@ iperf_run_server(struct iperf_test *test)
+-        err = htonl(i_errno);
++        err = htonl(iperf_get_error());
+@@ -647 +647 @@ iperf_run_server(struct iperf_test *test)
+-            i_errno = IECTRLWRITE;
++            iperf_set_error(IECTRLWRITE);
+@@ -654 +654 @@ iperf_run_server(struct iperf_test *test)
+-            i_errno = IECTRLWRITE;
++            iperf_set_error(IECTRLWRITE);
+@@ -700 +700 @@ iperf_run_server(struct iperf_test *test)
+-            i_errno = IESELECT;
++            iperf_set_error(IESELECT);
+@@ -735 +735 @@ iperf_run_server(struct iperf_test *test)
+-                        i_errno = IENOMSG;
++                        iperf_set_error(IENOMSG);
+@@ -808 +808 @@ iperf_run_server(struct iperf_test *test)
+-                                i_errno = IESETUSERTIMEOUT;
++                                iperf_set_error(IESETUSERTIMEOUT);
+@@ -836 +836 @@ iperf_run_server(struct iperf_test *test)
+-				    i_errno = IESETCONGESTION;
++				    iperf_set_error(IESETCONGESTION);
+@@ -851 +851 @@ iperf_run_server(struct iperf_test *test)
+-				i_errno = IESETCONGESTION;
++				iperf_set_error(IESETCONGESTION);
+@@ -913 +913 @@ iperf_run_server(struct iperf_test *test)
+-                                i_errno = IELISTEN;
++                                iperf_set_error(IELISTEN);
+@@ -930 +930 @@ iperf_run_server(struct iperf_test *test)
+-			i_errno = IETOTALRATE;
++			iperf_set_error(IETOTALRATE);
+@@ -966 +966 @@ iperf_run_server(struct iperf_test *test)
+-                        i_errno = IEPTHREADATTRINIT;
++                        iperf_set_error(IEPTHREADATTRINIT);
+@@ -972 +972 @@ iperf_run_server(struct iperf_test *test)
+-                            i_errno = IEPTHREADCREATE;
++                            iperf_set_error(IEPTHREADCREATE);
+@@ -985 +985 @@ iperf_run_server(struct iperf_test *test)
+-                        i_errno = IEPTHREADATTRDESTROY;
++                        iperf_set_error(IEPTHREADATTRDESTROY);
+diff --git a/iperf_tcp.c b/iperf_tcp.c
+index ab47819..27451f9 100644
+--- a/iperf_tcp.c
++++ b/iperf_tcp.c
+@@ -135 +135 @@ iperf_tcp_accept(struct iperf_test * test)
+-        i_errno = IESTREAMCONNECT;
++        iperf_set_error(IESTREAMCONNECT);
+@@ -142 +142 @@ iperf_tcp_accept(struct iperf_test * test)
+-        i_errno = IESTREAMCONNECT;
++        iperf_set_error(IESTREAMCONNECT);
+@@ -163 +163 @@ iperf_tcp_accept(struct iperf_test * test)
+-        i_errno = IERECVCOOKIE;
++        iperf_set_error(IERECVCOOKIE);
+@@ -227 +227 @@ iperf_tcp_listen(struct iperf_test *test)
+-            i_errno = IESTREAMLISTEN;
++            iperf_set_error(IESTREAMLISTEN);
+@@ -238 +238 @@ iperf_tcp_listen(struct iperf_test *test)
+-            i_errno = IESTREAMLISTEN;
++            iperf_set_error(IESTREAMLISTEN);
+@@ -246 +246 @@ iperf_tcp_listen(struct iperf_test *test)
+-            i_errno = IESTREAMLISTEN;
++            iperf_set_error(IESTREAMLISTEN);
+@@ -257 +257 @@ iperf_tcp_listen(struct iperf_test *test)
+-                i_errno = IESETNODELAY;
++                iperf_set_error(IESETNODELAY);
+@@ -268 +268 @@ iperf_tcp_listen(struct iperf_test *test)
+-                i_errno = IESETMSS;
++                iperf_set_error(IESETMSS);
+@@ -278 +278 @@ iperf_tcp_listen(struct iperf_test *test)
+-                i_errno = IESETBUF;
++                iperf_set_error(IESETBUF);
+@@ -286 +286 @@ iperf_tcp_listen(struct iperf_test *test)
+-                i_errno = IESETBUF;
++                iperf_set_error(IESETBUF);
+@@ -304 +304 @@ iperf_tcp_listen(struct iperf_test *test)
+-            i_errno = IEREUSEADDR;
++            iperf_set_error(IEREUSEADDR);
+@@ -325 +325 @@ iperf_tcp_listen(struct iperf_test *test)
+-		i_errno = IEV6ONLY;
++		iperf_set_error(IEV6ONLY);
+@@ -336 +336 @@ iperf_tcp_listen(struct iperf_test *test)
+-            i_errno = IESTREAMLISTEN;
++            iperf_set_error(IESTREAMLISTEN);
+@@ -343 +343 @@ iperf_tcp_listen(struct iperf_test *test)
+-            i_errno = IESTREAMLISTEN;
++            iperf_set_error(IESTREAMLISTEN);
+@@ -357 +357 @@ iperf_tcp_listen(struct iperf_test *test)
+-	i_errno = IESETBUF;
++	iperf_set_error(IESETBUF);
+@@ -364 +364 @@ iperf_tcp_listen(struct iperf_test *test)
+-	i_errno = IESETBUF2;
++	iperf_set_error(IESETBUF2);
+@@ -375 +375 @@ iperf_tcp_listen(struct iperf_test *test)
+-	i_errno = IESETBUF;
++	iperf_set_error(IESETBUF);
+@@ -382 +382 @@ iperf_tcp_listen(struct iperf_test *test)
+-	i_errno = IESETBUF2;
++	iperf_set_error(IESETBUF2);
+@@ -421 +421 @@ iperf_tcp_connect(struct iperf_test *test)
+-	i_errno = IESTREAMCONNECT;
++	iperf_set_error(IESTREAMCONNECT);
+@@ -433 +433 @@ iperf_tcp_connect(struct iperf_test *test)
+-            i_errno = IESETNODELAY;
++            iperf_set_error(IESETNODELAY);
+@@ -443 +443 @@ iperf_tcp_connect(struct iperf_test *test)
+-            i_errno = IESETMSS;
++            iperf_set_error(IESETMSS);
+@@ -453 +453 @@ iperf_tcp_connect(struct iperf_test *test)
+-            i_errno = IESETBUF;
++            iperf_set_error(IESETBUF);
+@@ -461 +461 @@ iperf_tcp_connect(struct iperf_test *test)
+-            i_errno = IESETBUF;
++            iperf_set_error(IESETBUF);
+@@ -472 +472 @@ iperf_tcp_connect(struct iperf_test *test)
+-            i_errno = IESETUSERTIMEOUT;
++            iperf_set_error(IESETUSERTIMEOUT);
+@@ -485 +485 @@ iperf_tcp_connect(struct iperf_test *test)
+-	i_errno = IESETBUF;
++	iperf_set_error(IESETBUF);
+@@ -494 +494 @@ iperf_tcp_connect(struct iperf_test *test)
+-	i_errno = IESETBUF2;
++	iperf_set_error(IESETBUF2);
+@@ -505 +505 @@ iperf_tcp_connect(struct iperf_test *test)
+-	i_errno = IESETBUF;
++	iperf_set_error(IESETBUF);
+@@ -514 +514 @@ iperf_tcp_connect(struct iperf_test *test)
+-	i_errno = IESETBUF2;
++	iperf_set_error(IESETBUF2);
+@@ -542 +542 @@ iperf_tcp_connect(struct iperf_test *test)
+-            i_errno = IESETFLOW;
++            iperf_set_error(IESETFLOW);
+@@ -562 +562 @@ iperf_tcp_connect(struct iperf_test *test)
+-                i_errno = IESETFLOW;
++                iperf_set_error(IESETFLOW);
+@@ -573 +573 @@ iperf_tcp_connect(struct iperf_test *test)
+-                i_errno = IESETFLOW;
++                iperf_set_error(IESETFLOW);
+@@ -612 +612 @@ iperf_tcp_connect(struct iperf_test *test)
+-        i_errno = IESTREAMCONNECT;
++        iperf_set_error(IESTREAMCONNECT);
+@@ -623 +623 @@ iperf_tcp_connect(struct iperf_test *test)
+-        i_errno = IESENDCOOKIE;
++        iperf_set_error(IESENDCOOKIE);
+diff --git a/iperf_udp.c b/iperf_udp.c
+index 0a4d224..07edd47 100644
+--- a/iperf_udp.c
++++ b/iperf_udp.c
+@@ -392 +392 @@ iperf_udp_buffercheck(struct iperf_test *test, int s)
+-            i_errno = IESETBUF;
++            iperf_set_error(IESETBUF);
+@@ -396 +396 @@ iperf_udp_buffercheck(struct iperf_test *test, int s)
+-            i_errno = IESETBUF;
++            iperf_set_error(IESETBUF);
+@@ -404 +404 @@ iperf_udp_buffercheck(struct iperf_test *test, int s)
+-	i_errno = IESETBUF;
++	iperf_set_error(IESETBUF);
+@@ -411 +411 @@ iperf_udp_buffercheck(struct iperf_test *test, int s)
+-	i_errno = IESETBUF2;
++	iperf_set_error(IESETBUF2);
+@@ -426 +426 @@ iperf_udp_buffercheck(struct iperf_test *test, int s)
+-	i_errno = IESETBUF;
++	iperf_set_error(IESETBUF);
+@@ -433 +433 @@ iperf_udp_buffercheck(struct iperf_test *test, int s)
+-	i_errno = IESETBUF2;
++	iperf_set_error(IESETBUF2);
+@@ -550 +550 @@ iperf_udp_accept(struct iperf_test *test)
+-        i_errno = IESTREAMACCEPT;
++        iperf_set_error(IESTREAMACCEPT);
+@@ -555 +555 @@ iperf_udp_accept(struct iperf_test *test)
+-        i_errno = IESTREAMACCEPT;
++        iperf_set_error(IESTREAMACCEPT);
+@@ -617,2 +617,2 @@ iperf_udp_accept(struct iperf_test *test)
+-        if (i_errno == IENONE)
+-            i_errno = IESTREAMLISTEN;
++        if (iperf_get_error() == IENONE)
++            iperf_set_error(IESTREAMLISTEN);
+@@ -628 +628 @@ iperf_udp_accept(struct iperf_test *test)
+-        i_errno = IESTREAMWRITE;
++        iperf_set_error(IESTREAMWRITE);
+@@ -649,2 +649,2 @@ iperf_udp_listen(struct iperf_test *test)
+-        if (i_errno == IENONE)
+-            i_errno = IESTREAMLISTEN;
++        if (iperf_get_error() == IENONE)
++            iperf_set_error(IESTREAMLISTEN);
+@@ -679 +679 @@ iperf_udp_connect(struct iperf_test *test)
+-        i_errno = IESTREAMCONNECT;
++        iperf_set_error(IESTREAMCONNECT);
+@@ -756 +756 @@ iperf_udp_connect(struct iperf_test *test)
+-        i_errno = IESTREAMWRITE;
++        iperf_set_error(IESTREAMWRITE);
+@@ -769 +769 @@ iperf_udp_connect(struct iperf_test *test)
+-            i_errno = IESTREAMREAD;
++            iperf_set_error(IESTREAMREAD);
+@@ -779 +779 @@ iperf_udp_connect(struct iperf_test *test)
+-        i_errno = IESTREAMREAD;
++        iperf_set_error(IESTREAMREAD);
+diff --git a/net.c b/net.c
+index 237a0c4..495a06b 100644
+--- a/net.c
++++ b/net.c
+@@ -224,2 +224,2 @@ create_socket(int domain, int type, int proto, const char *local, const char *bi
+-            i_errno = (saved_errno == ENOTSUP || saved_errno == EOPNOTSUPP)
+-                ? IEBINDDEVNOSUPPORT : IEBINDDEV;
++            iperf_set_error((saved_errno == ENOTSUP || saved_errno == EOPNOTSUPP)
++                ? IEBINDDEVNOSUPPORT : IEBINDDEV);
+@@ -371,2 +371,2 @@ netannounce(int domain, int proto, const char *local, const char *bind_dev, int
+-            i_errno = (saved_errno == ENOTSUP || saved_errno == EOPNOTSUPP)
+-                ? IEBINDDEVNOSUPPORT : IEBINDDEV;
++            iperf_set_error((saved_errno == ENOTSUP || saved_errno == EOPNOTSUPP)
++                ? IEBINDDEVNOSUPPORT : IEBINDDEV);
+diff --git a/units.c b/units.c
+index 1e8b52e..ce38d5b 100644
+--- a/units.c
++++ b/units.c
+@@ -98 +98 @@ extern    "C"
+-		i_errno = IEUNITVAL;
++		iperf_set_error(IEUNITVAL);
+@@ -121 +121 @@ extern    "C"
+-	    i_errno = IEUNITVAL;
++	    iperf_set_error(IEUNITVAL);
+@@ -145 +145 @@ extern    "C"
+-		i_errno = IEUNITVAL;
++		iperf_set_error(IEUNITVAL);
+@@ -168 +168 @@ extern    "C"
+-	    i_errno = IEUNITVAL;
++	    iperf_set_error(IEUNITVAL);
+@@ -194 +194 @@ extern    "C"
+-		i_errno = IEUNITVAL;
++		iperf_set_error(IEUNITVAL);
+@@ -217 +217 @@ extern    "C"
+-	    i_errno = IEUNITVAL;
++	    iperf_set_error(IEUNITVAL);
+diff --git a/include/iperf_api.h b/include/iperf_api.h
+index 2702da2..f8f6676 100644
+--- a/include/iperf_api.h
++++ b/include/iperf_api.h
+@@ -411,0 +412,3 @@ extern int i_errno;
++/* Engine-thread-only listener cleanup, including sockets not yet published. */
++void iperf_close_test_listener_socket(struct iperf_test*, int);
++void iperf_close_test_listener(struct iperf_test*);
+diff --git a/iperf_sctp.c b/iperf_sctp.c
+index 3cfeb5d..757c321 100644
+--- a/iperf_sctp.c
++++ b/iperf_sctp.c
+@@ -163,2 +163 @@ iperf_sctp_listen(struct iperf_test *test)
+-    close(test->listener);
+-    test->listener = -1;
++    iperf_close_test_listener(test);
+@@ -195 +194 @@ iperf_sctp_listen(struct iperf_test *test)
+-            close(s);
++            iperf_close_test_listener_socket(test, s);
+@@ -203 +202 @@ iperf_sctp_listen(struct iperf_test *test)
+-            close(s);
++            iperf_close_test_listener_socket(test, s);
+@@ -214 +213 @@ iperf_sctp_listen(struct iperf_test *test)
+-            close(s);
++            iperf_close_test_listener_socket(test, s);
+@@ -232 +231 @@ iperf_sctp_listen(struct iperf_test *test)
+-	    close(s);
++	    iperf_close_test_listener_socket(test, s);
+@@ -244 +243 @@ iperf_sctp_listen(struct iperf_test *test)
+-        close(s);
++        iperf_close_test_listener_socket(test, s);
+@@ -254 +253 @@ iperf_sctp_listen(struct iperf_test *test)
+-            close(s);
++            iperf_close_test_listener_socket(test, s);
+@@ -261 +260 @@ iperf_sctp_listen(struct iperf_test *test)
+-        close(s);
++        iperf_close_test_listener_socket(test, s);
+diff --git a/iperf_server_api.c b/iperf_server_api.c
+index 919aa19..eec6852 100644
+--- a/iperf_server_api.c
++++ b/iperf_server_api.c
+@@ -692,0 +693,8 @@ iperf_run_server(struct iperf_test *test)
++        /* The engine owns listener close. Bound waits so an external stop
++         * request is observed even while idle; expiry still uses elapsed time. */
++        if (timeout == NULL || timeout->tv_sec >= 1) {
++            used_timeout.tv_sec = 1;
++            used_timeout.tv_usec = 0;
++            timeout = &used_timeout;
++        }
++
+diff --git a/iperf_tcp.c b/iperf_tcp.c
+index 27451f9..074bba8 100644
+--- a/iperf_tcp.c
++++ b/iperf_tcp.c
+@@ -208 +208 @@ iperf_tcp_listen(struct iperf_test *test)
+-        close(s);
++        iperf_close_test_listener_socket(test, s);
+@@ -243 +243 @@ iperf_tcp_listen(struct iperf_test *test)
+-            close(s);
++            iperf_close_test_listener_socket(test, s);
+@@ -254 +254 @@ iperf_tcp_listen(struct iperf_test *test)
+-		close(s);
++		iperf_close_test_listener_socket(test, s);
+@@ -265 +265 @@ iperf_tcp_listen(struct iperf_test *test)
+-		close(s);
++		iperf_close_test_listener_socket(test, s);
+@@ -275 +275 @@ iperf_tcp_listen(struct iperf_test *test)
+-		close(s);
++		iperf_close_test_listener_socket(test, s);
+@@ -283 +283 @@ iperf_tcp_listen(struct iperf_test *test)
+-		close(s);
++		iperf_close_test_listener_socket(test, s);
+@@ -301 +301 @@ iperf_tcp_listen(struct iperf_test *test)
+-            close(s);
++            iperf_close_test_listener_socket(test, s);
+@@ -322 +322 @@ iperf_tcp_listen(struct iperf_test *test)
+-		close(s);
++		iperf_close_test_listener_socket(test, s);
+@@ -333 +333 @@ iperf_tcp_listen(struct iperf_test *test)
+-            close(s);
++            iperf_close_test_listener_socket(test, s);
+@@ -344 +344 @@ iperf_tcp_listen(struct iperf_test *test)
+-            close(s);
++            iperf_close_test_listener_socket(test, s);
+@@ -355 +355 @@ iperf_tcp_listen(struct iperf_test *test)
+-	close(s);
++	iperf_close_test_listener_socket(test, s);
+@@ -365 +365 @@ iperf_tcp_listen(struct iperf_test *test)
+-    close(s);
++    iperf_close_test_listener_socket(test, s);
+@@ -373 +373 @@ iperf_tcp_listen(struct iperf_test *test)
+-	close(s);
++	iperf_close_test_listener_socket(test, s);
+@@ -383 +383 @@ iperf_tcp_listen(struct iperf_test *test)
+-    close(s);
++    iperf_close_test_listener_socket(test, s);

@@ -105,21 +105,21 @@ iperf_udp_recv(struct iperf_stream *sp)
         return r;
 
     /* Only count bytes received while we're in the correct state. */
-    if (test->state == TEST_RUNNING) {
+    if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING) {
 
 	/*
 	 * For jitter computation below, it's important to know if this
 	 * packet is the first packet received.
 	 */
-	if (sp->result->bytes_received == 0) {
+	if (__atomic_load_n(&sp->result->bytes_received, __ATOMIC_SEQ_CST) == 0) {
 	    first_packet = 1;
 	}
 
-	sp->result->bytes_received += r;
-	sp->result->bytes_received_this_interval += r;
+	__atomic_fetch_add(&sp->result->bytes_received, r, __ATOMIC_SEQ_CST);
+	atomic_fetch_add(&sp->result->bytes_received_this_interval, r);
 
 	if (sp->test->debug)
-	    printf("received %d bytes of %d, total %" PRIu64 "\n", r, size, sp->result->bytes_received);
+	    printf("received %d bytes of %d, total %" PRIu64 "\n", r, size, __atomic_load_n(&sp->result->bytes_received, __ATOMIC_SEQ_CST));
 
 	/* Unified loop: processes single packet when GRO off, multiple when GRO on */
 	dgram_buf = sp->buffer;
@@ -169,24 +169,24 @@ iperf_udp_recv(struct iperf_stream *sp)
              * far (so we're expecting to see the packet with sequence number
              * sp->packet_count + 1 arrive next).
              */
-	    if (pcount >= sp->packet_count + 1) {
+	    if (pcount >= __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST) + 1) {
 
                 /* Forward, but is there a gap in sequence numbers? */
-		if (pcount > sp->packet_count + 1) {
+		if (pcount > __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST) + 1) {
                     /* There's a gap so count that as a loss. */
-		    sp->cnt_error += (pcount - 1) - sp->packet_count;
+		    __atomic_fetch_add(&sp->cnt_error, (pcount - 1) - __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST), __ATOMIC_SEQ_CST);
                     if (test->debug_level >= DEBUG_LEVEL_INFO)
-                        fprintf(stderr, "LOST %" PRIu64 " PACKETS - received packet %" PRIu64 " but expected sequence %" PRIu64 " on stream %d\n", (pcount - sp->packet_count + 1), pcount, sp->packet_count + 1, sp->socket);
+                        fprintf(stderr, "LOST %" PRIu64 " PACKETS - received packet %" PRIu64 " but expected sequence %" PRIu64 " on stream %d\n", (pcount - __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST) + 1), pcount, __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST) + 1, sp->socket);
 		}
                 /* Update the highest sequence number seen so far. */
-		sp->packet_count = pcount;
+		__atomic_store_n(&sp->packet_count, pcount, __ATOMIC_SEQ_CST);
 	    } else {
 
                 /*
                  * Sequence number went backward (or was stationary?!?).
                  * This counts as an out-of-order packet.
                  */
-		sp->outoforder_packets++;
+		__atomic_fetch_add(&sp->outoforder_packets, 1, __ATOMIC_SEQ_CST);
 
                 /*
                  * If we have lost packets, then the fact that we are now
@@ -194,12 +194,12 @@ iperf_udp_recv(struct iperf_stream *sp)
                  * number gap that was counted as a loss.  So we can take
                  * away a loss.
                  */
-		if (sp->cnt_error > 0)
-		    sp->cnt_error--;
+		if (__atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST) > 0)
+		    __atomic_fetch_sub(&sp->cnt_error, 1, __ATOMIC_SEQ_CST);
 
                 /* Log the out-of-order packet */
                 if (test->debug_level >= DEBUG_LEVEL_INFO)
-                    fprintf(stderr, "OUT OF ORDER - received packet %" PRIu64 " but expected sequence %" PRIu64 " on stream %d\n", pcount, sp->packet_count + 1, sp->socket);
+                    fprintf(stderr, "OUT OF ORDER - received packet %" PRIu64 " but expected sequence %" PRIu64 " on stream %d\n", pcount, __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST) + 1, sp->socket);
 	    }
 
             /*
@@ -224,7 +224,13 @@ iperf_udp_recv(struct iperf_stream *sp)
 	    if (d < 0)
 		d = -d;
 	    sp->prev_transit = transit;
-	    sp->jitter += (d - sp->jitter) / 16.0;
+	    /* Retry if the omit reset changed jitter during this update. */
+            double previous_jitter = iperf_atomic_load_double(&sp->jitter);
+            double next_jitter;
+            do {
+                next_jitter = previous_jitter + (d - previous_jitter) / 16.0;
+            } while (!__atomic_compare_exchange(&sp->jitter, &previous_jitter,
+                         &next_jitter, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST));
 	    first_packet = 0;
 
 	    dgram_buf += dgram_sz;
@@ -233,7 +239,7 @@ iperf_udp_recv(struct iperf_stream *sp)
     }
     else {
 	if (test->debug_level >= DEBUG_LEVEL_INFO)
-	    printf("Late receive, state = %d\n", test->state);
+	    printf("Late receive, state = %d\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST));
     }
 
     return r;
@@ -291,7 +297,7 @@ iperf_udp_send(struct iperf_stream *sp)
 	}
 
 	iperf_time_now(&before);
-	++sp->packet_count;
+	__atomic_fetch_add(&sp->packet_count, 1, __ATOMIC_SEQ_CST);
 
 	if (sp->test->udp_counters_64bit) {
 	    uint32_t  sec, usec;
@@ -299,7 +305,7 @@ iperf_udp_send(struct iperf_stream *sp)
 
 	    sec = htonl(before.secs);
 	    usec = htonl(before.usecs);
-	    pcount = htobe64(sp->packet_count);
+	    pcount = htobe64(__atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST));
 
 	    memcpy(dgram_buf, &sec, sizeof(sec));
 	    memcpy(dgram_buf+4, &usec, sizeof(usec));
@@ -309,7 +315,7 @@ iperf_udp_send(struct iperf_stream *sp)
 
 	    sec = htonl(before.secs);
 	    usec = htonl(before.usecs);
-	    pcount = htonl(sp->packet_count);
+	    pcount = htonl(__atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST));
 
 	    memcpy(dgram_buf, &sec, sizeof(sec));
 	    memcpy(dgram_buf+4, &usec, sizeof(usec));
@@ -333,7 +339,7 @@ iperf_udp_send(struct iperf_stream *sp)
     }
 
     if (r <= 0) {
-        --sp->packet_count;     /* Don't count messages that no data was sent from them.
+        __atomic_fetch_sub(&sp->packet_count, 1, __ATOMIC_SEQ_CST);     /* Don't count messages that no data was sent from them.
                                  * Allows "resending" a massage with the same numbering */
         if (r < 0) {
             if (r == NET_SOFTERROR && sp->test->debug_level >= DEBUG_LEVEL_INFO)
@@ -342,11 +348,11 @@ iperf_udp_send(struct iperf_stream *sp)
         }
     }
 
-    sp->result->bytes_sent += r;
-    sp->result->bytes_sent_this_interval += r;
+    __atomic_fetch_add(&sp->result->bytes_sent, r, __ATOMIC_SEQ_CST);
+    atomic_fetch_add(&sp->result->bytes_sent_this_interval, r);
 
     if (sp->test->debug_level >=  DEBUG_LEVEL_DEBUG)
-	printf("sent %d bytes of %d, total %" PRIu64 "\n", r, size, sp->result->bytes_sent);
+	printf("sent %d bytes of %d, total %" PRIu64 "\n", r, size, __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST));
 
     return r;
 }
@@ -383,11 +389,11 @@ iperf_udp_buffercheck(struct iperf_test *test, int s)
 
     if ((opt = test->settings->socket_bufsize)) {
         if (setsockopt(s, SOL_SOCKET, SO_RCVBUF, &opt, sizeof(opt)) < 0) {
-            i_errno = IESETBUF;
+            iperf_set_error(IESETBUF);
             return -1;
         }
         if (setsockopt(s, SOL_SOCKET, SO_SNDBUF, &opt, sizeof(opt)) < 0) {
-            i_errno = IESETBUF;
+            iperf_set_error(IESETBUF);
             return -1;
         }
     }
@@ -395,14 +401,14 @@ iperf_udp_buffercheck(struct iperf_test *test, int s)
     /* Read back and verify the sender socket buffer size */
     optlen = sizeof(sndbuf_actual);
     if (getsockopt(s, SOL_SOCKET, SO_SNDBUF, &sndbuf_actual, &optlen) < 0) {
-	i_errno = IESETBUF;
+	iperf_set_error(IESETBUF);
 	return -1;
     }
     if (test->debug) {
 	printf("SNDBUF is %u, expecting %u\n", sndbuf_actual, test->settings->socket_bufsize);
     }
     if (test->settings->socket_bufsize && test->settings->socket_bufsize > sndbuf_actual) {
-	i_errno = IESETBUF2;
+	iperf_set_error(IESETBUF2);
 	return -1;
     }
     if (test->settings->blksize > sndbuf_actual) {
@@ -417,14 +423,14 @@ iperf_udp_buffercheck(struct iperf_test *test, int s)
     /* Read back and verify the receiver socket buffer size */
     optlen = sizeof(rcvbuf_actual);
     if (getsockopt(s, SOL_SOCKET, SO_RCVBUF, &rcvbuf_actual, &optlen) < 0) {
-	i_errno = IESETBUF;
+	iperf_set_error(IESETBUF);
 	return -1;
     }
     if (test->debug) {
 	printf("RCVBUF is %u, expecting %u\n", rcvbuf_actual, test->settings->socket_bufsize);
     }
     if (test->settings->socket_bufsize && test->settings->socket_bufsize > rcvbuf_actual) {
-	i_errno = IESETBUF2;
+	iperf_set_error(IESETBUF2);
 	return -1;
     }
     if (test->settings->blksize > rcvbuf_actual) {
@@ -541,12 +547,12 @@ iperf_udp_accept(struct iperf_test *test)
      */
     len = sizeof(sa_peer);
     if ((sz = recvfrom(test->prot_listener, &buf, sizeof(buf), 0, (struct sockaddr *) &sa_peer, &len)) < 0) {
-        i_errno = IESTREAMACCEPT;
+        iperf_set_error(IESTREAMACCEPT);
         return -1;
     }
 
     if (connect(s, (struct sockaddr *) &sa_peer, len) < 0) {
-        i_errno = IESTREAMACCEPT;
+        iperf_set_error(IESTREAMACCEPT);
         return -1;
     }
 
@@ -608,8 +614,8 @@ iperf_udp_accept(struct iperf_test *test)
     FD_CLR(test->prot_listener, &test->read_set); // No control messages from old listener
     test->prot_listener = netannounce(test->settings->domain, Pudp, test->bind_address, test->bind_dev, test->server_port);
     if (test->prot_listener < 0) {
-        if (i_errno == IENONE)
-            i_errno = IESTREAMLISTEN;
+        if (iperf_get_error() == IENONE)
+            iperf_set_error(IESTREAMLISTEN);
         return -1;
     }
 
@@ -619,7 +625,7 @@ iperf_udp_accept(struct iperf_test *test)
     /* Let the client know we're ready "accept" another UDP "stream" */
     buf = UDP_CONNECT_REPLY;
     if (write(s, &buf, sizeof(buf)) < 0) {
-        i_errno = IESTREAMWRITE;
+        iperf_set_error(IESTREAMWRITE);
         return -1;
     }
 
@@ -640,8 +646,8 @@ iperf_udp_listen(struct iperf_test *test)
     int s;
 
     if ((s = netannounce(test->settings->domain, Pudp, test->bind_address, test->bind_dev, test->server_port)) < 0) {
-        if (i_errno == IENONE)
-            i_errno = IESTREAMLISTEN;
+        if (iperf_get_error() == IENONE)
+            iperf_set_error(IESTREAMLISTEN);
         return -1;
     }
 
@@ -670,7 +676,7 @@ iperf_udp_connect(struct iperf_test *test)
 
     /* Create and bind our local socket. */
     if ((s = netdial(test->settings->domain, Pudp, test->bind_address, test->bind_dev, test->bind_port, test->server_hostname, test->server_port, -1)) < 0) {
-        i_errno = IESTREAMCONNECT;
+        iperf_set_error(IESTREAMCONNECT);
         return -1;
     }
 
@@ -747,7 +753,7 @@ iperf_udp_connect(struct iperf_test *test)
     }
     if (write(s, &buf, sizeof(buf)) < 0) {
         // XXX: Should this be changed to IESTREAMCONNECT?
-        i_errno = IESTREAMWRITE;
+        iperf_set_error(IESTREAMWRITE);
         return -1;
     }
 
@@ -760,7 +766,7 @@ iperf_udp_connect(struct iperf_test *test)
         max_len_wait_for_reply += MAX_REVERSE_OUT_OF_ORDER_PACKETS * test->settings->blksize;
     do {
         if ((sz = recv(s, &buf, sizeof(buf), 0)) < 0) {
-            i_errno = IESTREAMREAD;
+            iperf_set_error(IESTREAMREAD);
             return -1;
         }
         if (test->debug) {
@@ -770,7 +776,7 @@ iperf_udp_connect(struct iperf_test *test)
     } while (buf != UDP_CONNECT_REPLY && buf != LEGACY_UDP_CONNECT_REPLY && i < max_len_wait_for_reply);
 
     if (buf != UDP_CONNECT_REPLY  && buf != LEGACY_UDP_CONNECT_REPLY) {
-        i_errno = IESTREAMREAD;
+        iperf_set_error(IESTREAMREAD);
         return -1;
     }
 

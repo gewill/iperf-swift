@@ -72,13 +72,13 @@ iperf_tcp_recv(struct iperf_stream *sp)
         return r;
 
     /* Only count bytes received while we're in the correct state. */
-    if (sp->test->state == TEST_RUNNING) {
-	      sp->result->bytes_received += r;
-	      sp->result->bytes_received_this_interval += r;
+    if (__atomic_load_n(&sp->test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING) {
+	      __atomic_fetch_add(&sp->result->bytes_received, r, __ATOMIC_SEQ_CST);
+	      atomic_fetch_add(&sp->result->bytes_received_this_interval, r);
     }
     else {
 	      if (sp->test->debug)
-	          printf("Late receive, state = %d-%s\n", sp->test->state, state_to_text(sp->test->state));
+	          printf("Late receive, state = %d-%s\n", __atomic_load_n(&sp->test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&sp->test->state, __ATOMIC_SEQ_CST)));
     }
 
     return r;
@@ -106,12 +106,12 @@ iperf_tcp_send(struct iperf_stream *sp)
         return r;
 
     sp->pending_size -= r;
-    sp->result->bytes_sent += r;
-    sp->result->bytes_sent_this_interval += r;
+    __atomic_fetch_add(&sp->result->bytes_sent, r, __ATOMIC_SEQ_CST);
+    atomic_fetch_add(&sp->result->bytes_sent_this_interval, r);
 
     if (sp->test->debug_level >=  DEBUG_LEVEL_DEBUG)
 	      printf("sent %d bytes of %d, pending %d, total %" PRIu64 "\n",
-	          r, sp->settings->blksize, sp->pending_size, sp->result->bytes_sent);
+	          r, sp->settings->blksize, sp->pending_size, __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST));
 
     return r;
 }
@@ -132,14 +132,14 @@ iperf_tcp_accept(struct iperf_test * test)
 
     len = sizeof(addr);
     if ((s = accept(test->listener, (struct sockaddr *) &addr, &len)) < 0) {
-        i_errno = IESTREAMCONNECT;
+        iperf_set_error(IESTREAMCONNECT);
         return -1;
     }
     if (iperf_set_socket_no_sigpipe(s) < 0) {
         int saved_errno = errno;
         close(s);
         errno = saved_errno;
-        i_errno = IESTREAMCONNECT;
+        iperf_set_error(IESTREAMCONNECT);
         return -1;
     }
 #if defined(HAVE_SO_MAX_PACING_RATE)
@@ -160,7 +160,7 @@ iperf_tcp_accept(struct iperf_test * test)
 #endif /* HAVE_SO_MAX_PACING_RATE */
 
     if (Nread(s, cookie, COOKIE_SIZE, Ptcp) < 0) {
-        i_errno = IERECVCOOKIE;
+        iperf_set_error(IERECVCOOKIE);
         close(s);
         return -1;
     }
@@ -205,7 +205,7 @@ iperf_tcp_listen(struct iperf_test *test)
 	int proto = 0;
 
         FD_CLR(s, &test->read_set);
-        close(s);
+        iperf_close_test_listener_socket(test, s);
 
         snprintf(portstr, 6, "%d", test->server_port);
         memset(&hints, 0, sizeof(hints));
@@ -224,7 +224,7 @@ iperf_tcp_listen(struct iperf_test *test)
         hints.ai_socktype = SOCK_STREAM;
         hints.ai_flags = AI_PASSIVE;
         if ((gerror = getaddrinfo(test->bind_address, portstr, &hints, &res)) != 0) {
-            i_errno = IESTREAMLISTEN;
+            iperf_set_error(IESTREAMLISTEN);
             return -1;
         }
 
@@ -235,15 +235,15 @@ iperf_tcp_listen(struct iperf_test *test)
 
         if ((s = socket(res->ai_family, SOCK_STREAM, proto)) < 0) {
 	    freeaddrinfo(res);
-            i_errno = IESTREAMLISTEN;
+            iperf_set_error(IESTREAMLISTEN);
             return -1;
         }
         if (iperf_set_socket_no_sigpipe(s) < 0) {
             saved_errno = errno;
-            close(s);
+            iperf_close_test_listener_socket(test, s);
             freeaddrinfo(res);
             errno = saved_errno;
-            i_errno = IESTREAMLISTEN;
+            iperf_set_error(IESTREAMLISTEN);
             return -1;
         }
 
@@ -251,10 +251,10 @@ iperf_tcp_listen(struct iperf_test *test)
             opt = 1;
             if (setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt)) < 0) {
 		saved_errno = errno;
-		close(s);
+		iperf_close_test_listener_socket(test, s);
 		freeaddrinfo(res);
 		errno = saved_errno;
-                i_errno = IESETNODELAY;
+                iperf_set_error(IESETNODELAY);
                 return -1;
             }
         }
@@ -262,28 +262,28 @@ iperf_tcp_listen(struct iperf_test *test)
         if ((opt = test->settings->mss)) {
             if (setsockopt(s, IPPROTO_TCP, TCP_MAXSEG, &opt, sizeof(opt)) < 0) {
 		saved_errno = errno;
-		close(s);
+		iperf_close_test_listener_socket(test, s);
 		freeaddrinfo(res);
 		errno = saved_errno;
-                i_errno = IESETMSS;
+                iperf_set_error(IESETMSS);
                 return -1;
             }
         }
         if ((opt = test->settings->socket_bufsize)) {
             if (setsockopt(s, SOL_SOCKET, SO_RCVBUF, &opt, sizeof(opt)) < 0) {
 		saved_errno = errno;
-		close(s);
+		iperf_close_test_listener_socket(test, s);
 		freeaddrinfo(res);
 		errno = saved_errno;
-                i_errno = IESETBUF;
+                iperf_set_error(IESETBUF);
                 return -1;
             }
             if (setsockopt(s, SOL_SOCKET, SO_SNDBUF, &opt, sizeof(opt)) < 0) {
 		saved_errno = errno;
-		close(s);
+		iperf_close_test_listener_socket(test, s);
 		freeaddrinfo(res);
 		errno = saved_errno;
-                i_errno = IESETBUF;
+                iperf_set_error(IESETBUF);
                 return -1;
             }
         }
@@ -298,10 +298,10 @@ iperf_tcp_listen(struct iperf_test *test)
         opt = 1;
         if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
 	    saved_errno = errno;
-            close(s);
+            iperf_close_test_listener_socket(test, s);
 	    freeaddrinfo(res);
 	    errno = saved_errno;
-            i_errno = IEREUSEADDR;
+            iperf_set_error(IEREUSEADDR);
             return -1;
         }
 
@@ -319,10 +319,10 @@ iperf_tcp_listen(struct iperf_test *test)
 	    if (setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY,
 			   (char *) &opt, sizeof(opt)) < 0) {
 		saved_errno = errno;
-		close(s);
+		iperf_close_test_listener_socket(test, s);
 		freeaddrinfo(res);
 		errno = saved_errno;
-		i_errno = IEV6ONLY;
+		iperf_set_error(IEV6ONLY);
 		return -1;
 	    }
 	}
@@ -330,18 +330,18 @@ iperf_tcp_listen(struct iperf_test *test)
 
         if (bind(s, (struct sockaddr *) res->ai_addr, res->ai_addrlen) < 0) {
 	    saved_errno = errno;
-            close(s);
+            iperf_close_test_listener_socket(test, s);
 	    freeaddrinfo(res);
 	    errno = saved_errno;
-            i_errno = IESTREAMLISTEN;
+            iperf_set_error(IESTREAMLISTEN);
             return -1;
         }
 
         freeaddrinfo(res);
 
         if (listen(s, INT_MAX) < 0) {
-            i_errno = IESTREAMLISTEN;
-            close(s);
+            iperf_set_error(IESTREAMLISTEN);
+            iperf_close_test_listener_socket(test, s);
             return -1;
         }
 
@@ -352,17 +352,17 @@ iperf_tcp_listen(struct iperf_test *test)
     optlen = sizeof(sndbuf_actual);
     if (getsockopt(s, SOL_SOCKET, SO_SNDBUF, &sndbuf_actual, &optlen) < 0) {
 	saved_errno = errno;
-	close(s);
+	iperf_close_test_listener_socket(test, s);
 	errno = saved_errno;
-	i_errno = IESETBUF;
+	iperf_set_error(IESETBUF);
 	return -1;
     }
     if (test->debug) {
 	printf("SNDBUF is %u, expecting %u\n", sndbuf_actual, test->settings->socket_bufsize);
     }
     if (test->settings->socket_bufsize && test->settings->socket_bufsize > sndbuf_actual) {
-	i_errno = IESETBUF2;
-    close(s);
+	iperf_set_error(IESETBUF2);
+    iperf_close_test_listener_socket(test, s);
 	return -1;
     }
 
@@ -370,17 +370,17 @@ iperf_tcp_listen(struct iperf_test *test)
     optlen = sizeof(rcvbuf_actual);
     if (getsockopt(s, SOL_SOCKET, SO_RCVBUF, &rcvbuf_actual, &optlen) < 0) {
 	saved_errno = errno;
-	close(s);
+	iperf_close_test_listener_socket(test, s);
 	errno = saved_errno;
-	i_errno = IESETBUF;
+	iperf_set_error(IESETBUF);
 	return -1;
     }
     if (test->debug) {
 	printf("RCVBUF is %u, expecting %u\n", rcvbuf_actual, test->settings->socket_bufsize);
     }
     if (test->settings->socket_bufsize && test->settings->socket_bufsize > rcvbuf_actual) {
-	i_errno = IESETBUF2;
-    close(s);
+	iperf_set_error(IESETBUF2);
+    iperf_close_test_listener_socket(test, s);
 	return -1;
     }
 
@@ -418,7 +418,7 @@ iperf_tcp_connect(struct iperf_test *test)
 
     s = create_socket(test->settings->domain, SOCK_STREAM, proto, test->bind_address, test->bind_dev, test->bind_port, test->server_hostname, test->server_port, &server_res);
     if (s < 0) {
-	i_errno = IESTREAMCONNECT;
+	iperf_set_error(IESTREAMCONNECT);
 	return -1;
     }
 
@@ -430,7 +430,7 @@ iperf_tcp_connect(struct iperf_test *test)
 	    close(s);
 	    freeaddrinfo(server_res);
 	    errno = saved_errno;
-            i_errno = IESETNODELAY;
+            iperf_set_error(IESETNODELAY);
             return -1;
         }
     }
@@ -440,7 +440,7 @@ iperf_tcp_connect(struct iperf_test *test)
 	    close(s);
 	    freeaddrinfo(server_res);
 	    errno = saved_errno;
-            i_errno = IESETMSS;
+            iperf_set_error(IESETMSS);
             return -1;
         }
     }
@@ -450,7 +450,7 @@ iperf_tcp_connect(struct iperf_test *test)
 	    close(s);
 	    freeaddrinfo(server_res);
 	    errno = saved_errno;
-            i_errno = IESETBUF;
+            iperf_set_error(IESETBUF);
             return -1;
         }
         if (setsockopt(s, SOL_SOCKET, SO_SNDBUF, &opt, sizeof(opt)) < 0) {
@@ -458,7 +458,7 @@ iperf_tcp_connect(struct iperf_test *test)
 	    close(s);
 	    freeaddrinfo(server_res);
 	    errno = saved_errno;
-            i_errno = IESETBUF;
+            iperf_set_error(IESETBUF);
             return -1;
         }
     }
@@ -469,7 +469,7 @@ iperf_tcp_connect(struct iperf_test *test)
 	    close(s);
 	    freeaddrinfo(server_res);
 	    errno = saved_errno;
-            i_errno = IESETUSERTIMEOUT;
+            iperf_set_error(IESETUSERTIMEOUT);
             return -1;
         }
     }
@@ -482,7 +482,7 @@ iperf_tcp_connect(struct iperf_test *test)
 	close(s);
 	freeaddrinfo(server_res);
 	errno = saved_errno;
-	i_errno = IESETBUF;
+	iperf_set_error(IESETBUF);
 	return -1;
     }
     if (test->debug) {
@@ -491,7 +491,7 @@ iperf_tcp_connect(struct iperf_test *test)
     if (test->settings->socket_bufsize && test->settings->socket_bufsize > sndbuf_actual) {
         close(s);
         freeaddrinfo(server_res);
-	i_errno = IESETBUF2;
+	iperf_set_error(IESETBUF2);
 	return -1;
     }
 
@@ -502,7 +502,7 @@ iperf_tcp_connect(struct iperf_test *test)
 	close(s);
 	freeaddrinfo(server_res);
 	errno = saved_errno;
-	i_errno = IESETBUF;
+	iperf_set_error(IESETBUF);
 	return -1;
     }
     if (test->debug) {
@@ -511,7 +511,7 @@ iperf_tcp_connect(struct iperf_test *test)
     if (test->settings->socket_bufsize && test->settings->socket_bufsize > rcvbuf_actual) {
         close(s);
         freeaddrinfo(server_res);
-	i_errno = IESETBUF2;
+	iperf_set_error(IESETBUF2);
 	return -1;
     }
 
@@ -539,7 +539,7 @@ iperf_tcp_connect(struct iperf_test *test)
 	    close(s);
 	    freeaddrinfo(server_res);
 	    errno = saved_errno;
-            i_errno = IESETFLOW;
+            iperf_set_error(IESETFLOW);
             return -1;
 	} else {
 	    struct sockaddr_in6* sa6P = (struct sockaddr_in6*) server_res->ai_addr;
@@ -559,7 +559,7 @@ iperf_tcp_connect(struct iperf_test *test)
                 close(s);
                 freeaddrinfo(server_res);
 		errno = saved_errno;
-                i_errno = IESETFLOW;
+                iperf_set_error(IESETFLOW);
                 return -1;
             }
             sa6P->sin6_flowinfo = freq->flr_label;
@@ -570,7 +570,7 @@ iperf_tcp_connect(struct iperf_test *test)
                 close(s);
                 freeaddrinfo(server_res);
 		errno = saved_errno;
-                i_errno = IESETFLOW;
+                iperf_set_error(IESETFLOW);
                 return -1;
             }
 	}
@@ -609,7 +609,7 @@ iperf_tcp_connect(struct iperf_test *test)
 	close(s);
 	freeaddrinfo(server_res);
 	errno = saved_errno;
-        i_errno = IESTREAMCONNECT;
+        iperf_set_error(IESTREAMCONNECT);
         return -1;
     }
 
@@ -620,7 +620,7 @@ iperf_tcp_connect(struct iperf_test *test)
 	saved_errno = errno;
 	close(s);
 	errno = saved_errno;
-        i_errno = IESENDCOOKIE;
+        iperf_set_error(IESENDCOOKIE);
         return -1;
     }
 
