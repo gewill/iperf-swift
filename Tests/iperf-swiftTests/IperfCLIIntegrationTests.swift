@@ -3716,6 +3716,14 @@ final class IperfCLIIntegrationTests: XCTestCase {
     }
 
     func testSwiftClientOmitsInitialIntervals() throws {
+        try assertOmittedIntervals(udpBidirectional: false)
+    }
+
+    func testSwiftClientOmitsBidirectionalUDPIntervals() throws {
+        try assertOmittedIntervals(udpBidirectional: true)
+    }
+
+    private func assertOmittedIntervals(udpBidirectional: Bool) throws {
         // With --omit set, the engine marks the first seconds' interval results
         // as omitted; the wrapper filters omitted streams, so those intervals
         // arrive with no streams. Assert both an omitted (empty) interval and a
@@ -3740,8 +3748,9 @@ final class IperfCLIIntegrationTests: XCTestCase {
         configuration.role = .client
         configuration.address = "127.0.0.1"
         configuration.port = port
-        configuration.mode = .upload
-        configuration.numStreams = 1
+        configuration.prot = udpBidirectional ? .udp : .tcp
+        configuration.mode = udpBidirectional ? .bidirectional : .upload
+        configuration.numStreams = udpBidirectional ? 2 : 1
         configuration.duration = 2
         configuration.omit = 1
         configuration.reporterInterval = 0.25
@@ -3760,7 +3769,9 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     if result.streams.isEmpty {
                         sawOmittedInterval = true
                     } else if result.totalBytes > 0 {
-                        sawMeasuredInterval = true
+                        sawMeasuredInterval = sawMeasuredInterval || !udpBidirectional ||
+                            (result.upload.totalBytes > 0 && result.download.totalBytes > 0 &&
+                             result.upload.totalPackets > 0 && result.download.totalPackets > 0)
                     }
                 }
             },

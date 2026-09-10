@@ -111,15 +111,15 @@ iperf_udp_recv(struct iperf_stream *sp)
 	 * For jitter computation below, it's important to know if this
 	 * packet is the first packet received.
 	 */
-	if (sp->result->bytes_received == 0) {
+	if (__atomic_load_n(&sp->result->bytes_received, __ATOMIC_SEQ_CST) == 0) {
 	    first_packet = 1;
 	}
 
-	sp->result->bytes_received += r;
+	__atomic_fetch_add(&sp->result->bytes_received, r, __ATOMIC_SEQ_CST);
 	atomic_fetch_add(&sp->result->bytes_received_this_interval, r);
 
 	if (sp->test->debug)
-	    printf("received %d bytes of %d, total %" PRIu64 "\n", r, size, sp->result->bytes_received);
+	    printf("received %d bytes of %d, total %" PRIu64 "\n", r, size, __atomic_load_n(&sp->result->bytes_received, __ATOMIC_SEQ_CST));
 
 	/* Unified loop: processes single packet when GRO off, multiple when GRO on */
 	dgram_buf = sp->buffer;
@@ -169,24 +169,24 @@ iperf_udp_recv(struct iperf_stream *sp)
              * far (so we're expecting to see the packet with sequence number
              * sp->packet_count + 1 arrive next).
              */
-	    if (pcount >= sp->packet_count + 1) {
+	    if (pcount >= __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST) + 1) {
 
                 /* Forward, but is there a gap in sequence numbers? */
-		if (pcount > sp->packet_count + 1) {
+		if (pcount > __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST) + 1) {
                     /* There's a gap so count that as a loss. */
-		    sp->cnt_error += (pcount - 1) - sp->packet_count;
+		    __atomic_fetch_add(&sp->cnt_error, (pcount - 1) - __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST), __ATOMIC_SEQ_CST);
                     if (test->debug_level >= DEBUG_LEVEL_INFO)
-                        fprintf(stderr, "LOST %" PRIu64 " PACKETS - received packet %" PRIu64 " but expected sequence %" PRIu64 " on stream %d\n", (pcount - sp->packet_count + 1), pcount, sp->packet_count + 1, sp->socket);
+                        fprintf(stderr, "LOST %" PRIu64 " PACKETS - received packet %" PRIu64 " but expected sequence %" PRIu64 " on stream %d\n", (pcount - __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST) + 1), pcount, __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST) + 1, sp->socket);
 		}
                 /* Update the highest sequence number seen so far. */
-		sp->packet_count = pcount;
+		__atomic_store_n(&sp->packet_count, pcount, __ATOMIC_SEQ_CST);
 	    } else {
 
                 /*
                  * Sequence number went backward (or was stationary?!?).
                  * This counts as an out-of-order packet.
                  */
-		sp->outoforder_packets++;
+		__atomic_fetch_add(&sp->outoforder_packets, 1, __ATOMIC_SEQ_CST);
 
                 /*
                  * If we have lost packets, then the fact that we are now
@@ -194,12 +194,12 @@ iperf_udp_recv(struct iperf_stream *sp)
                  * number gap that was counted as a loss.  So we can take
                  * away a loss.
                  */
-		if (sp->cnt_error > 0)
-		    sp->cnt_error--;
+		if (__atomic_load_n(&sp->cnt_error, __ATOMIC_SEQ_CST) > 0)
+		    __atomic_fetch_sub(&sp->cnt_error, 1, __ATOMIC_SEQ_CST);
 
                 /* Log the out-of-order packet */
                 if (test->debug_level >= DEBUG_LEVEL_INFO)
-                    fprintf(stderr, "OUT OF ORDER - received packet %" PRIu64 " but expected sequence %" PRIu64 " on stream %d\n", pcount, sp->packet_count + 1, sp->socket);
+                    fprintf(stderr, "OUT OF ORDER - received packet %" PRIu64 " but expected sequence %" PRIu64 " on stream %d\n", pcount, __atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST) + 1, sp->socket);
 	    }
 
             /*
@@ -224,7 +224,13 @@ iperf_udp_recv(struct iperf_stream *sp)
 	    if (d < 0)
 		d = -d;
 	    sp->prev_transit = transit;
-	    sp->jitter += (d - sp->jitter) / 16.0;
+	    /* Retry if the omit reset changed jitter during this update. */
+            double previous_jitter = iperf_atomic_load_double(&sp->jitter);
+            double next_jitter;
+            do {
+                next_jitter = previous_jitter + (d - previous_jitter) / 16.0;
+            } while (!__atomic_compare_exchange(&sp->jitter, &previous_jitter,
+                         &next_jitter, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST));
 	    first_packet = 0;
 
 	    dgram_buf += dgram_sz;
@@ -291,7 +297,7 @@ iperf_udp_send(struct iperf_stream *sp)
 	}
 
 	iperf_time_now(&before);
-	++sp->packet_count;
+	__atomic_fetch_add(&sp->packet_count, 1, __ATOMIC_SEQ_CST);
 
 	if (sp->test->udp_counters_64bit) {
 	    uint32_t  sec, usec;
@@ -299,7 +305,7 @@ iperf_udp_send(struct iperf_stream *sp)
 
 	    sec = htonl(before.secs);
 	    usec = htonl(before.usecs);
-	    pcount = htobe64(sp->packet_count);
+	    pcount = htobe64(__atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST));
 
 	    memcpy(dgram_buf, &sec, sizeof(sec));
 	    memcpy(dgram_buf+4, &usec, sizeof(usec));
@@ -309,7 +315,7 @@ iperf_udp_send(struct iperf_stream *sp)
 
 	    sec = htonl(before.secs);
 	    usec = htonl(before.usecs);
-	    pcount = htonl(sp->packet_count);
+	    pcount = htonl(__atomic_load_n(&sp->packet_count, __ATOMIC_SEQ_CST));
 
 	    memcpy(dgram_buf, &sec, sizeof(sec));
 	    memcpy(dgram_buf+4, &usec, sizeof(usec));
@@ -333,7 +339,7 @@ iperf_udp_send(struct iperf_stream *sp)
     }
 
     if (r <= 0) {
-        --sp->packet_count;     /* Don't count messages that no data was sent from them.
+        __atomic_fetch_sub(&sp->packet_count, 1, __ATOMIC_SEQ_CST);     /* Don't count messages that no data was sent from them.
                                  * Allows "resending" a massage with the same numbering */
         if (r < 0) {
             if (r == NET_SOFTERROR && sp->test->debug_level >= DEBUG_LEVEL_INFO)
@@ -342,11 +348,11 @@ iperf_udp_send(struct iperf_stream *sp)
         }
     }
 
-    sp->result->bytes_sent += r;
+    __atomic_fetch_add(&sp->result->bytes_sent, r, __ATOMIC_SEQ_CST);
     atomic_fetch_add(&sp->result->bytes_sent_this_interval, r);
 
     if (sp->test->debug_level >=  DEBUG_LEVEL_DEBUG)
-	printf("sent %d bytes of %d, total %" PRIu64 "\n", r, size, sp->result->bytes_sent);
+	printf("sent %d bytes of %d, total %" PRIu64 "\n", r, size, __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST));
 
     return r;
 }
