@@ -9,6 +9,49 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.17] - 2026-09-10
+
+A statistics and native concurrency fix release. Interval measurements no
+longer include the omit tail or lose bytes between sampling and resetting;
+shared engine state, counters and listener cleanup use synchronized access.
+The Swift public API and embedded iperf3 3.21 version are unchanged.
+
+### Fixed
+
+- Reset both interval time boundaries when omit ends ([#164]). The first
+  measured interval previously started at the last pre-omit end time, adding
+  part of the warm-up period to its duration.
+- Atomically accumulate, extract and clear interval byte counters ([#166]).
+  Sampling now uses one exchange, so bytes arriving after the snapshot stay
+  in the next interval instead of being lost between a read and a reset.
+- Synchronize native control state, test and stream stop flags, and session
+  byte and block counters across control threads, workers and Swift ([#167]).
+  Swift accesses state through C functions instead of copying the mutable
+  test structure, and concurrent streams no longer use unsynchronized updates
+  for their shared session counters.
+- Synchronize UDP packet counts, loss, reordering, jitter and per-stream byte
+  totals through transfer, omit reset and final reporting ([#171]). Interval
+  packet deltas use a single cumulative snapshot. Fields are sampled
+  individually; byte and packet totals are not a simultaneous snapshot of
+  the entire measurement.
+- Synchronize shared native error state, including Swift boundary access
+  ([#170]). Worker errors remain visible to the control thread through the
+  existing global error slot.
+- Keep server listener publication, replacement and cleanup on the engine
+  thread ([#174]). Swift submits a stop request instead of closing the socket
+  concurrently; cleanup also invalidates listener aliases to prevent closing
+  a reused descriptor. Idle `select` waits are capped at one second to observe
+  stop requests; this is not a bound on every blocking operation.
+- Internal: isolated server tests clear inherited parent XCTest session
+  settings and preload the active ThreadSanitizer runtime before loading the
+  test bundle ([#167], [#173]). The subprocess safety assertions now run under
+  both Xcode and ThreadSanitizer without the previous startup failures.
+
+### Changed
+
+- Internal: CI also validates pull requests targeting `codex/**` branches,
+  covering dependent fixes before they merge into `develop` ([#175]).
+
 ## [3.21.16] - 2026-08-26
 
 A results and test-reliability release. The engine's per-stream run totals
@@ -762,7 +805,8 @@ unchanged from 3.21.6.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.14...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.17...HEAD
+[3.21.17]: https://github.com/gewill/iperf-swift/compare/v3.21.16...v3.21.17
 [3.21.16]: https://github.com/gewill/iperf-swift/compare/v3.21.15...v3.21.16
 [3.21.15]: https://github.com/gewill/iperf-swift/compare/v3.21.14...v3.21.15
 [3.21.14]: https://github.com/gewill/iperf-swift/compare/v3.21.13...v3.21.14
@@ -850,3 +894,11 @@ unchanged from 3.21.6.
 [#160]: https://github.com/gewill/iperf-swift/issues/160
 [#155]: https://github.com/gewill/iperf-swift/issues/155
 [#84]: https://github.com/gewill/iperfman/issues/84
+[#164]: https://github.com/gewill/iperf-swift/issues/164
+[#166]: https://github.com/gewill/iperf-swift/issues/166
+[#167]: https://github.com/gewill/iperf-swift/issues/167
+[#170]: https://github.com/gewill/iperf-swift/issues/170
+[#171]: https://github.com/gewill/iperf-swift/pull/171
+[#173]: https://github.com/gewill/iperf-swift/issues/173
+[#174]: https://github.com/gewill/iperf-swift/issues/174
+[#175]: https://github.com/gewill/iperf-swift/pull/175

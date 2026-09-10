@@ -95,7 +95,7 @@ extern    "C"
 
 	/* scan the number and any suffices */
 	if (sscanf(s, "%lf%c", &n, &suffix) < 1) {
-		i_errno = IEUNITVAL;
+		iperf_set_error(IEUNITVAL);
 		errarg = s;
 		return 0;
 	}
@@ -118,7 +118,7 @@ extern    "C"
 	case '\0':
 	    break;
 	default:
-	    i_errno = IEUNITVAL;
+	    iperf_set_error(IEUNITVAL);
 	    errarg = s;
 	    break;
 	}
@@ -142,7 +142,7 @@ extern    "C"
 
 	/* scan the number and any suffices */
 	if (sscanf(s, "%lf%c", &n, &suffix) < 1) {
-		i_errno = IEUNITVAL;
+		iperf_set_error(IEUNITVAL);
 		errarg = s;
 		return 0;
 	}
@@ -165,7 +165,7 @@ extern    "C"
 	case '\0':
 	    break;
 	default:
-	    i_errno = IEUNITVAL;
+	    iperf_set_error(IEUNITVAL);
 	    errarg = s;
 	    break;
 	}
@@ -191,7 +191,7 @@ extern    "C"
 
 	/* scan the number and any suffices */
 	if (sscanf(s, "%lf%c", &n, &suffix) < 1) {
-		i_errno = IEUNITVAL;
+		iperf_set_error(IEUNITVAL);
 		errarg = s;
 		return 0;
 	}
@@ -214,7 +214,7 @@ extern    "C"
 	case '\0':
 	    break;
 	default:
-	    i_errno = IEUNITVAL;
+	    iperf_set_error(IEUNITVAL);
 	    errarg = s;
 	    return 0;
 	}

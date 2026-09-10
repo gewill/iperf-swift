@@ -1834,7 +1834,15 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 }
             }
         )
-        Thread.sleep(forTimeInterval: 0.5)
+        let listening = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            TestTools.hasLocalTCPListener(port: port)
+        }, object: nil)
+        guard XCTWaiter.wait(for: [listening], timeout: 3) == .completed else {
+            XCTFail("One-off server did not establish its listener")
+            if !didFinish { didFinish = true; finished.fulfill() }
+            wait(for: [finished], timeout: 0.1)
+            return
+        }
 
         let clientResult = try tools.run(tools.iperf3, arguments: [
             "-c", "127.0.0.1", "-p", String(port), "-t", "1"
@@ -3716,6 +3724,14 @@ final class IperfCLIIntegrationTests: XCTestCase {
     }
 
     func testSwiftClientOmitsInitialIntervals() throws {
+        try assertOmittedIntervals(udpBidirectional: false)
+    }
+
+    func testSwiftClientOmitsBidirectionalUDPIntervals() throws {
+        try assertOmittedIntervals(udpBidirectional: true)
+    }
+
+    private func assertOmittedIntervals(udpBidirectional: Bool) throws {
         // With --omit set, the engine marks the first seconds' interval results
         // as omitted; the wrapper filters omitted streams, so those intervals
         // arrive with no streams. Assert both an omitted (empty) interval and a
@@ -3740,8 +3756,9 @@ final class IperfCLIIntegrationTests: XCTestCase {
         configuration.role = .client
         configuration.address = "127.0.0.1"
         configuration.port = port
-        configuration.mode = .upload
-        configuration.numStreams = 1
+        configuration.prot = udpBidirectional ? .udp : .tcp
+        configuration.mode = udpBidirectional ? .bidirectional : .upload
+        configuration.numStreams = udpBidirectional ? 2 : 1
         configuration.duration = 2
         configuration.omit = 1
         configuration.reporterInterval = 0.25
@@ -3760,7 +3777,9 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     if result.streams.isEmpty {
                         sawOmittedInterval = true
                     } else if result.totalBytes > 0 {
-                        sawMeasuredInterval = true
+                        sawMeasuredInterval = sawMeasuredInterval || !udpBidirectional ||
+                            (result.upload.totalBytes > 0 && result.download.totalBytes > 0 &&
+                             result.upload.totalPackets > 0 && result.download.totalPackets > 0)
                     }
                 }
             },
@@ -3976,6 +3995,36 @@ private struct Credentials {
 }
 
 private final class TestTools {
+    // Observe this process's listening socket without consuming a one-off client.
+    static func hasLocalTCPListener(port: Int) -> Bool {
+        for descriptor in 0..<min(getdtablesize(), 1_024) {
+            var connection = tcp_connection_info()
+            var size = socklen_t(MemoryLayout<tcp_connection_info>.size)
+            guard getsockopt(descriptor, IPPROTO_TCP, TCP_CONNECTION_INFO, &connection, &size) == 0,
+                  connection.tcpi_state == TCPS_LISTEN else { continue }
+            var address = sockaddr_storage()
+            var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
+            let result = withUnsafeMutablePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    getsockname(descriptor, $0, &length)
+                }
+            }
+            guard result == 0 else { continue }
+            let family = address.ss_family
+            let boundPort: UInt16? = withUnsafePointer(to: &address) {
+                if family == sa_family_t(AF_INET) {
+                    return $0.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_port }
+                }
+                if family == sa_family_t(AF_INET6) {
+                    return $0.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { $0.pointee.sin6_port }
+                }
+                return nil
+            }
+            if let boundPort, Int(UInt16(bigEndian: boundPort)) == port { return true }
+        }
+        return false
+    }
+
     let directory: URL
     let iperf3: String
     private let openssl: String?

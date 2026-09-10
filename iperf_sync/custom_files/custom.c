@@ -25,13 +25,17 @@ void iperf_set_test_domain(struct iperf_test* ipt, int domain) {
     ipt->settings->domain = domain;
 }
 
-void iperf_close_test_listener(struct iperf_test* ipt) {
-    int listener = __atomic_exchange_n(&ipt->listener, -1, __ATOMIC_ACQ_REL);
-    if (listener < 0) {
-        return;
-    }
+/* Only the owning engine thread closes/replaces listener sockets. */
+void iperf_close_test_listener_socket(struct iperf_test* ipt, int listener) {
+    if (listener < 0) return;
+    if (ipt->listener == listener) ipt->listener = -1;
+    if (ipt->prot_listener == listener) ipt->prot_listener = -1;
     shutdown(listener, SHUT_RDWR);
     close(listener);
+}
+
+void iperf_close_test_listener(struct iperf_test* ipt) {
+    iperf_close_test_listener_socket(ipt, ipt->listener);
 }
 
 #if defined(HAVE_SSL)
