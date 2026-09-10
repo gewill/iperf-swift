@@ -409,6 +409,9 @@ void iperf_exit(struct iperf_test *test, int exit_code, const char *format, va_l
 char *iperf_strerror(int);
 /* Internal callers use the accessors; retain the storage symbol for C ABI. */
 extern int i_errno;
+/* Engine-thread-only listener cleanup, including sockets not yet published. */
+void iperf_close_test_listener_socket(struct iperf_test*, int);
+void iperf_close_test_listener(struct iperf_test*);
 int iperf_get_error(void);
 void iperf_set_error(int error);
 extern const char *errarg;

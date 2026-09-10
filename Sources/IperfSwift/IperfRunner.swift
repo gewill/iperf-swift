@@ -1213,13 +1213,9 @@ public class IperfRunner {
         }
         
         state = .stopping
-        if iperf_get_test_state(pointer) != IPERF_DONE {
-            iperf_request_test_stop(pointer)
-            if let configuration = configuration,
-               configuration.role == .server {
-                iperf_close_test_listener(OpaquePointer(pointer))
-            }
-        }
+        // IPERF_DONE can describe the previous client while a persistent
+        // server is entering its next listen. Keep stop valid until teardown.
+        iperf_request_test_stop(pointer)
     }
 }
 
