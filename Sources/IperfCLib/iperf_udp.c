@@ -105,7 +105,7 @@ iperf_udp_recv(struct iperf_stream *sp)
         return r;
 
     /* Only count bytes received while we're in the correct state. */
-    if (test->state == TEST_RUNNING) {
+    if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING) {
 
 	/*
 	 * For jitter computation below, it's important to know if this
@@ -233,7 +233,7 @@ iperf_udp_recv(struct iperf_stream *sp)
     }
     else {
 	if (test->debug_level >= DEBUG_LEVEL_INFO)
-	    printf("Late receive, state = %d\n", test->state);
+	    printf("Late receive, state = %d\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST));
     }
 
     return r;

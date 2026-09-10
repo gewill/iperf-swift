@@ -61,13 +61,13 @@ iperf_sctp_recv(struct iperf_stream *sp)
         return r;
 
     /* Only count bytes received while we're in the correct state. */
-    if (sp->test->state == TEST_RUNNING) {
+    if (__atomic_load_n(&sp->test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING) {
 	sp->result->bytes_received += r;
 	atomic_fetch_add(&sp->result->bytes_received_this_interval, r);
     }
     else {
 	if (sp->test->debug)
-	    printf("Late receive, state = %d\n", sp->test->state);
+	    printf("Late receive, state = %d\n", __atomic_load_n(&sp->test->state, __ATOMIC_SEQ_CST));
     }
 
     return r;

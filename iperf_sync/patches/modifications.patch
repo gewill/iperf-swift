@@ -558,3 +558,318 @@ diff -ru a/iperf_sctp.c b/iperf_sctp.c
  
      return r;
  #else
+diff --git a/include/iperf_api.h b/include/iperf_api.h
+index ea09714..b974832 100644
+--- a/include/iperf_api.h
++++ b/include/iperf_api.h
+@@ -186,0 +187,3 @@ void	iperf_set_test_state( struct iperf_test* ipt, signed char state );
++signed char iperf_get_test_state(struct iperf_test *ipt);
++int iperf_get_test_done(struct iperf_test *ipt);
++void iperf_request_test_stop(struct iperf_test *ipt);
+diff --git a/iperf_api.c b/iperf_api.c
+index 6fa8c1c..a935c5d 100644
+--- a/iperf_api.c
++++ b/iperf_api.c
+@@ -489 +489 @@ iperf_set_test_state(struct iperf_test *ipt, signed char state)
+-                     state, state_to_text(state), ipt->state, state_to_text(ipt->state));
++                     state, state_to_text(state), __atomic_load_n(&ipt->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&ipt->state, __ATOMIC_SEQ_CST)));
+@@ -491 +491 @@ iperf_set_test_state(struct iperf_test *ipt, signed char state)
+-    ipt->state = state;
++    __atomic_store_n(&ipt->state, state, __ATOMIC_SEQ_CST);
+@@ -2106 +2106 @@ iperf_check_throttle(struct iperf_stream *sp, struct iperf_time *nowP)
+-    if (sp->test->done || sp->test->settings->rate == 0)
++    if (__atomic_load_n(&sp->test->done, __ATOMIC_SEQ_CST) || sp->test->settings->rate == 0)
+@@ -2172 +2172 @@ iperf_check_total_rate(struct iperf_test *test, iperf_size_t last_interval_bytes
+-    if (test->done || test->settings->bitrate_limit == 0)    // Continue only if check should be done
++    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST) || test->settings->bitrate_limit == 0)    // Continue only if check should be done
+@@ -2241 +2241 @@ iperf_send_mt(struct iperf_stream *sp)
+-        if (multisend > 1 && test->settings->bytes != 0 && test->bytes_sent >= test->settings->bytes)
++        if (multisend > 1 && test->settings->bytes != 0 && __atomic_load_n(&test->bytes_sent, __ATOMIC_SEQ_CST) >= test->settings->bytes)
+@@ -2243 +2243 @@ iperf_send_mt(struct iperf_stream *sp)
+-        if (multisend > 1 && test->settings->blocks != 0 && test->blocks_sent >= test->settings->blocks)
++        if (multisend > 1 && test->settings->blocks != 0 && __atomic_load_n(&test->blocks_sent, __ATOMIC_SEQ_CST) >= test->settings->blocks)
+@@ -2251 +2251 @@ iperf_send_mt(struct iperf_stream *sp)
+-        test->bytes_sent += r;
++        __atomic_fetch_add(&test->bytes_sent, r, __ATOMIC_SEQ_CST);
+@@ -2253 +2253 @@ iperf_send_mt(struct iperf_stream *sp)
+-            ++test->blocks_sent;
++            __atomic_fetch_add(&test->blocks_sent, 1, __ATOMIC_SEQ_CST);
+@@ -2288,2 +2288,2 @@ iperf_recv_mt(struct iperf_stream *sp)
+-	        test->bytes_received += r;
+-	        ++test->blocks_received;
++	        __atomic_fetch_add(&test->bytes_received, r, __ATOMIC_SEQ_CST);
++	        __atomic_fetch_add(&test->blocks_received, 1, __ATOMIC_SEQ_CST);
+@@ -3592 +3592 @@ iperf_reset_test(struct iperf_test *test)
+-    test->done = 0;
++    __atomic_store_n(&test->done, 0, __ATOMIC_SEQ_CST);
+@@ -3612 +3612 @@ iperf_reset_test(struct iperf_test *test)
+-    test->state = 0;
++    __atomic_store_n(&test->state, 0, __ATOMIC_SEQ_CST);
+@@ -3618,2 +3618,2 @@ iperf_reset_test(struct iperf_test *test)
+-    test->bytes_sent = 0;
+-    test->blocks_sent = 0;
++    __atomic_store_n(&test->bytes_sent, 0, __ATOMIC_SEQ_CST);
++    __atomic_store_n(&test->blocks_sent, 0, __ATOMIC_SEQ_CST);
+@@ -3621,2 +3621,2 @@ iperf_reset_test(struct iperf_test *test)
+-    test->bytes_received = 0;
+-    test->blocks_received = 0;
++    __atomic_store_n(&test->bytes_received, 0, __ATOMIC_SEQ_CST);
++    __atomic_store_n(&test->blocks_received, 0, __ATOMIC_SEQ_CST);
+@@ -3708,2 +3708,2 @@ iperf_reset_stats(struct iperf_test *test)
+-    test->bytes_sent = 0;
+-    test->blocks_sent = 0;
++    __atomic_store_n(&test->bytes_sent, 0, __ATOMIC_SEQ_CST);
++    __atomic_store_n(&test->blocks_sent, 0, __ATOMIC_SEQ_CST);
+@@ -4662 +4662 @@ iperf_reporter_callback(struct iperf_test *test)
+-    switch (test->state) {
++    switch (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)) {
+@@ -5088 +5088 @@ diskfile_send(struct iperf_stream *sp)
+-    if (sp->diskfile_left < sp->test->settings->blksize && !sp->test->done) {
++    if (sp->diskfile_left < sp->test->settings->blksize && !__atomic_load_n(&sp->test->done, __ATOMIC_SEQ_CST)) {
+@@ -5110 +5110 @@ diskfile_send(struct iperf_stream *sp)
+-    	    sp->test->done = 1;
++	    __atomic_store_n(&sp->test->done, 1, __ATOMIC_SEQ_CST);
+@@ -5119 +5119 @@ diskfile_send(struct iperf_stream *sp)
+-    if( sp->test->done || buffer_left == 0 ){
++    if( __atomic_load_n(&sp->test->done, __ATOMIC_SEQ_CST) || buffer_left == 0 ){
+@@ -5122 +5122 @@ diskfile_send(struct iperf_stream *sp)
+-        sp->test->done = 1;
++        __atomic_store_n(&sp->test->done, 1, __ATOMIC_SEQ_CST);
+@@ -5191 +5191 @@ iperf_got_sigend(struct iperf_test *test, int sig)
+-      (test->role == 's' && test->state == TEST_RUNNING)) {
++      (test->role == 's' && __atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING)) {
+@@ -5193 +5193 @@ iperf_got_sigend(struct iperf_test *test, int sig)
+-	test->done = 1;
++	__atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
+@@ -5204 +5204,2 @@ iperf_got_sigend(struct iperf_test *test, int sig)
+-	(void) Nwrite(test->ctrl_sck, (char*) &test->state, sizeof(signed char), Ptcp);
++	signed char outgoing_state = __atomic_load_n(&test->state, __ATOMIC_SEQ_CST);
++	(void) Nwrite(test->ctrl_sck, (char*) &outgoing_state, sizeof(signed char), Ptcp);
+@@ -5688,0 +5690,16 @@ iperf_set_control_keepalive(struct iperf_test *test)
++
++/* Swift and native workers share these control flags. Keep the public C layout. */
++signed char iperf_get_test_state(struct iperf_test *ipt)
++{
++    return __atomic_load_n(&ipt->state, __ATOMIC_SEQ_CST);
++}
++
++int iperf_get_test_done(struct iperf_test *ipt)
++{
++    return __atomic_load_n(&ipt->done, __ATOMIC_SEQ_CST);
++}
++
++void iperf_request_test_stop(struct iperf_test *ipt)
++{
++    __atomic_store_n(&ipt->done, 1, __ATOMIC_SEQ_CST);
++}
+diff --git a/iperf_client_api.c b/iperf_client_api.c
+index 48acfce..ae92b01 100644
+--- a/iperf_client_api.c
++++ b/iperf_client_api.c
+@@ -81 +81 @@ iperf_client_worker_run(void *s) {
+-    while (! (test->done) && ! (sp->done)) {
++    while (! (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST)) && ! (__atomic_load_n(&sp->done, __ATOMIC_SEQ_CST))) {
+@@ -186 +186 @@ test_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
+-    test->done = 1;
++    __atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
+@@ -194 +194 @@ client_stats_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
+-    if (test->done)
++    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
+@@ -205 +205 @@ client_reporter_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
+-    if (test->done)
++    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
+@@ -230 +230 @@ create_client_timers(struct iperf_test * test)
+-	test->done = 0;
++	__atomic_store_n(&test->done, 0, __ATOMIC_SEQ_CST);
+@@ -316 +316 @@ iperf_handle_message_client(struct iperf_test *test)
+-        iperf_printf(test, "Reading new State from the Server - current state is %d-%s\n", test->state, state_to_text(test->state));
++        iperf_printf(test, "Reading new State from the Server - current state is %d-%s\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)));
+@@ -320 +320,2 @@ iperf_handle_message_client(struct iperf_test *test)
+-    if ((rval = read(test->ctrl_sck, (char*) &test->state, sizeof(signed char))) <= 0) {
++    signed char received_state;
++    if ((rval = read(test->ctrl_sck, (char*) &received_state, sizeof(signed char))) <= 0) {
+@@ -329,0 +331,2 @@ iperf_handle_message_client(struct iperf_test *test)
++    __atomic_store_n(&test->state, received_state, __ATOMIC_SEQ_CST);
++
+@@ -331 +334 @@ iperf_handle_message_client(struct iperf_test *test)
+-        iperf_printf(test, "State change: client received and changed State to %d-%s\n", test->state, state_to_text(test->state));
++        iperf_printf(test, "State change: client received and changed State to %d-%s\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)));
+@@ -334 +337 @@ iperf_handle_message_client(struct iperf_test *test)
+-    switch (test->state) {
++    switch (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)) {
+@@ -383 +386 @@ iperf_handle_message_client(struct iperf_test *test)
+-	    signed char oldstate = test->state;
++	    signed char oldstate = __atomic_load_n(&test->state, __ATOMIC_SEQ_CST);
+@@ -385 +388 @@ iperf_handle_message_client(struct iperf_test *test)
+-	    test->state = DISPLAY_RESULTS;
++	    __atomic_store_n(&test->state, DISPLAY_RESULTS, __ATOMIC_SEQ_CST);
+@@ -387 +390 @@ iperf_handle_message_client(struct iperf_test *test)
+-	    test->state = oldstate;
++	    __atomic_store_n(&test->state, oldstate, __ATOMIC_SEQ_CST);
+@@ -573 +576 @@ iperf_client_end(struct iperf_test *test)
+-    if (test->state > 0) {
++    if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) > 0) {
+@@ -649 +652 @@ iperf_run_client(struct iperf_test * test)
+-    while (test->state != IPERF_DONE) {
++    while (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) != IPERF_DONE) {
+@@ -656 +659 @@ iperf_run_client(struct iperf_test * test)
+-        if (test->state == TEST_RUNNING && rcv_timeout_us > 0) {
++        if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING && rcv_timeout_us > 0) {
+@@ -681 +684 @@ iperf_run_client(struct iperf_test * test)
+-                    (test->state == TEST_RUNNING && !test->reverse) ? &write_set : NULL,
++                    (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING && !test->reverse) ? &write_set : NULL,
+@@ -690 +693 @@ iperf_run_client(struct iperf_test * test)
+-        } else if (result == 0 && test->state == TEST_RUNNING && rcv_timeout_us > 0) {
++        } else if (result == 0 && __atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING && rcv_timeout_us > 0) {
+@@ -701 +704 @@ iperf_run_client(struct iperf_test * test)
+-                    if (test->blocks_received == last_receive_blocks) {
++                    if (__atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) == last_receive_blocks) {
+@@ -711,2 +714,2 @@ iperf_run_client(struct iperf_test * test)
+-        if (test->blocks_received > last_receive_blocks) {
+-            last_receive_blocks = test->blocks_received;
++        if (__atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) > last_receive_blocks) {
++            last_receive_blocks = __atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST);
+@@ -725 +728 @@ iperf_run_client(struct iperf_test * test)
+-	if (test->state == TEST_RUNNING) {
++	if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING) {
+@@ -771,5 +774,5 @@ iperf_run_client(struct iperf_test * test)
+-	        (test->done ||
+-	         (test->settings->bytes != 0 && (test->bytes_sent >= test->settings->bytes ||
+-						 test->bytes_received >= test->settings->bytes)) ||
+-	         (test->settings->blocks != 0 && (test->blocks_sent >= test->settings->blocks ||
+-						  test->blocks_received >= test->settings->blocks)))) {
++	        (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST) ||
++	         (test->settings->bytes != 0 && (__atomic_load_n(&test->bytes_sent, __ATOMIC_SEQ_CST) >= test->settings->bytes ||
++						 __atomic_load_n(&test->bytes_received, __ATOMIC_SEQ_CST) >= test->settings->bytes)) ||
++	         (test->settings->blocks != 0 && (__atomic_load_n(&test->blocks_sent, __ATOMIC_SEQ_CST) >= test->settings->blocks ||
++						  __atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) >= test->settings->blocks)))) {
+@@ -781 +784 @@ iperf_run_client(struct iperf_test * test)
+-                        sp->done = 1;
++                        __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
+@@ -809 +812 @@ iperf_run_client(struct iperf_test * test)
+-		test->done = 1;
++		__atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
+@@ -822 +825 @@ iperf_run_client(struct iperf_test * test)
+-            sp->done = 1;
++            __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
+@@ -865 +868 @@ iperf_run_client(struct iperf_test * test)
+-        if (sp->done) {
++        if (__atomic_load_n(&sp->done, __ATOMIC_SEQ_CST)) {
+@@ -868 +871 @@ iperf_run_client(struct iperf_test * test)
+-        sp->done = 1;
++        __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
+diff --git a/iperf_sctp.c b/iperf_sctp.c
+index f05fec9..969c512 100644
+--- a/iperf_sctp.c
++++ b/iperf_sctp.c
+@@ -64 +64 @@ iperf_sctp_recv(struct iperf_stream *sp)
+-    if (sp->test->state == TEST_RUNNING) {
++    if (__atomic_load_n(&sp->test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING) {
+@@ -70 +70 @@ iperf_sctp_recv(struct iperf_stream *sp)
+-	    printf("Late receive, state = %d\n", sp->test->state);
++	    printf("Late receive, state = %d\n", __atomic_load_n(&sp->test->state, __ATOMIC_SEQ_CST));
+diff --git a/iperf_server_api.c b/iperf_server_api.c
+index 26a5539..12ac169 100644
+--- a/iperf_server_api.c
++++ b/iperf_server_api.c
+@@ -95 +95 @@ iperf_server_worker_run(void *s) {
+-    while (! (test->done) && ! (sp->done)) {
++    while (! (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST)) && ! (__atomic_load_n(&sp->done, __ATOMIC_SEQ_CST))) {
+@@ -254 +254 @@ iperf_handle_message_server(struct iperf_test *test)
+-        iperf_printf(test, "Reading new State from the Client - current state is %d-%s\n", test->state, state_to_text(test->state));
++        iperf_printf(test, "Reading new State from the Client - current state is %d-%s\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)));
+@@ -258 +258,2 @@ iperf_handle_message_server(struct iperf_test *test)
+-    if ((rval = Nread(test->ctrl_sck, (char*) &test->state, sizeof(signed char), Ptcp)) <= 0) {
++    signed char received_state;
++    if ((rval = Nread(test->ctrl_sck, (char*) &received_state, sizeof(signed char), Ptcp)) <= 0) {
+@@ -269,0 +271,2 @@ iperf_handle_message_server(struct iperf_test *test)
++    __atomic_store_n(&test->state, received_state, __ATOMIC_SEQ_CST);
++
+@@ -271 +274 @@ iperf_handle_message_server(struct iperf_test *test)
+-        iperf_printf(test, "State change: server received and changed State to %d-%s\n", test->state, state_to_text(test->state));
++        iperf_printf(test, "State change: server received and changed State to %d-%s\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)));
+@@ -274 +277 @@ iperf_handle_message_server(struct iperf_test *test)
+-    switch(test->state) {
++    switch(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)) {
+@@ -278 +281 @@ iperf_handle_message_server(struct iperf_test *test)
+-            test->done = 1;
++            __atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
+@@ -303 +306 @@ iperf_handle_message_server(struct iperf_test *test)
+-	    signed char oldstate = test->state;
++	    signed char oldstate = __atomic_load_n(&test->state, __ATOMIC_SEQ_CST);
+@@ -305 +308 @@ iperf_handle_message_server(struct iperf_test *test)
+-	    test->state = DISPLAY_RESULTS;
++	    __atomic_store_n(&test->state, DISPLAY_RESULTS, __ATOMIC_SEQ_CST);
+@@ -307 +310 @@ iperf_handle_message_server(struct iperf_test *test)
+-	    test->state = oldstate;
++	    __atomic_store_n(&test->state, oldstate, __ATOMIC_SEQ_CST);
+@@ -334 +337 @@ server_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
+-    if (test->done)
++    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
+@@ -336 +339 @@ server_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
+-    test->done = 1;
++    __atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
+@@ -365 +368 @@ server_stats_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
+-    if (test->done)
++    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
+@@ -376 +379 @@ server_reporter_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
+-    if (test->done)
++    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
+@@ -398 +401 @@ create_server_timers(struct iperf_test * test)
+-        test->done = 0;
++        __atomic_store_n(&test->done, 0, __ATOMIC_SEQ_CST);
+@@ -489 +492 @@ cleanup_server(struct iperf_test *test)
+-        sp->done = 1;
++        __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
+@@ -618 +621 @@ iperf_run_server(struct iperf_test *test)
+-    if (test->done) {
++    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST)) {
+@@ -631 +634 @@ iperf_run_server(struct iperf_test *test)
+-    while (test->state != IPERF_DONE) {
++    while (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) != IPERF_DONE) {
+@@ -666 +669 @@ iperf_run_server(struct iperf_test *test)
+-        if (test->state == IPERF_START) {       // In idle mode server may need to restart
++        if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == IPERF_START) {       // In idle mode server may need to restart
+@@ -691 +694 @@ iperf_run_server(struct iperf_test *test)
+-        if (test->done) {
++        if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST)) {
+@@ -712 +715 @@ iperf_run_server(struct iperf_test *test)
+-                if (test->state == IPERF_START) {
++                if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == IPERF_START) {
+@@ -730 +733 @@ iperf_run_server(struct iperf_test *test)
+-                    if (test->blocks_received == last_receive_blocks) {
++                    if (__atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) == last_receive_blocks) {
+@@ -744,2 +747,2 @@ iperf_run_server(struct iperf_test *test)
+-        if (test->blocks_received > last_receive_blocks) {
+-            last_receive_blocks = test->blocks_received;
++        if (__atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) > last_receive_blocks) {
++            last_receive_blocks = __atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST);
+@@ -751 +754 @@ iperf_run_server(struct iperf_test *test)
+-                if (test->state != CREATE_STREAMS) {
++                if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) != CREATE_STREAMS) {
+@@ -779 +782 @@ iperf_run_server(struct iperf_test *test)
+-            if (test->state == CREATE_STREAMS) {
++            if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == CREATE_STREAMS) {
+@@ -987 +990 @@ iperf_run_server(struct iperf_test *test)
+-                    last_receive_blocks = test->blocks_received;
++                    last_receive_blocks = __atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST);
+diff --git a/iperf_tcp.c b/iperf_tcp.c
+index 41b1544..fa99d84 100644
+--- a/iperf_tcp.c
++++ b/iperf_tcp.c
+@@ -75 +75 @@ iperf_tcp_recv(struct iperf_stream *sp)
+-    if (sp->test->state == TEST_RUNNING) {
++    if (__atomic_load_n(&sp->test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING) {
+@@ -81 +81 @@ iperf_tcp_recv(struct iperf_stream *sp)
+-	          printf("Late receive, state = %d-%s\n", sp->test->state, state_to_text(sp->test->state));
++	          printf("Late receive, state = %d-%s\n", __atomic_load_n(&sp->test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&sp->test->state, __ATOMIC_SEQ_CST)));
+diff --git a/iperf_udp.c b/iperf_udp.c
+index 07ff1ed..41a2f8e 100644
+--- a/iperf_udp.c
++++ b/iperf_udp.c
+@@ -108 +108 @@ iperf_udp_recv(struct iperf_stream *sp)
+-    if (test->state == TEST_RUNNING) {
++    if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING) {
+@@ -236 +236 @@ iperf_udp_recv(struct iperf_stream *sp)
+-	    printf("Late receive, state = %d\n", test->state);
++	    printf("Late receive, state = %d\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST));
