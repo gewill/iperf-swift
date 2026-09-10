@@ -158,6 +158,17 @@ iperf_exit(struct iperf_test *test, int exit_code, const char *format, va_list a
 }
 
 int i_errno = 0;
+
+/* Keep one shared error slot; worker failures must reach the control thread. */
+int iperf_get_error(void)
+{
+    return __atomic_load_n(&i_errno, __ATOMIC_SEQ_CST);
+}
+
+void iperf_set_error(int error)
+{
+    __atomic_store_n(&i_errno, error, __ATOMIC_SEQ_CST);
+}
 const char *errarg = NULL;
 
 char *

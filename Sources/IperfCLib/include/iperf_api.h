@@ -407,7 +407,10 @@ void iperf_errexit(struct iperf_test *test, const char *format, ...) __attribute
 void iperf_signormalexit(struct iperf_test *test, const char *format, ...) __attribute__ ((format(printf,2,3),noreturn));
 void iperf_exit(struct iperf_test *test, int exit_code, const char *format, va_list argp) __attribute__ ((noreturn));
 char *iperf_strerror(int);
+/* Internal callers use the accessors; retain the storage symbol for C ABI. */
 extern int i_errno;
+int iperf_get_error(void);
+void iperf_set_error(int error);
 extern const char *errarg;
 enum {
     IENONE = 0,             // No error

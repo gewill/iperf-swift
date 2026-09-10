@@ -221,8 +221,8 @@ create_socket(int domain, int type, int proto, const char *local, const char *bi
             freeaddrinfo(local_res);
             freeaddrinfo(server_res);
             errno = saved_errno;
-            i_errno = (saved_errno == ENOTSUP || saved_errno == EOPNOTSUPP)
-                ? IEBINDDEVNOSUPPORT : IEBINDDEV;
+            iperf_set_error((saved_errno == ENOTSUP || saved_errno == EOPNOTSUPP)
+                ? IEBINDDEVNOSUPPORT : IEBINDDEV);
             return -1;
         }
     }
@@ -368,8 +368,8 @@ netannounce(int domain, int proto, const char *local, const char *bind_dev, int 
             close(s);
             freeaddrinfo(res);
             errno = saved_errno;
-            i_errno = (saved_errno == ENOTSUP || saved_errno == EOPNOTSUPP)
-                ? IEBINDDEVNOSUPPORT : IEBINDDEV;
+            iperf_set_error((saved_errno == ENOTSUP || saved_errno == EOPNOTSUPP)
+                ? IEBINDDEVNOSUPPORT : IEBINDDEV);
             return -1;
         }
     }

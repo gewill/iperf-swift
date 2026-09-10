@@ -389,11 +389,11 @@ iperf_udp_buffercheck(struct iperf_test *test, int s)
 
     if ((opt = test->settings->socket_bufsize)) {
         if (setsockopt(s, SOL_SOCKET, SO_RCVBUF, &opt, sizeof(opt)) < 0) {
-            i_errno = IESETBUF;
+            iperf_set_error(IESETBUF);
             return -1;
         }
         if (setsockopt(s, SOL_SOCKET, SO_SNDBUF, &opt, sizeof(opt)) < 0) {
-            i_errno = IESETBUF;
+            iperf_set_error(IESETBUF);
             return -1;
         }
     }
@@ -401,14 +401,14 @@ iperf_udp_buffercheck(struct iperf_test *test, int s)
     /* Read back and verify the sender socket buffer size */
     optlen = sizeof(sndbuf_actual);
     if (getsockopt(s, SOL_SOCKET, SO_SNDBUF, &sndbuf_actual, &optlen) < 0) {
-	i_errno = IESETBUF;
+	iperf_set_error(IESETBUF);
 	return -1;
     }
     if (test->debug) {
 	printf("SNDBUF is %u, expecting %u\n", sndbuf_actual, test->settings->socket_bufsize);
     }
     if (test->settings->socket_bufsize && test->settings->socket_bufsize > sndbuf_actual) {
-	i_errno = IESETBUF2;
+	iperf_set_error(IESETBUF2);
 	return -1;
     }
     if (test->settings->blksize > sndbuf_actual) {
@@ -423,14 +423,14 @@ iperf_udp_buffercheck(struct iperf_test *test, int s)
     /* Read back and verify the receiver socket buffer size */
     optlen = sizeof(rcvbuf_actual);
     if (getsockopt(s, SOL_SOCKET, SO_RCVBUF, &rcvbuf_actual, &optlen) < 0) {
-	i_errno = IESETBUF;
+	iperf_set_error(IESETBUF);
 	return -1;
     }
     if (test->debug) {
 	printf("RCVBUF is %u, expecting %u\n", rcvbuf_actual, test->settings->socket_bufsize);
     }
     if (test->settings->socket_bufsize && test->settings->socket_bufsize > rcvbuf_actual) {
-	i_errno = IESETBUF2;
+	iperf_set_error(IESETBUF2);
 	return -1;
     }
     if (test->settings->blksize > rcvbuf_actual) {
@@ -547,12 +547,12 @@ iperf_udp_accept(struct iperf_test *test)
      */
     len = sizeof(sa_peer);
     if ((sz = recvfrom(test->prot_listener, &buf, sizeof(buf), 0, (struct sockaddr *) &sa_peer, &len)) < 0) {
-        i_errno = IESTREAMACCEPT;
+        iperf_set_error(IESTREAMACCEPT);
         return -1;
     }
 
     if (connect(s, (struct sockaddr *) &sa_peer, len) < 0) {
-        i_errno = IESTREAMACCEPT;
+        iperf_set_error(IESTREAMACCEPT);
         return -1;
     }
 
@@ -614,8 +614,8 @@ iperf_udp_accept(struct iperf_test *test)
     FD_CLR(test->prot_listener, &test->read_set); // No control messages from old listener
     test->prot_listener = netannounce(test->settings->domain, Pudp, test->bind_address, test->bind_dev, test->server_port);
     if (test->prot_listener < 0) {
-        if (i_errno == IENONE)
-            i_errno = IESTREAMLISTEN;
+        if (iperf_get_error() == IENONE)
+            iperf_set_error(IESTREAMLISTEN);
         return -1;
     }
 
@@ -625,7 +625,7 @@ iperf_udp_accept(struct iperf_test *test)
     /* Let the client know we're ready "accept" another UDP "stream" */
     buf = UDP_CONNECT_REPLY;
     if (write(s, &buf, sizeof(buf)) < 0) {
-        i_errno = IESTREAMWRITE;
+        iperf_set_error(IESTREAMWRITE);
         return -1;
     }
 
@@ -646,8 +646,8 @@ iperf_udp_listen(struct iperf_test *test)
     int s;
 
     if ((s = netannounce(test->settings->domain, Pudp, test->bind_address, test->bind_dev, test->server_port)) < 0) {
-        if (i_errno == IENONE)
-            i_errno = IESTREAMLISTEN;
+        if (iperf_get_error() == IENONE)
+            iperf_set_error(IESTREAMLISTEN);
         return -1;
     }
 
@@ -676,7 +676,7 @@ iperf_udp_connect(struct iperf_test *test)
 
     /* Create and bind our local socket. */
     if ((s = netdial(test->settings->domain, Pudp, test->bind_address, test->bind_dev, test->bind_port, test->server_hostname, test->server_port, -1)) < 0) {
-        i_errno = IESTREAMCONNECT;
+        iperf_set_error(IESTREAMCONNECT);
         return -1;
     }
 
@@ -753,7 +753,7 @@ iperf_udp_connect(struct iperf_test *test)
     }
     if (write(s, &buf, sizeof(buf)) < 0) {
         // XXX: Should this be changed to IESTREAMCONNECT?
-        i_errno = IESTREAMWRITE;
+        iperf_set_error(IESTREAMWRITE);
         return -1;
     }
 
@@ -766,7 +766,7 @@ iperf_udp_connect(struct iperf_test *test)
         max_len_wait_for_reply += MAX_REVERSE_OUT_OF_ORDER_PACKETS * test->settings->blksize;
     do {
         if ((sz = recv(s, &buf, sizeof(buf), 0)) < 0) {
-            i_errno = IESTREAMREAD;
+            iperf_set_error(IESTREAMREAD);
             return -1;
         }
         if (test->debug) {
@@ -776,7 +776,7 @@ iperf_udp_connect(struct iperf_test *test)
     } while (buf != UDP_CONNECT_REPLY && buf != LEGACY_UDP_CONNECT_REPLY && i < max_len_wait_for_reply);
 
     if (buf != UDP_CONNECT_REPLY  && buf != LEGACY_UDP_CONNECT_REPLY) {
-        i_errno = IESTREAMREAD;
+        iperf_set_error(IESTREAMREAD);
         return -1;
     }
 
