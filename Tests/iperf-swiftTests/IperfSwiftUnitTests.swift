@@ -923,6 +923,37 @@ final class IperfSwiftUnitTests: XCTestCase {
         XCTAssertTrue(configuration.dontFragment)
     }
 
+    func testConcurrentStreamsPreserveSessionByteAndBlockCounts() throws {
+        let test = try XCTUnwrap(iperf_new_test())
+        XCTAssertEqual(iperf_defaults(test), 0)
+        defer { iperf_free_test(test) }
+        test.pointee.multisend = 1
+        test.pointee.settings.pointee.rate = 0
+        let workers = 4
+        let transfers = 100_000
+        DispatchQueue.concurrentPerform(iterations: workers) { _ in
+            var stream = iperf_stream()
+            stream.test = test
+            stream.settings = test.pointee.settings
+            stream.green_light = 1
+            stream.snd = { _ in 7 }
+            stream.rcv = { _ in 7 }
+            for _ in 0..<transfers {
+                _ = iperf_send_mt(&stream)
+                _ = iperf_recv_mt(&stream)
+            }
+            // A receive timeout must not advance progress or the block count.
+            stream.rcv = { _ in 0 }
+            _ = iperf_recv_mt(&stream)
+        }
+        // All workers have joined before inspecting the plain C layout.
+        let blocks = workers * transfers
+        XCTAssertEqual(test.pointee.bytes_sent, blocks * 7)
+        XCTAssertEqual(test.pointee.bytes_received, blocks * 7)
+        XCTAssertEqual(test.pointee.blocks_sent, blocks)
+        XCTAssertEqual(test.pointee.blocks_received, blocks)
+    }
+
     func testConcurrentIntervalSnapshotsPreserveEveryByte() throws {
         for sender in [false, true] {
             let test = try XCTUnwrap(iperf_new_test())

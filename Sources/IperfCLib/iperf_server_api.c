@@ -92,7 +92,7 @@ iperf_server_worker_run(void *s) {
     pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL);
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
 
-    while (! (test->done) && ! (sp->done)) {
+    while (! (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST)) && ! (__atomic_load_n(&sp->done, __ATOMIC_SEQ_CST))) {
         if (sp->sender) {
             if (iperf_send_mt(sp) < 0) {
                 goto cleanup_and_fail;
@@ -251,11 +251,12 @@ iperf_handle_message_server(struct iperf_test *test)
     struct iperf_stream *sp;
 
     if (test->debug_level >= DEBUG_LEVEL_INFO) {
-        iperf_printf(test, "Reading new State from the Client - current state is %d-%s\n", test->state, state_to_text(test->state));
+        iperf_printf(test, "Reading new State from the Client - current state is %d-%s\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)));
     }
 
     // XXX: Need to rethink how this behaves to fit API
-    if ((rval = Nread(test->ctrl_sck, (char*) &test->state, sizeof(signed char), Ptcp)) <= 0) {
+    signed char received_state;
+    if ((rval = Nread(test->ctrl_sck, (char*) &received_state, sizeof(signed char), Ptcp)) <= 0) {
         if (rval == 0) {
             iperf_err(test, "the client has unexpectedly closed the connection");
             i_errno = IECTRLCLOSE;
@@ -267,15 +268,17 @@ iperf_handle_message_server(struct iperf_test *test)
         }
     }
 
+    __atomic_store_n(&test->state, received_state, __ATOMIC_SEQ_CST);
+
     if (test->debug_level >= DEBUG_LEVEL_INFO) {
-        iperf_printf(test, "State change: server received and changed State to %d-%s\n", test->state, state_to_text(test->state));
+        iperf_printf(test, "State change: server received and changed State to %d-%s\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)));
     }
 
-    switch(test->state) {
+    switch(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)) {
         case TEST_START:
             break;
         case TEST_END:
-            test->done = 1;
+            __atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
             cpu_util(test->cpu_util);
             test->stats_callback(test);
             SLIST_FOREACH(sp, &test->streams, streams) {
@@ -300,11 +303,11 @@ iperf_handle_message_server(struct iperf_test *test)
 
 	    // Temporarily be in DISPLAY_RESULTS phase so we can get
 	    // ending summary statistics.
-	    signed char oldstate = test->state;
+	    signed char oldstate = __atomic_load_n(&test->state, __ATOMIC_SEQ_CST);
 	    cpu_util(test->cpu_util);
-	    test->state = DISPLAY_RESULTS;
+	    __atomic_store_n(&test->state, DISPLAY_RESULTS, __ATOMIC_SEQ_CST);
 	    test->reporter_callback(test);
-	    test->state = oldstate;
+	    __atomic_store_n(&test->state, oldstate, __ATOMIC_SEQ_CST);
 
             // XXX: Remove this line below!
 	    iperf_err(test, "the client has terminated");
@@ -331,9 +334,9 @@ server_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
     int32_t err;
 
     test->timer = NULL;
-    if (test->done)
+    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
         return;
-    test->done = 1;
+    __atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
     iperf_err(test, "error - server test duration expired - test is terminated by the server");
     if (iperf_set_send_state(test, SERVER_ERROR) == 0) {
         i_errno = IESERVERTESTDURATIONEXPIRED;
@@ -362,7 +365,7 @@ server_stats_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
 {
     struct iperf_test *test = client_data.p;
 
-    if (test->done)
+    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
         return;
     if (test->stats_callback)
 	test->stats_callback(test);
@@ -373,7 +376,7 @@ server_reporter_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
 {
     struct iperf_test *test = client_data.p;
 
-    if (test->done)
+    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
         return;
     if (test->reporter_callback)
 	test->reporter_callback(test);
@@ -395,7 +398,7 @@ create_server_timers(struct iperf_test * test)
     cd.p = test;
     test->timer = test->stats_timer = test->reporter_timer = NULL;
     if (test->duration != 0 ) {
-        test->done = 0;
+        __atomic_store_n(&test->done, 0, __ATOMIC_SEQ_CST);
         test->timer = tmr_create(&now, server_timer_proc, cd, (test->duration + test->omit + grace_period) * SEC_TO_US, 0);
         if (test->timer == NULL) {
             i_errno = IEINITTEST;
@@ -486,7 +489,7 @@ cleanup_server(struct iperf_test *test)
     int i_errno_save = i_errno;
     SLIST_FOREACH(sp, &test->streams, streams) {
         int rc;
-        sp->done = 1;
+        __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
         if (sp->thread_created == 1) {
             rc = pthread_cancel(sp->thr);
             if (rc != 0 && rc != ESRCH) {
@@ -615,7 +618,7 @@ iperf_run_server(struct iperf_test *test)
 	cleanup_server(test);
         return -2;
     }
-    if (test->done) {
+    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST)) {
         cleanup_server(test);
         return 0;
     }
@@ -628,7 +631,7 @@ iperf_run_server(struct iperf_test *test)
     rec_streams_accepted = 0;
     rcv_timeout_us = (test->settings->rcv_timeout.secs * SEC_TO_US) + test->settings->rcv_timeout.usecs;
 
-    while (test->state != IPERF_DONE) {
+    while (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) != IPERF_DONE) {
 
     // Check if average transfer rate was exceeded (condition set in the callback routines)
 	if (test->bitrate_limit_exceeded) {
@@ -663,7 +666,7 @@ iperf_run_server(struct iperf_test *test)
 	timeout = tmr_timeout(&now);
 
         // Ensure select() will timeout to allow handling error cases that require server restart
-        if (test->state == IPERF_START) {       // In idle mode server may need to restart
+        if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == IPERF_START) {       // In idle mode server may need to restart
             if (timeout == NULL && test->settings->idle_timeout > 0) {
                 used_timeout.tv_sec = test->settings->idle_timeout;
                 used_timeout.tv_usec = 0;
@@ -688,7 +691,7 @@ iperf_run_server(struct iperf_test *test)
         }
 
         result = select(test->max_fd + 1, &read_set, &write_set, NULL, timeout);
-        if (test->done) {
+        if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST)) {
             cleanup_server(test);
             return 0;
         }
@@ -709,7 +712,7 @@ iperf_run_server(struct iperf_test *test)
                 t_usecs = iperf_time_in_usecs(&diff_time);
 
                 /* We're in the state where we're still accepting connections */
-                if (test->state == IPERF_START) {
+                if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == IPERF_START) {
                     if (test->settings->idle_timeout > 0 && t_usecs >= test->settings->idle_timeout * SEC_TO_US) {
                         test->server_forced_idle_restarts_count += 1;
                         if (test->debug)
@@ -727,7 +730,7 @@ iperf_run_server(struct iperf_test *test)
                  */
                 else if (test->mode != SENDER && t_usecs > rcv_timeout_us) {
                     /* Idle timeout if no new blocks received */
-                    if (test->blocks_received == last_receive_blocks) {
+                    if (__atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) == last_receive_blocks) {
                         test->server_forced_no_msg_restarts_count += 1;
                         i_errno = IENOMSG;
                         if (iperf_get_verbose(test))
@@ -741,14 +744,14 @@ iperf_run_server(struct iperf_test *test)
         }
 
         /* See if the test is making progress */
-        if (test->blocks_received > last_receive_blocks) {
-            last_receive_blocks = test->blocks_received;
+        if (__atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) > last_receive_blocks) {
+            last_receive_blocks = __atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST);
             last_receive_time = now;
         }
 
 	if (result > 0) {
             if (FD_ISSET(test->listener, &read_set)) {
-                if (test->state != CREATE_STREAMS) {
+                if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) != CREATE_STREAMS) {
                     if (iperf_accept(test) < 0) {
 			cleanup_server(test);
                         return -1;
@@ -776,7 +779,7 @@ iperf_run_server(struct iperf_test *test)
                 FD_CLR(test->ctrl_sck, &read_set);
             }
 
-            if (test->state == CREATE_STREAMS) {
+            if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == CREATE_STREAMS) {
                 if (FD_ISSET(test->prot_listener, &read_set)) {
 
                     if ((s = test->protocol->accept(test)) < 0) {
@@ -984,7 +987,7 @@ iperf_run_server(struct iperf_test *test)
                     };
 
                     /* Reset receive-progress baseline after workers are ready */
-                    last_receive_blocks = test->blocks_received;
+                    last_receive_blocks = __atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST);
                     iperf_time_now(&last_receive_time);
                 }
             }

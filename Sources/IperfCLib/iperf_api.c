@@ -486,9 +486,9 @@ iperf_set_test_state(struct iperf_test *ipt, signed char state)
 {
     if (ipt->debug_level >= DEBUG_LEVEL_INFO) {
         iperf_printf(ipt, "State change: State set to %d-%s (from %d-%s)\n",
-                     state, state_to_text(state), ipt->state, state_to_text(ipt->state));
+                     state, state_to_text(state), __atomic_load_n(&ipt->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&ipt->state, __ATOMIC_SEQ_CST)));
     }
-    ipt->state = state;
+    __atomic_store_n(&ipt->state, state, __ATOMIC_SEQ_CST);
 }
 
 void
@@ -2103,7 +2103,7 @@ iperf_check_throttle(struct iperf_stream *sp, struct iperf_time *nowP)
     int64_t ns;
 #endif /* HAVE_CLOCK_NANOSLEEP */
 
-    if (sp->test->done || sp->test->settings->rate == 0)
+    if (__atomic_load_n(&sp->test->done, __ATOMIC_SEQ_CST) || sp->test->settings->rate == 0)
         return;
     iperf_time_diff(&sp->result->start_time_fixed, nowP, &temp_time);
     seconds = iperf_time_in_secs(&temp_time);
@@ -2169,7 +2169,7 @@ iperf_check_total_rate(struct iperf_test *test, iperf_size_t last_interval_bytes
     iperf_size_t total_bytes;
     int i;
 
-    if (test->done || test->settings->bitrate_limit == 0)    // Continue only if check should be done
+    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST) || test->settings->bitrate_limit == 0)    // Continue only if check should be done
         return;
 
     /* Add last interval's transferred bytes to the array */
@@ -2238,9 +2238,9 @@ iperf_send_mt(struct iperf_stream *sp)
     for (message_sent = 0; sp->green_light && multisend > 0; --multisend) {
         // XXX If we hit one of these ending conditions maybe
         // want to stop even trying to send something?
-        if (multisend > 1 && test->settings->bytes != 0 && test->bytes_sent >= test->settings->bytes)
+        if (multisend > 1 && test->settings->bytes != 0 && __atomic_load_n(&test->bytes_sent, __ATOMIC_SEQ_CST) >= test->settings->bytes)
             break;
-        if (multisend > 1 && test->settings->blocks != 0 && test->blocks_sent >= test->settings->blocks)
+        if (multisend > 1 && test->settings->blocks != 0 && __atomic_load_n(&test->blocks_sent, __ATOMIC_SEQ_CST) >= test->settings->blocks)
             break;
         if ((r = sp->snd(sp)) < 0) {
             if (r == NET_SOFTERROR)
@@ -2248,9 +2248,9 @@ iperf_send_mt(struct iperf_stream *sp)
             i_errno = IESTREAMWRITE;
             return r;
         }
-        test->bytes_sent += r;
+        __atomic_fetch_add(&test->bytes_sent, r, __ATOMIC_SEQ_CST);
         if (!sp->pending_size)
-            ++test->blocks_sent;
+            __atomic_fetch_add(&test->blocks_sent, 1, __ATOMIC_SEQ_CST);
         if (throttle_check_per_message) {
             if (message_sent == 0)
                 iperf_time_now(&now);
@@ -2285,8 +2285,8 @@ iperf_recv_mt(struct iperf_stream *sp)
              * This is also important for `--rcv-timeout` to work properly.
              */
             if (r > 0) {
-	        test->bytes_received += r;
-	        ++test->blocks_received;
+	        __atomic_fetch_add(&test->bytes_received, r, __ATOMIC_SEQ_CST);
+	        __atomic_fetch_add(&test->blocks_received, 1, __ATOMIC_SEQ_CST);
             }
 
     return 0;
@@ -3589,7 +3589,7 @@ iperf_reset_test(struct iperf_test *test)
 	tmr_cancel(test->reporter_timer);
 	test->reporter_timer = NULL;
     }
-    test->done = 0;
+    __atomic_store_n(&test->done, 0, __ATOMIC_SEQ_CST);
 
     SLIST_INIT(&test->streams);
 
@@ -3609,17 +3609,17 @@ iperf_reset_test(struct iperf_test *test)
 #if defined(HAVE_CPUSET_SETAFFINITY)
     CPU_ZERO(&test->cpumask);
 #endif /* HAVE_CPUSET_SETAFFINITY */
-    test->state = 0;
+    __atomic_store_n(&test->state, 0, __ATOMIC_SEQ_CST);
 
     test->ctrl_sck = -1;
     test->listener = -1;
     test->prot_listener = -1;
 
-    test->bytes_sent = 0;
-    test->blocks_sent = 0;
+    __atomic_store_n(&test->bytes_sent, 0, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&test->blocks_sent, 0, __ATOMIC_SEQ_CST);
 
-    test->bytes_received = 0;
-    test->blocks_received = 0;
+    __atomic_store_n(&test->bytes_received, 0, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&test->blocks_received, 0, __ATOMIC_SEQ_CST);
 
     test->other_side_has_retransmits = 0;
 
@@ -3705,8 +3705,8 @@ iperf_reset_stats(struct iperf_test *test)
     struct iperf_stream *sp;
     struct iperf_stream_result *rp;
 
-    test->bytes_sent = 0;
-    test->blocks_sent = 0;
+    __atomic_store_n(&test->bytes_sent, 0, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&test->blocks_sent, 0, __ATOMIC_SEQ_CST);
     iperf_time_now(&now);
     SLIST_FOREACH(sp, &test->streams, streams) {
 	sp->omitted_packet_count = sp->packet_count;
@@ -4659,7 +4659,7 @@ iperf_print_results(struct iperf_test *test)
 void
 iperf_reporter_callback(struct iperf_test *test)
 {
-    switch (test->state) {
+    switch (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)) {
         case TEST_RUNNING:
         case STREAM_RUNNING:
             /* print interval results for each stream */
@@ -5085,7 +5085,7 @@ diskfile_send(struct iperf_stream *sp)
     static int rtot;
 
     /* if needed, read enough data from the disk to fill up the buffer */
-    if (sp->diskfile_left < sp->test->settings->blksize && !sp->test->done) {
+    if (sp->diskfile_left < sp->test->settings->blksize && !__atomic_load_n(&sp->test->done, __ATOMIC_SEQ_CST)) {
     	r = read(sp->diskfile_fd, sp->buffer, sp->test->settings->blksize -
     		 sp->diskfile_left);
         buffer_left += r;
@@ -5107,7 +5107,7 @@ diskfile_send(struct iperf_stream *sp)
 
         // If there's no work left, we're done.
         if (buffer_left == 0) {
-    	    sp->test->done = 1;
+	    __atomic_store_n(&sp->test->done, 1, __ATOMIC_SEQ_CST);
     	    if (sp->test->debug)
     		  printf("done\n");
     	}
@@ -5116,10 +5116,10 @@ diskfile_send(struct iperf_stream *sp)
     // If there's no data left in the file or in the buffer, we're done.
     // No more data available to be sent.
     // Return without sending data to the network
-    if( sp->test->done || buffer_left == 0 ){
+    if( __atomic_load_n(&sp->test->done, __ATOMIC_SEQ_CST) || buffer_left == 0 ){
         if (sp->test->debug)
               printf("already done\n");
-        sp->test->done = 1;
+        __atomic_store_n(&sp->test->done, 1, __ATOMIC_SEQ_CST);
         return 0;
     }
 
@@ -5188,9 +5188,9 @@ iperf_got_sigend(struct iperf_test *test, int sig)
      * then dump out the accumulated stats so far.
      */
     if (test->role == 'c' ||
-      (test->role == 's' && test->state == TEST_RUNNING)) {
+      (test->role == 's' && __atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING)) {
 
-	test->done = 1;
+	__atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
 	cpu_util(test->cpu_util);
 	test->stats_callback(test);
 	iperf_set_test_state(test, DISPLAY_RESULTS); /* change local state only */
@@ -5201,7 +5201,8 @@ iperf_got_sigend(struct iperf_test *test, int sig)
 
     if (test->ctrl_sck >= 0) {
 	iperf_set_test_state(test, (test->role == 'c') ? CLIENT_TERMINATE : SERVER_TERMINATE);
-	(void) Nwrite(test->ctrl_sck, (char*) &test->state, sizeof(signed char), Ptcp);
+	signed char outgoing_state = __atomic_load_n(&test->state, __ATOMIC_SEQ_CST);
+	(void) Nwrite(test->ctrl_sck, (char*) &outgoing_state, sizeof(signed char), Ptcp);
     }
     i_errno = (test->role == 'c') ? IECLIENTTERM : IESERVERTERM;
 
@@ -5686,3 +5687,19 @@ iperf_set_control_keepalive(struct iperf_test *test)
     return 0;
 }
 #endif //HAVE_TCP_KEEPALIVE
+
+/* Swift and native workers share these control flags. Keep the public C layout. */
+signed char iperf_get_test_state(struct iperf_test *ipt)
+{
+    return __atomic_load_n(&ipt->state, __ATOMIC_SEQ_CST);
+}
+
+int iperf_get_test_done(struct iperf_test *ipt)
+{
+    return __atomic_load_n(&ipt->done, __ATOMIC_SEQ_CST);
+}
+
+void iperf_request_test_stop(struct iperf_test *ipt)
+{
+    __atomic_store_n(&ipt->done, 1, __ATOMIC_SEQ_CST);
+}

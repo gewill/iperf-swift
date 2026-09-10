@@ -303,16 +303,15 @@ public class IperfRunner {
             return
         }
 
-        let runningTest = pointer.pointee
         var result = IperfIntervalResult(prot: configuration.prot)
         result.debugDescription = "OK"
-        result.state = IperfState(rawValue: runningTest.state) ?? .UNKNOWN
+        result.state = IperfState(rawValue: iperf_get_test_state(pointer)) ?? .UNKNOWN
         // Both engine flags decide the mode, and `reverse` derives from it.
         // The engine rejects reverse together with bidirectional, so these
         // three branches cover every state it can be in.
-        if runningTest.bidirectional != 0 {
+        if pointer.pointee.bidirectional != 0 {
             result.mode = .bidirectional
-        } else if runningTest.reverse != 0 {
+        } else if pointer.pointee.reverse != 0 {
             result.mode = .download
         } else {
             result.mode = .upload
@@ -332,7 +331,7 @@ public class IperfRunner {
             }
         }
         
-        guard var stream: UnsafeMutablePointer<iperf_stream> = runningTest.streams.slh_first else {
+        guard var stream: UnsafeMutablePointer<iperf_stream> = pointer.pointee.streams.slh_first else {
             return
         }
         var runTotals: [IperfStreamRunResult] = []
@@ -381,7 +380,7 @@ public class IperfRunner {
         // deliveries aligned with what the CLI reports.
         if IperfRunner.isUnreportedShortInterval(
             result.streams,
-            statsInterval: runningTest.stats_interval
+            statsInterval: pointer.pointee.stats_interval
         ) {
             return
         }
@@ -959,7 +958,7 @@ public class IperfRunner {
                 code = iperf_run_server(testPointer)
             }
             error = IperfError(rawValue: i_errno) ?? .UNKNOWN
-            wasStopped = testPointer.pointee.done != 0
+            wasStopped = iperf_get_test_done(testPointer) != 0
             i_errno = IperfError.IENONE.rawValue
 
             // The engine distinguishes a failed client interaction from a
@@ -1214,8 +1213,8 @@ public class IperfRunner {
         }
         
         state = .stopping
-        if pointer.pointee.state != IPERF_DONE {
-            pointer.pointee.done = 1
+        if iperf_get_test_state(pointer) != IPERF_DONE {
+            iperf_request_test_stop(pointer)
             if let configuration = configuration,
                configuration.role == .server {
                 iperf_close_test_listener(OpaquePointer(pointer))

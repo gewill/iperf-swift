@@ -78,7 +78,7 @@ iperf_client_worker_run(void *s) {
     pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL);
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
 
-    while (! (test->done) && ! (sp->done)) {
+    while (! (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST)) && ! (__atomic_load_n(&sp->done, __ATOMIC_SEQ_CST))) {
         if (sp->sender) {
             if (iperf_send_mt(sp) < 0) {
                 goto cleanup_and_fail;
@@ -183,7 +183,7 @@ test_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
     struct iperf_test *test = client_data.p;
 
     test->timer = NULL;
-    test->done = 1;
+    __atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
 }
 
 static void
@@ -191,7 +191,7 @@ client_stats_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
 {
     struct iperf_test *test = client_data.p;
 
-    if (test->done)
+    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
         return;
     if (test->stats_callback)
 	test->stats_callback(test);
@@ -202,7 +202,7 @@ client_reporter_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
 {
     struct iperf_test *test = client_data.p;
 
-    if (test->done)
+    if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
         return;
     if (test->reporter_callback)
 	test->reporter_callback(test);
@@ -227,7 +227,7 @@ create_client_timers(struct iperf_test * test)
     cd.p = test;
     test->timer = test->stats_timer = test->reporter_timer = NULL;
     if (test->duration != 0) {
-	test->done = 0;
+	__atomic_store_n(&test->done, 0, __ATOMIC_SEQ_CST);
         test->timer = tmr_create(&now, test_timer_proc, cd, ( test->duration + test->omit ) * SEC_TO_US, 0);
         if (test->timer == NULL) {
             i_errno = IEINITTEST;
@@ -313,11 +313,12 @@ iperf_handle_message_client(struct iperf_test *test)
     }
 
     if (test->debug_level >= DEBUG_LEVEL_INFO) {
-        iperf_printf(test, "Reading new State from the Server - current state is %d-%s\n", test->state, state_to_text(test->state));
+        iperf_printf(test, "Reading new State from the Server - current state is %d-%s\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)));
     }
 
     /*!!! Why is this read() and not Nread()? */
-    if ((rval = read(test->ctrl_sck, (char*) &test->state, sizeof(signed char))) <= 0) {
+    signed char received_state;
+    if ((rval = read(test->ctrl_sck, (char*) &received_state, sizeof(signed char))) <= 0) {
         if (rval == 0) {
             i_errno = IECTRLCLOSE;
             return -1;
@@ -327,11 +328,13 @@ iperf_handle_message_client(struct iperf_test *test)
         }
     }
 
+    __atomic_store_n(&test->state, received_state, __ATOMIC_SEQ_CST);
+
     if (test->debug_level >= DEBUG_LEVEL_INFO) {
-        iperf_printf(test, "State change: client received and changed State to %d-%s\n", test->state, state_to_text(test->state));
+        iperf_printf(test, "State change: client received and changed State to %d-%s\n", __atomic_load_n(&test->state, __ATOMIC_SEQ_CST), state_to_text(__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)));
     }
 
-    switch (test->state) {
+    switch (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST)) {
         case PARAM_EXCHANGE:
             if (iperf_exchange_parameters(test) < 0)
                 return -1;
@@ -380,11 +383,11 @@ iperf_handle_message_client(struct iperf_test *test)
 	     * Temporarily be in DISPLAY_RESULTS phase so we can get
 	     * ending summary statistics.
 	     */
-	    signed char oldstate = test->state;
+	    signed char oldstate = __atomic_load_n(&test->state, __ATOMIC_SEQ_CST);
 	    cpu_util(test->cpu_util);
-	    test->state = DISPLAY_RESULTS;
+	    __atomic_store_n(&test->state, DISPLAY_RESULTS, __ATOMIC_SEQ_CST);
 	    test->reporter_callback(test);
-	    test->state = oldstate;
+	    __atomic_store_n(&test->state, oldstate, __ATOMIC_SEQ_CST);
             return -1;
         case ACCESS_DENIED:
             i_errno = IEACCESSDENIED;
@@ -570,7 +573,7 @@ iperf_client_end(struct iperf_test *test)
     test->reporter_callback(test);
 
     /* Send response only if no error in server */
-    if (test->state > 0) {
+    if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) > 0) {
         if (iperf_set_send_state(test, IPERF_DONE) != 0)
             return -1;
     }
@@ -646,14 +649,14 @@ iperf_run_client(struct iperf_test * test)
     last_receive_blocks = 0;
 
     startup = 1;
-    while (test->state != IPERF_DONE) {
+    while (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) != IPERF_DONE) {
 	memcpy(&read_set, &test->read_set, sizeof(fd_set));
 	memcpy(&write_set, &test->write_set, sizeof(fd_set));
 	iperf_time_now(&now);
 	timeout = tmr_timeout(&now);
 
         // In reverse active mode client ensures data is received
-        if (test->state == TEST_RUNNING && rcv_timeout_us > 0) {
+        if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING && rcv_timeout_us > 0) {
             timeout_us = -1;
             if (timeout != NULL) {
                 used_timeout.tv_sec = timeout->tv_sec;
@@ -678,7 +681,7 @@ iperf_run_client(struct iperf_test * test)
 
     result = select(test->max_fd + 1,
                     &read_set,
-                    (test->state == TEST_RUNNING && !test->reverse) ? &write_set : NULL,
+                    (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING && !test->reverse) ? &write_set : NULL,
                     NULL,
                     timeout);
 #else
@@ -687,7 +690,7 @@ iperf_run_client(struct iperf_test * test)
 	if (result < 0 && errno != EINTR) {
   	    i_errno = IESELECT;
 	    goto cleanup_and_fail;
-        } else if (result == 0 && test->state == TEST_RUNNING && rcv_timeout_us > 0) {
+        } else if (result == 0 && __atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING && rcv_timeout_us > 0) {
             /*
              * If nothing was received in non-reverse running state
              * then probably something got stuck - either client,
@@ -698,7 +701,7 @@ iperf_run_client(struct iperf_test * test)
                 t_usecs = iperf_time_in_usecs(&diff_time);
                 if (t_usecs > rcv_timeout_us) {
                     /* Idle timeout if no new blocks received */
-                    if (test->blocks_received == last_receive_blocks) {
+                    if (__atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) == last_receive_blocks) {
                         i_errno = IENOMSG;
                         goto cleanup_and_fail;
                     }
@@ -708,8 +711,8 @@ iperf_run_client(struct iperf_test * test)
         }
 
         /* See if the test is making progress */
-        if (test->blocks_received > last_receive_blocks) {
-            last_receive_blocks = test->blocks_received;
+        if (__atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) > last_receive_blocks) {
+            last_receive_blocks = __atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST);
             last_receive_time = now;
         }
 
@@ -722,7 +725,7 @@ iperf_run_client(struct iperf_test * test)
 	    }
 	}
 
-	if (test->state == TEST_RUNNING) {
+	if (__atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING) {
 
 	    /* Is this our first time really running? */
 	    if (startup) {
@@ -768,17 +771,17 @@ iperf_run_client(struct iperf_test * test)
 	     * being the receiver.
 	     */
 	    if ((!test->omitting) &&
-	        (test->done ||
-	         (test->settings->bytes != 0 && (test->bytes_sent >= test->settings->bytes ||
-						 test->bytes_received >= test->settings->bytes)) ||
-	         (test->settings->blocks != 0 && (test->blocks_sent >= test->settings->blocks ||
-						  test->blocks_received >= test->settings->blocks)))) {
+	        (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST) ||
+	         (test->settings->bytes != 0 && (__atomic_load_n(&test->bytes_sent, __ATOMIC_SEQ_CST) >= test->settings->bytes ||
+						 __atomic_load_n(&test->bytes_received, __ATOMIC_SEQ_CST) >= test->settings->bytes)) ||
+	         (test->settings->blocks != 0 && (__atomic_load_n(&test->blocks_sent, __ATOMIC_SEQ_CST) >= test->settings->blocks ||
+						  __atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) >= test->settings->blocks)))) {
 
                 /* Cancel outstanding sender threads */
                 SLIST_FOREACH(sp, &test->streams, streams) {
                     if (sp->sender) {
                         int rc;
-                        sp->done = 1;
+                        __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
                         if (sp->thread_created == 1) {
                             rc = pthread_cancel(sp->thr);
                             if (rc != 0 && rc != ESRCH) {
@@ -806,7 +809,7 @@ iperf_run_client(struct iperf_test * test)
                 }
 
 		/* Yes, done!  Send TEST_END. */
-		test->done = 1;
+		__atomic_store_n(&test->done, 1, __ATOMIC_SEQ_CST);
 		cpu_util(test->cpu_util);
 		test->stats_callback(test);
 		if (iperf_set_send_state(test, TEST_END) != 0)
@@ -819,7 +822,7 @@ iperf_run_client(struct iperf_test * test)
     SLIST_FOREACH(sp, &test->streams, streams) {
         if (!sp->sender) {
             int rc;
-            sp->done = 1;
+            __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
             if (sp->thread_created == 1) {
                 rc = pthread_cancel(sp->thr);
                 if (rc != 0 && rc != ESRCH) {
@@ -862,10 +865,10 @@ iperf_run_client(struct iperf_test * test)
     /* Cancel all outstanding threads */
     i_errno_save = i_errno;
     SLIST_FOREACH(sp, &test->streams, streams) {
-        if (sp->done) {
+        if (__atomic_load_n(&sp->done, __ATOMIC_SEQ_CST)) {
             continue;
         }
-        sp->done = 1;
+        __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
         int rc;
         if (sp->thread_created == 1) {
             rc = pthread_cancel(sp->thr);
