@@ -795,7 +795,7 @@ public class IperfRunner {
                 // set_protocol has set the process-global i_errno to IEPROTOCOL.
                 // We report the mapped error directly and clear it before the
                 // shared engine queue advances to its next run.
-                i_errno = IperfError.IENONE.rawValue
+                iperf_set_error(IperfError.IENONE.rawValue)
                 return .IEPROTOCOL
             }
             switch configuration.mode {
@@ -951,15 +951,15 @@ public class IperfRunner {
         var wasStopped = false
 
         repeat {
-            i_errno = IperfError.IENONE.rawValue
+            iperf_set_error(IperfError.IENONE.rawValue)
             if configuration.role == .client {
                 code = iperf_run_client(testPointer)
             } else {
                 code = iperf_run_server(testPointer)
             }
-            error = IperfError(rawValue: i_errno) ?? .UNKNOWN
+            error = IperfError(rawValue: iperf_get_error()) ?? .UNKNOWN
             wasStopped = iperf_get_test_done(testPointer) != 0
-            i_errno = IperfError.IENONE.rawValue
+            iperf_set_error(IperfError.IENONE.rawValue)
 
             // The engine distinguishes a failed client interaction from a
             // failed server: it returns -1 for the former — a rejected

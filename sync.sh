@@ -96,13 +96,13 @@ perl -0pi -e '
 ' "$STAGING_PATH/include/flowlabel.h"
 
 perl -0pi -e '
-    $count = s/if \( !\(test->server_rsa_private_key && test->server_authorized_users\)\) \{\n        return 0;\n    \}/if (!test->server_rsa_private_key && !test->server_authorized_users) {\n        return 0;\n    }\n\n    if (!(test->server_rsa_private_key && test->server_authorized_users)) {\n        i_errno = IEAUTHTEST;\n        return -1;\n    }/g;
+    $count = s/if \( !\(test->server_rsa_private_key && test->server_authorized_users\)\) \{\n        return 0;\n    \}/if (!test->server_rsa_private_key && !test->server_authorized_users) {\n        return 0;\n    }\n\n    if (!(test->server_rsa_private_key && test->server_authorized_users)) {\n        iperf_set_error(IEAUTHTEST);\n        return -1;\n    }/g;
     die "server credentials check: expected 1 replacement, got $count\n" unless $count == 1;
-    $count = s/(\tif \(rc\) \{\n)\t    return -1;/$1\t    i_errno = IEAUTHTEST;\n\t    return -1;/g;
+    $count = s/(\tif \(rc\) \{\n)\t    return -1;/$1\t    iperf_set_error(IEAUTHTEST);\n\t    return -1;/g;
     die "authentication token failure: expected 1 replacement, got $count\n" unless $count == 1;
-    $count = s/(        \} else \{\n)(            if \(test->debug\) \{)/$1            i_errno = IEAUTHTEST;\n$2/g;
+    $count = s/(        \} else \{\n)(            if \(test->debug\) \{)/$1            iperf_set_error(IEAUTHTEST);\n$2/g;
     die "authentication result failure: expected 1 replacement, got $count\n" unless $count == 1;
-    $count = s/(\n    \}\n    return -1;\n\}\n#endif \/\/HAVE_SSL)/\n    }\n    i_errno = IEAUTHTEST;\n    return -1;\n}\n#endif \/\/HAVE_SSL/g;
+    $count = s/(\n    \}\n    return -1;\n\}\n#endif \/\/HAVE_SSL)/\n    }\n    iperf_set_error(IEAUTHTEST);\n    return -1;\n}\n#endif \/\/HAVE_SSL/g;
     die "authentication fallback failure: expected 1 replacement, got $count\n" unless $count == 1;
 ' "$STAGING_PATH/iperf_api.c"
 
@@ -140,9 +140,9 @@ fi
 echo "Verifying synchronized sources"
 grep -Fq '#ifdef __linux__' "$STAGING_PATH/include/flowlabel.h"
 test "$(grep -c '#ifdef __linux__' "$STAGING_PATH/include/flowlabel.h")" -eq 1
-test "$(grep -Fc 'if (i_errno == IENONE)' "$STAGING_PATH/iperf_client_api.c")" -eq 1
-test "$(grep -Fc 'if (i_errno == IENONE)' "$STAGING_PATH/iperf_server_api.c")" -eq 1
-test "$(grep -Fc 'if (i_errno == IENONE)' "$STAGING_PATH/iperf_udp.c")" -eq 2
+test "$(grep -Fc 'if (iperf_get_error() == IENONE)' "$STAGING_PATH/iperf_client_api.c")" -eq 1
+test "$(grep -Fc 'if (iperf_get_error() == IENONE)' "$STAGING_PATH/iperf_server_api.c")" -eq 1
+test "$(grep -Fc 'if (iperf_get_error() == IENONE)' "$STAGING_PATH/iperf_udp.c")" -eq 2
 grep -Fq 'IEBINDDEVNOSUPPORT' "$STAGING_PATH/net.c"
 grep -Fq 'iperf_set_socket_no_sigpipe' "$STAGING_PATH/net.c"
 grep -Fq 'iperf_set_socket_no_sigpipe' "$STAGING_PATH/iperf_server_api.c"
@@ -163,7 +163,7 @@ grep -Fq 'iperf_set_test_use_pkcs1_padding' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'free(test->server_authorized_users)' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'iperf_set_test_server_authorized_users(test, optarg)' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'if (!test->server_rsa_private_key && !test->server_authorized_users)' "$STAGING_PATH/iperf_api.c"
-test "$(grep -Fc 'i_errno = IEAUTHTEST' "$STAGING_PATH/iperf_api.c")" -eq 4
+test "$(grep -Fc 'iperf_set_error(IEAUTHTEST)' "$STAGING_PATH/iperf_api.c")" -eq 4
 
 rm -rf "$SRC_PATH"
 mv "$STAGING_PATH" "$SRC_PATH"

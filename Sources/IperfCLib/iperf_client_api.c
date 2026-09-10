@@ -70,7 +70,7 @@ iperf_client_worker_run(void *s) {
     sigaddset(&set, SIGINT);
 #endif
     if (pthread_sigmask(SIG_BLOCK, &set, NULL) != 0) {
-	    i_errno = IEPTHREADSIGMASK;
+	    iperf_set_error(IEPTHREADSIGMASK);
 	    goto cleanup_and_fail;
     }
 
@@ -132,7 +132,7 @@ iperf_create_streams(struct iperf_test *test, int sender)
 		    saved_errno = errno;
 		    close(s);
 		    errno = saved_errno;
-		    i_errno = IESETCONGESTION;
+		    iperf_set_error(IESETCONGESTION);
 		    return -1;
 		}
 	    }
@@ -145,7 +145,7 @@ iperf_create_streams(struct iperf_test *test, int sender)
 		    saved_errno = errno;
 		    close(s);
 		    errno = saved_errno;
-		    i_errno = IESETCONGESTION;
+		    iperf_set_error(IESETCONGESTION);
 		    return -1;
 		}
 	        if (test->congestion_used) {
@@ -216,12 +216,12 @@ create_client_timers(struct iperf_test * test)
     if (NULL == test)
     {
         iperf_err(NULL, "No test\n");
-        i_errno = IEINITTEST;
+        iperf_set_error(IEINITTEST);
         return -1;
     }
 
     if (iperf_time_now(&now) < 0) {
-	i_errno = IEINITTEST;
+	iperf_set_error(IEINITTEST);
 	return -1;
     }
     cd.p = test;
@@ -230,21 +230,21 @@ create_client_timers(struct iperf_test * test)
 	__atomic_store_n(&test->done, 0, __ATOMIC_SEQ_CST);
         test->timer = tmr_create(&now, test_timer_proc, cd, ( test->duration + test->omit ) * SEC_TO_US, 0);
         if (test->timer == NULL) {
-            i_errno = IEINITTEST;
+            iperf_set_error(IEINITTEST);
             return -1;
 	}
     }
     if (test->stats_interval != 0) {
         test->stats_timer = tmr_create(&now, client_stats_timer_proc, cd, test->stats_interval * SEC_TO_US, 1);
         if (test->stats_timer == NULL) {
-            i_errno = IEINITTEST;
+            iperf_set_error(IEINITTEST);
             return -1;
 	}
     }
     if (test->reporter_interval != 0) {
         test->reporter_timer = tmr_create(&now, client_reporter_timer_proc, cd, test->reporter_interval * SEC_TO_US, 1);
         if (test->reporter_timer == NULL) {
-            i_errno = IEINITTEST;
+            iperf_set_error(IEINITTEST);
             return -1;
 	}
     }
@@ -285,14 +285,14 @@ create_client_omit_timer(struct iperf_test * test)
         test->omitting = 0;
     } else {
 	if (iperf_time_now(&now) < 0) {
-	    i_errno = IEINITTEST;
+	    iperf_set_error(IEINITTEST);
 	    return -1;
 	}
 	test->omitting = 1;
 	cd.p = test;
 	test->omit_timer = tmr_create(&now, client_omit_timer_proc, cd, test->omit * SEC_TO_US, 0);
 	if (test->omit_timer == NULL) {
-	    i_errno = IEINITTEST;
+	    iperf_set_error(IEINITTEST);
 	    return -1;
 	}
     }
@@ -308,7 +308,7 @@ iperf_handle_message_client(struct iperf_test *test)
     if (NULL == test)
     {
         iperf_err(NULL, "No test\n");
-	i_errno = IEINITTEST;
+	iperf_set_error(IEINITTEST);
         return -1;
     }
 
@@ -320,10 +320,10 @@ iperf_handle_message_client(struct iperf_test *test)
     signed char received_state;
     if ((rval = read(test->ctrl_sck, (char*) &received_state, sizeof(signed char))) <= 0) {
         if (rval == 0) {
-            i_errno = IECTRLCLOSE;
+            iperf_set_error(IECTRLCLOSE);
             return -1;
         } else {
-            i_errno = IERECVMESSAGE;
+            iperf_set_error(IERECVMESSAGE);
             return -1;
         }
     }
@@ -377,7 +377,7 @@ iperf_handle_message_client(struct iperf_test *test)
         case IPERF_DONE:
             break;
         case SERVER_TERMINATE:
-            i_errno = IESERVERTERM;
+            iperf_set_error(IESERVERTERM);
 
 	    /*
 	     * Temporarily be in DISPLAY_RESULTS phase so we can get
@@ -390,27 +390,27 @@ iperf_handle_message_client(struct iperf_test *test)
 	    __atomic_store_n(&test->state, oldstate, __ATOMIC_SEQ_CST);
             return -1;
         case ACCESS_DENIED:
-            i_errno = IEACCESSDENIED;
+            iperf_set_error(IEACCESSDENIED);
             return -1;
         case SERVER_ERROR:
             if (Nread(test->ctrl_sck, (char*) &err, sizeof(err), Ptcp) < 0) {
-                i_errno = IECTRLREAD;
+                iperf_set_error(IECTRLREAD);
                 return -1;
             }
-	    i_errno = ntohl(err);
+	    iperf_set_error(ntohl(err));
             if (Nread(test->ctrl_sck, (char*) &err, sizeof(err), Ptcp) < 0) {
-                i_errno = IECTRLREAD;
+                iperf_set_error(IECTRLREAD);
                 return -1;
             }
             errno = ntohl(err);
             if (errno > 0) {    
-                iperf_err(test, "SERVER ERROR - %s, errno: %s", iperf_strerror(i_errno), strerror(errno));
+                iperf_err(test, "SERVER ERROR - %s, errno: %s", iperf_strerror(iperf_get_error()), strerror(errno));
             } else {
-                iperf_err(test, "SERVER ERROR - %s", iperf_strerror(i_errno));
+                iperf_err(test, "SERVER ERROR - %s", iperf_strerror(iperf_get_error()));
             }
             return -1;
         default:
-            i_errno = IEMESSAGE;
+            iperf_set_error(IEMESSAGE);
             return -1;
     }
 
@@ -441,15 +441,15 @@ iperf_connect(struct iperf_test *test)
 	// Create the control channel using an ephemeral port
 	test->ctrl_sck = netdial(test->settings->domain, Ptcp, test->bind_address, test->bind_dev, 0, test->server_hostname, test->server_port, test->settings->connect_timeout);
     if (test->ctrl_sck < 0) {
-        if (i_errno == IENONE)
-            i_errno = IECONNECT;
+        if (iperf_get_error() == IENONE)
+            iperf_set_error(IECONNECT);
         return -1;
     }
 
     // set TCP_NODELAY for lower latency on control messages
     int flag = 1;
     if (setsockopt(test->ctrl_sck, IPPROTO_TCP, TCP_NODELAY, (char *) &flag, sizeof(int))) {
-        i_errno = IESETNODELAY;
+        iperf_set_error(IESETNODELAY);
         return -1;
     }
 
@@ -462,14 +462,14 @@ iperf_connect(struct iperf_test *test)
 #if defined(HAVE_TCP_USER_TIMEOUT)
     if ((opt = test->settings->snd_timeout)) {
         if (setsockopt(test->ctrl_sck, IPPROTO_TCP, TCP_USER_TIMEOUT, &opt, sizeof(opt)) < 0) {
-            i_errno = IESETUSERTIMEOUT;
+            iperf_set_error(IESETUSERTIMEOUT);
             return -1;
         }
     }
 #endif /* HAVE_TCP_USER_TIMEOUT */
 
     if (Nwrite(test->ctrl_sck, test->cookie, COOKIE_SIZE, Ptcp) < 0) {
-        i_errno = IESENDCOOKIE;
+        iperf_set_error(IESENDCOOKIE);
         return -1;
     }
 
@@ -688,7 +688,7 @@ iperf_run_client(struct iperf_test * test)
 	result = select(test->max_fd + 1, &read_set, &write_set, NULL, timeout);
 #endif // __vxworks or __VXWORKS__
 	if (result < 0 && errno != EINTR) {
-  	    i_errno = IESELECT;
+	    iperf_set_error(IESELECT);
 	    goto cleanup_and_fail;
         } else if (result == 0 && __atomic_load_n(&test->state, __ATOMIC_SEQ_CST) == TEST_RUNNING && rcv_timeout_us > 0) {
             /*
@@ -702,7 +702,7 @@ iperf_run_client(struct iperf_test * test)
                 if (t_usecs > rcv_timeout_us) {
                     /* Idle timeout if no new blocks received */
                     if (__atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) == last_receive_blocks) {
-                        i_errno = IENOMSG;
+                        iperf_set_error(IENOMSG);
                         goto cleanup_and_fail;
                     }
                 }
@@ -734,13 +734,13 @@ iperf_run_client(struct iperf_test * test)
                 /* Create and spin up threads */
                 pthread_attr_t attr;
                 if (pthread_attr_init(&attr) != 0) {
-                    i_errno = IEPTHREADATTRINIT;
+                    iperf_set_error(IEPTHREADATTRINIT);
                     goto cleanup_and_fail;
                 }
 
                 SLIST_FOREACH(sp, &test->streams, streams) {
                     if (pthread_create(&(sp->thr), &attr, &iperf_client_worker_run, sp) != 0) {
-                        i_errno = IEPTHREADCREATE;
+                        iperf_set_error(IEPTHREADCREATE);
                         goto cleanup_and_fail;
                     }
                     sp->thread_created = 1;
@@ -752,7 +752,7 @@ iperf_run_client(struct iperf_test * test)
                     iperf_printf(test, "All threads created\n");
                 }
                 if (pthread_attr_destroy(&attr) != 0) {
-                    i_errno = IEPTHREADATTRDESTROY;
+                    iperf_set_error(IEPTHREADATTRDESTROY);
                     goto cleanup_and_fail;
                 }
 
@@ -785,16 +785,16 @@ iperf_run_client(struct iperf_test * test)
                         if (sp->thread_created == 1) {
                             rc = pthread_cancel(sp->thr);
                             if (rc != 0 && rc != ESRCH) {
-                                i_errno = IEPTHREADCANCEL;
+                                iperf_set_error(IEPTHREADCANCEL);
                                 errno = rc;
-                                iperf_err(test, "sender cancel in pthread_cancel - %s", iperf_strerror(i_errno));
+                                iperf_err(test, "sender cancel in pthread_cancel - %s", iperf_strerror(iperf_get_error()));
                                 goto cleanup_and_fail;
                             }
                             rc = pthread_join(sp->thr, NULL);
                             if (rc != 0 && rc != ESRCH) {
-                                i_errno = IEPTHREADJOIN;
+                                iperf_set_error(IEPTHREADJOIN);
                                 errno = rc;
-                                iperf_err(test, "sender cancel in pthread_join - %s", iperf_strerror(i_errno));
+                                iperf_err(test, "sender cancel in pthread_join - %s", iperf_strerror(iperf_get_error()));
                                 goto cleanup_and_fail;
                             }
                             if (test->debug_level >= DEBUG_LEVEL_INFO) {
@@ -826,16 +826,16 @@ iperf_run_client(struct iperf_test * test)
             if (sp->thread_created == 1) {
                 rc = pthread_cancel(sp->thr);
                 if (rc != 0 && rc != ESRCH) {
-                    i_errno = IEPTHREADCANCEL;
+                    iperf_set_error(IEPTHREADCANCEL);
                     errno = rc;
-                    iperf_err(test, "receiver cancel in pthread_cancel - %s", iperf_strerror(i_errno));
+                    iperf_err(test, "receiver cancel in pthread_cancel - %s", iperf_strerror(iperf_get_error()));
                     goto cleanup_and_fail;
                 }
                 rc = pthread_join(sp->thr, NULL);
                 if (rc != 0 && rc != ESRCH) {
-                    i_errno = IEPTHREADJOIN;
+                    iperf_set_error(IEPTHREADJOIN);
                     errno = rc;
-                    iperf_err(test, "receiver cancel in pthread_join - %s", iperf_strerror(i_errno));
+                    iperf_err(test, "receiver cancel in pthread_join - %s", iperf_strerror(iperf_get_error()));
                     goto cleanup_and_fail;
                 }
                 if (test->debug_level >= DEBUG_LEVEL_INFO) {
@@ -863,7 +863,7 @@ iperf_run_client(struct iperf_test * test)
 
   cleanup_and_fail:
     /* Cancel all outstanding threads */
-    i_errno_save = i_errno;
+    i_errno_save = iperf_get_error();
     SLIST_FOREACH(sp, &test->streams, streams) {
         if (__atomic_load_n(&sp->done, __ATOMIC_SEQ_CST)) {
             continue;
@@ -873,15 +873,15 @@ iperf_run_client(struct iperf_test * test)
         if (sp->thread_created == 1) {
             rc = pthread_cancel(sp->thr);
             if (rc != 0 && rc != ESRCH) {
-                i_errno = IEPTHREADCANCEL;
+                iperf_set_error(IEPTHREADCANCEL);
                 errno = rc;
-                iperf_err(test, "cleanup_and_fail in pthread_cancel - %s", iperf_strerror(i_errno));
+                iperf_err(test, "cleanup_and_fail in pthread_cancel - %s", iperf_strerror(iperf_get_error()));
             }
             rc = pthread_join(sp->thr, NULL); 
             if (rc != 0 && rc != ESRCH) {
-                i_errno = IEPTHREADJOIN;
+                iperf_set_error(IEPTHREADJOIN);
                 errno = rc;
-                iperf_err(test, "cleanup_and_fail in pthread_join - %s", iperf_strerror(i_errno));
+                iperf_err(test, "cleanup_and_fail in pthread_join - %s", iperf_strerror(iperf_get_error()));
             }
             if (test->debug_level >= DEBUG_LEVEL_INFO) {
                 iperf_printf(test, "Thread FD %d stopped\n", sp->socket);
@@ -892,11 +892,11 @@ iperf_run_client(struct iperf_test * test)
     if (test->debug_level >= DEBUG_LEVEL_INFO) {
         iperf_printf(test, "All threads stopped\n");
     }
-    i_errno = i_errno_save;
+    iperf_set_error(i_errno_save);
 
     iperf_client_end(test);
     if (test->json_output) {
-        cJSON_AddStringToObject(test->json_top, "error", iperf_strerror(i_errno));
+        cJSON_AddStringToObject(test->json_top, "error", iperf_strerror(iperf_get_error()));
         iperf_json_finish(test);
     }
     iflush(test);
