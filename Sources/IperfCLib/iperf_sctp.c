@@ -160,8 +160,7 @@ iperf_sctp_listen(struct iperf_test *test)
     char portstr[6];
     int s, opt, saved_errno;
 
-    close(test->listener);
-    test->listener = -1;
+    iperf_close_test_listener(test);
 
     snprintf(portstr, 6, "%d", test->server_port);
     memset(&hints, 0, sizeof(hints));
@@ -192,7 +191,7 @@ iperf_sctp_listen(struct iperf_test *test)
         int saved_errno;
         if (setsockopt(s, SOL_SOCKET, SO_RCVBUF, &opt, sizeof(opt)) < 0) {
             saved_errno = errno;
-            close(s);
+            iperf_close_test_listener_socket(test, s);
             freeaddrinfo(res);
             errno = saved_errno;
             iperf_set_error(IESETBUF);
@@ -200,7 +199,7 @@ iperf_sctp_listen(struct iperf_test *test)
         }
         if (setsockopt(s, SOL_SOCKET, SO_SNDBUF, &opt, sizeof(opt)) < 0) {
             saved_errno = errno;
-            close(s);
+            iperf_close_test_listener_socket(test, s);
             freeaddrinfo(res);
             errno = saved_errno;
             iperf_set_error(IESETBUF);
@@ -211,7 +210,7 @@ iperf_sctp_listen(struct iperf_test *test)
     if (test->bind_dev) {
         if (bind_to_device(s, res->ai_family, test->bind_dev) < 0) {
             saved_errno = errno;
-            close(s);
+            iperf_close_test_listener_socket(test, s);
             freeaddrinfo(res);
             iperf_set_error(IEBINDDEV);
             errno = saved_errno;
@@ -229,7 +228,7 @@ iperf_sctp_listen(struct iperf_test *test)
         if (setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY,
 		       (char *) &opt, sizeof(opt)) < 0) {
 	    saved_errno = errno;
-	    close(s);
+	    iperf_close_test_listener_socket(test, s);
 	    freeaddrinfo(res);
 	    errno = saved_errno;
 	    iperf_set_error(IEPROTOCOL);
@@ -241,7 +240,7 @@ iperf_sctp_listen(struct iperf_test *test)
     opt = 1;
     if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
         saved_errno = errno;
-        close(s);
+        iperf_close_test_listener_socket(test, s);
         freeaddrinfo(res);
         errno = saved_errno;
         iperf_set_error(IEREUSEADDR);
@@ -251,14 +250,14 @@ iperf_sctp_listen(struct iperf_test *test)
     /* servers must call sctp_bindx() _instead_ of bind() */
     if (!TAILQ_EMPTY(&test->xbind_addrs)) {
         if (iperf_sctp_bindx(test, s, IPERF_SCTP_SERVER)) {
-            close(s);
+            iperf_close_test_listener_socket(test, s);
             freeaddrinfo(res);
             return -1;
         }
     } else
     if (bind(s, (struct sockaddr *) res->ai_addr, res->ai_addrlen) < 0) {
         saved_errno = errno;
-        close(s);
+        iperf_close_test_listener_socket(test, s);
         freeaddrinfo(res);
         errno = saved_errno;
         iperf_set_error(IESTREAMLISTEN);

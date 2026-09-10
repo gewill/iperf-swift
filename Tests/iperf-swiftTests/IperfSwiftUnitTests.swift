@@ -143,6 +143,29 @@ private func formatted(_ declarations: Set<SourceErrorDeclaration>) -> String {
 }
 
 final class IperfSwiftUnitTests: XCTestCase {
+    func testStopRequestLeavesListenerForEngineCleanup() throws {
+        let test = try XCTUnwrap(iperf_new_test())
+        defer { iperf_free_test(test) }
+        let listener = socket(AF_INET, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(listener, 0)
+        guard listener >= 0 else { return }
+        test.pointee.listener = listener
+        test.pointee.prot_listener = listener
+        iperf_request_test_stop(test)
+        XCTAssertNotEqual(fcntl(listener, F_GETFD), -1)
+        XCTAssertEqual(test.pointee.listener, listener)
+        iperf_close_test_listener(test)
+        XCTAssertEqual(test.pointee.listener, -1)
+        XCTAssertEqual(test.pointee.prot_listener, -1)
+        XCTAssertEqual(fcntl(listener, F_GETFD), -1)
+        let replacement = socket(AF_INET, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(replacement, 0)
+        guard replacement >= 0 else { return }
+        defer { close(replacement) }
+        iperf_close_test_listener(test)
+        XCTAssertNotEqual(fcntl(replacement, F_GETFD), -1)
+    }
+
     func testPackagedOpenSSLUsesMajorVersionFour() {
         XCTAssertEqual(iperf_openssl_version_major(), 4)
     }

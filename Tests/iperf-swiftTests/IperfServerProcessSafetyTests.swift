@@ -523,11 +523,9 @@ final class IperfServerProcessSafetyTests: XCTestCase {
 
         let running = expectation(description: "server started")
         let active = expectation(description: "server received traffic")
-        let sentinelInstalled = expectation(description: "listener descriptor reused")
         let finished = expectation(description: "server stopped")
         var listenerDescriptor: Int32 = -1
         var sawActiveInterval = false
-        var stoppingCount = 0
         var terminalError: IperfError?
         let server = IperfRunner(with: configuration)
         let client = Process()
@@ -557,13 +555,6 @@ final class IperfServerProcessSafetyTests: XCTestCase {
                 switch state {
                 case .running:
                     running.fulfill()
-                case .stopping:
-                    stoppingCount += 1
-                    guard stoppingCount == 2 else {
-                        return
-                    }
-                    XCTAssertEqual(dup2(sentinelSource, listenerDescriptor), listenerDescriptor)
-                    sentinelInstalled.fulfill()
                 case .finished:
                     finished.fulfill()
                 default:
@@ -586,7 +577,12 @@ final class IperfServerProcessSafetyTests: XCTestCase {
 
         server.stop()
         server.stop()
-        wait(for: [sentinelInstalled, finished], timeout: 5)
+        wait(for: [finished], timeout: 5)
+        XCTAssertEqual(fcntl(listenerDescriptor, F_GETFD), -1,
+                       "The engine must close the listener before reporting completion")
+        XCTAssertEqual(dup2(sentinelSource, listenerDescriptor), listenerDescriptor)
+        server.stop()
+        server.stop()
         if client.isRunning {
             client.terminate()
             client.waitUntilExit()

@@ -690,6 +690,14 @@ iperf_run_server(struct iperf_test *test)
             timeout = &used_timeout;
         }
 
+        /* The engine owns listener close. Bound waits so an external stop
+         * request is observed even while idle; expiry still uses elapsed time. */
+        if (timeout == NULL || timeout->tv_sec >= 1) {
+            used_timeout.tv_sec = 1;
+            used_timeout.tv_usec = 0;
+            timeout = &used_timeout;
+        }
+
         result = select(test->max_fd + 1, &read_set, &write_set, NULL, timeout);
         if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST)) {
             cleanup_server(test);

@@ -2092,3 +2092,99 @@ index 1e8b52e..ce38d5b 100644
 @@ -217 +217 @@ extern    "C"
 -	    i_errno = IEUNITVAL;
 +	    iperf_set_error(IEUNITVAL);
+diff --git a/include/iperf_api.h b/include/iperf_api.h
+index 2702da2..f8f6676 100644
+--- a/include/iperf_api.h
++++ b/include/iperf_api.h
+@@ -411,0 +412,3 @@ extern int i_errno;
++/* Engine-thread-only listener cleanup, including sockets not yet published. */
++void iperf_close_test_listener_socket(struct iperf_test*, int);
++void iperf_close_test_listener(struct iperf_test*);
+diff --git a/iperf_sctp.c b/iperf_sctp.c
+index 3cfeb5d..757c321 100644
+--- a/iperf_sctp.c
++++ b/iperf_sctp.c
+@@ -163,2 +163 @@ iperf_sctp_listen(struct iperf_test *test)
+-    close(test->listener);
+-    test->listener = -1;
++    iperf_close_test_listener(test);
+@@ -195 +194 @@ iperf_sctp_listen(struct iperf_test *test)
+-            close(s);
++            iperf_close_test_listener_socket(test, s);
+@@ -203 +202 @@ iperf_sctp_listen(struct iperf_test *test)
+-            close(s);
++            iperf_close_test_listener_socket(test, s);
+@@ -214 +213 @@ iperf_sctp_listen(struct iperf_test *test)
+-            close(s);
++            iperf_close_test_listener_socket(test, s);
+@@ -232 +231 @@ iperf_sctp_listen(struct iperf_test *test)
+-	    close(s);
++	    iperf_close_test_listener_socket(test, s);
+@@ -244 +243 @@ iperf_sctp_listen(struct iperf_test *test)
+-        close(s);
++        iperf_close_test_listener_socket(test, s);
+@@ -254 +253 @@ iperf_sctp_listen(struct iperf_test *test)
+-            close(s);
++            iperf_close_test_listener_socket(test, s);
+@@ -261 +260 @@ iperf_sctp_listen(struct iperf_test *test)
+-        close(s);
++        iperf_close_test_listener_socket(test, s);
+diff --git a/iperf_server_api.c b/iperf_server_api.c
+index 919aa19..eec6852 100644
+--- a/iperf_server_api.c
++++ b/iperf_server_api.c
+@@ -692,0 +693,8 @@ iperf_run_server(struct iperf_test *test)
++        /* The engine owns listener close. Bound waits so an external stop
++         * request is observed even while idle; expiry still uses elapsed time. */
++        if (timeout == NULL || timeout->tv_sec >= 1) {
++            used_timeout.tv_sec = 1;
++            used_timeout.tv_usec = 0;
++            timeout = &used_timeout;
++        }
++
+diff --git a/iperf_tcp.c b/iperf_tcp.c
+index 27451f9..074bba8 100644
+--- a/iperf_tcp.c
++++ b/iperf_tcp.c
+@@ -208 +208 @@ iperf_tcp_listen(struct iperf_test *test)
+-        close(s);
++        iperf_close_test_listener_socket(test, s);
+@@ -243 +243 @@ iperf_tcp_listen(struct iperf_test *test)
+-            close(s);
++            iperf_close_test_listener_socket(test, s);
+@@ -254 +254 @@ iperf_tcp_listen(struct iperf_test *test)
+-		close(s);
++		iperf_close_test_listener_socket(test, s);
+@@ -265 +265 @@ iperf_tcp_listen(struct iperf_test *test)
+-		close(s);
++		iperf_close_test_listener_socket(test, s);
+@@ -275 +275 @@ iperf_tcp_listen(struct iperf_test *test)
+-		close(s);
++		iperf_close_test_listener_socket(test, s);
+@@ -283 +283 @@ iperf_tcp_listen(struct iperf_test *test)
+-		close(s);
++		iperf_close_test_listener_socket(test, s);
+@@ -301 +301 @@ iperf_tcp_listen(struct iperf_test *test)
+-            close(s);
++            iperf_close_test_listener_socket(test, s);
+@@ -322 +322 @@ iperf_tcp_listen(struct iperf_test *test)
+-		close(s);
++		iperf_close_test_listener_socket(test, s);
+@@ -333 +333 @@ iperf_tcp_listen(struct iperf_test *test)
+-            close(s);
++            iperf_close_test_listener_socket(test, s);
+@@ -344 +344 @@ iperf_tcp_listen(struct iperf_test *test)
+-            close(s);
++            iperf_close_test_listener_socket(test, s);
+@@ -355 +355 @@ iperf_tcp_listen(struct iperf_test *test)
+-	close(s);
++	iperf_close_test_listener_socket(test, s);
+@@ -365 +365 @@ iperf_tcp_listen(struct iperf_test *test)
+-    close(s);
++    iperf_close_test_listener_socket(test, s);
+@@ -373 +373 @@ iperf_tcp_listen(struct iperf_test *test)
+-	close(s);
++	iperf_close_test_listener_socket(test, s);
+@@ -383 +383 @@ iperf_tcp_listen(struct iperf_test *test)
+-    close(s);
++    iperf_close_test_listener_socket(test, s);
