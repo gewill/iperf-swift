@@ -2,6 +2,7 @@
 import Darwin
 import Foundation
 import IperfSwift
+import MachO
 import XCTest
 
 private func recordSIGPIPE(_: Int32) {}
@@ -613,9 +614,8 @@ final class IperfServerProcessSafetyTests: XCTestCase {
         let process = Process()
         let outputPipe = Pipe()
         let terminated = expectation(description: "isolated test process terminated")
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        process.executableURL = try Self.xctestExecutableURL()
         process.arguments = [
-            "xctest",
             "-XCTest",
             "iperf_swiftTests.IperfServerProcessSafetyTests/\(testName)",
             Bundle(for: Self.self).bundleURL.path,
@@ -630,6 +630,20 @@ final class IperfServerProcessSafetyTests: XCTestCase {
             "XCTestConfigurationFilePath", "XCTestSessionIdentifier",
         ] {
             childEnvironment.removeValue(forKey: key)
+        }
+        // Load the same sanitizer before xctest dlopens the instrumented bundle.
+        // Going through /usr/bin/xcrun strips DYLD_* variables on macOS.
+        let sanitizer = (0..<_dyld_image_count()).compactMap { index -> String? in
+            guard let name = _dyld_get_image_name(index) else { return nil }
+            let path = String(cString: name)
+            return URL(fileURLWithPath: path).lastPathComponent
+                .hasPrefix("libclang_rt.tsan_") ? path : nil
+        }.first
+        if let sanitizer {
+            let inherited = (childEnvironment["DYLD_INSERT_LIBRARIES"] ?? "")
+                .split(separator: ":").map(String.init).filter { $0 != sanitizer }
+            childEnvironment["DYLD_INSERT_LIBRARIES"] = ([sanitizer] + inherited)
+                .joined(separator: ":")
         }
         childEnvironment[environmentKey] = "1"
         process.environment = childEnvironment
@@ -652,6 +666,24 @@ final class IperfServerProcessSafetyTests: XCTestCase {
         ) ?? ""
         XCTAssertEqual(process.terminationStatus, 0, output)
         XCTAssertTrue(output.contains(completionMarker), output)
+    }
+
+    private static func xctestExecutableURL() throws -> URL {
+        let lookup = Process()
+        let output = Pipe()
+        lookup.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        lookup.arguments = ["--find", "xctest"]
+        lookup.standardOutput = output
+        try lookup.run()
+        lookup.waitUntilExit()
+        let path = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard lookup.terminationStatus == 0, path.hasPrefix("/"),
+              FileManager.default.isExecutableFile(atPath: path) else {
+            throw NSError(domain: "IperfServerProcessSafetyTests", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Unable to locate xctest with xcrun"])
+        }
+        return URL(fileURLWithPath: path)
     }
 
     private static func waitForListenerDescriptor(boundTo port: Int) throws -> Int32 {
