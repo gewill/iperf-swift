@@ -622,9 +622,17 @@ final class IperfServerProcessSafetyTests: XCTestCase {
         ]
         process.standardOutput = outputPipe
         process.standardError = outputPipe
-        process.environment = ProcessInfo.processInfo.environment.merging([
-            environmentKey: "1",
-        ]) { _, childValue in childValue }
+        var childEnvironment = ProcessInfo.processInfo.environment
+        // The child selects its own bundle/test through xctest arguments. Do not
+        // reconnect it to the parent's Xcode test session or injected bundle.
+        for key in [
+            "XCTestBundleInjectPath", "XCTestBundlePath",
+            "XCTestConfigurationFilePath", "XCTestSessionIdentifier",
+        ] {
+            childEnvironment.removeValue(forKey: key)
+        }
+        childEnvironment[environmentKey] = "1"
+        process.environment = childEnvironment
         process.terminationHandler = { _ in
             terminated.fulfill()
         }
