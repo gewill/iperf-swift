@@ -175,6 +175,11 @@ and callbacks are not guaranteed to use a specific queue. Dispatch UI updates
 to `MainActor` or the main queue. Terminal callback handling should be
 idempotent because libiperf can emit more than one terminal state notification.
 
+The `.running` state precedes listening or connecting; the API has no
+server-ready callback. A TCP readiness probe counts as a client interaction
+and can end a `oneOff` server. When coordinating local peers, observe the
+listener without connecting to it or trying to bind its port.
+
 Vendored libiperf keeps timers and error state at process scope, so the package
 serializes all `IperfRunner` instances through one FIFO engine queue. Only one
 embedded client or server runs in a process at a time; later runners remain in

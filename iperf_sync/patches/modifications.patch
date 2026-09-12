@@ -2188,3 +2188,24 @@ index 27451f9..074bba8 100644
 @@ -383 +383 @@ iperf_tcp_listen(struct iperf_test *test)
 -    close(s);
 +    iperf_close_test_listener_socket(test, s);
+diff --git a/iperf_tcp.c b/iperf_tcp.c
+--- a/iperf_tcp.c
++++ b/iperf_tcp.c
+@@ -114 +114 @@
+-	          r, sp->settings->blksize, sp->pending_size, __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST));
++	          r, sp->settings->blksize, sp->pending_size, (uint64_t) __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST));
+diff --git a/iperf_udp.c b/iperf_udp.c
+--- a/iperf_udp.c
++++ b/iperf_udp.c
+@@ -122 +122 @@
+-	    printf("received %d bytes of %d, total %" PRIu64 "\n", r, size, __atomic_load_n(&sp->result->bytes_received, __ATOMIC_SEQ_CST));
++	    printf("received %d bytes of %d, total %" PRIu64 "\n", r, size, (uint64_t) __atomic_load_n(&sp->result->bytes_received, __ATOMIC_SEQ_CST));
+@@ -355 +355 @@
+-	printf("sent %d bytes of %d, total %" PRIu64 "\n", r, size, __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST));
++	printf("sent %d bytes of %d, total %" PRIu64 "\n", r, size, (uint64_t) __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST));
+diff --git a/iperf_api.c b/iperf_api.c
+--- a/iperf_api.c
++++ b/iperf_api.c
+@@ -3901 +3901 @@
+-		printf("interval_len %f bytes_transferred %" PRIu64 "\n", interval_len, irp->bytes_transferred);
++		printf("interval_len %f bytes_transferred %" PRIu64 "\n", interval_len, (uint64_t) irp->bytes_transferred);
