@@ -303,7 +303,10 @@ public class IperfRunner {
             return
         }
 
-        var result = IperfIntervalResult(prot: configuration.prot)
+        // Servers negotiate the protocol with each client; their local
+        // configuration keeps its default even when the active test is UDP.
+        let prot: IperfProtocol = iperf_get_test_protocol_id(pointer) == Pudp ? .udp : .tcp
+        var result = IperfIntervalResult(prot: prot)
         result.debugDescription = "OK"
         result.state = IperfState(rawValue: iperf_get_test_state(pointer)) ?? .UNKNOWN
         // Both engine flags decide the mode, and `reverse` derives from it.
