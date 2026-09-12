@@ -238,7 +238,8 @@ configuration.timeSkewThreshold = 10           // positive seconds
 
 - ``IperfConfiguration/privateKey`` — Base64-encoded unencrypted PEM private key;
   invalid or incomplete server credentials fail with ``IperfError/IESETSERVERAUTH``
-- ``IperfConfiguration/authorizedUsers`` — `username,sha256` content
+- ``IperfConfiguration/authorizedUsers`` — `username,sha256` content, one account
+  per line with LF or CRLF endings; a line starting with `#` is a comment
 - ``IperfConfiguration/timeSkewThreshold`` — `--time-skew-threshold`, must be positive
 
 ### Compatibility properties

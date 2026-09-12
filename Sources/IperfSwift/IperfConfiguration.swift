@@ -321,6 +321,10 @@ public struct IperfConfiguration {
     /// the engine directly instead of going through the CLI argument parser that
     /// would open a path, so the value is tokenized as text during
     /// authentication and a path never matches a user.
+    ///
+    /// Tokenizing keeps the CLI file's line rules: one account per line with
+    /// either LF or CRLF endings, and a line starting with `#` is a comment
+    /// rather than an account named `#…`.
     public var authorizedUsers: String = ""
     /// The positive client/server clock-difference limit in seconds during server authentication.
     ///
