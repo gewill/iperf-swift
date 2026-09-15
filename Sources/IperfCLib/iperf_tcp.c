@@ -111,7 +111,7 @@ iperf_tcp_send(struct iperf_stream *sp)
 
     if (sp->test->debug_level >=  DEBUG_LEVEL_DEBUG)
 	      printf("sent %d bytes of %d, pending %d, total %" PRIu64 "\n",
-	          r, sp->settings->blksize, sp->pending_size, __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST));
+	          r, sp->settings->blksize, sp->pending_size, (uint64_t) __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST));
 
     return r;
 }
