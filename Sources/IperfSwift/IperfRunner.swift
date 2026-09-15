@@ -21,8 +21,11 @@ public enum IperfRunnerState {
     /// This does not mean a server is accepting connections or that a client
     /// has connected. Both happen after this state is reported — the engine has
     /// not been called yet when it arrives — and either failing shows up later
-    /// as ``IperfRunnerState/error``. A caller that must know a server is
-    /// reachable should probe the port rather than read this as that signal.
+    /// as ``IperfRunnerState/error``. There is no server-ready callback.
+    /// A TCP connection made only to probe readiness still counts as a client
+    /// interaction and can end a server configured with
+    /// ``IperfConfiguration/oneOff``. Observe the listener without connecting
+    /// when coordinating local peers.
     ///
     /// Interval results begin arriving once the engine is measuring.
     case running
@@ -303,7 +306,10 @@ public class IperfRunner {
             return
         }
 
-        var result = IperfIntervalResult(prot: configuration.prot)
+        // Servers negotiate the protocol with each client; their local
+        // configuration keeps its default even when the active test is UDP.
+        let prot: IperfProtocol = iperf_get_test_protocol_id(pointer) == Pudp ? .udp : .tcp
+        var result = IperfIntervalResult(prot: prot)
         result.debugDescription = "OK"
         result.state = IperfState(rawValue: iperf_get_test_state(pointer)) ?? .UNKNOWN
         // Both engine flags decide the mode, and `reverse` derives from it.
@@ -341,7 +347,7 @@ public class IperfRunner {
                 ? (localEndpointIsSender ? .upload : .download)
                 : (localEndpointIsSender ? .download : .upload)
 
-            let intervalResultsP: UnsafeMutablePointer<iperf_interval_results>? = extract_iperf_interval_results(OpaquePointer(stream))
+            let intervalResultsP: UnsafeMutablePointer<iperf_interval_results>? = extract_iperf_interval_results(stream)
             if let intervalResults = intervalResultsP?.pointee {
                 if intervalResults.omitted == 0 {
                     var streamResult = IperfStreamIntervalResult(intervalResults)
@@ -720,16 +726,11 @@ public class IperfRunner {
             return nil
         }
 
-        var addr: UnsafePointer<Int8>? = nil
-        if let address = configuration.address, !address.isEmpty {
-            addr = NSString(string: address).utf8String
-        }
-        
         // Server/Client
         iperf_set_test_role(currentTest, configuration.role.rawValue)
         iperf_set_test_server_port(currentTest, Int32(clamping: configuration.port))
         if configuration.addressFamily != .any {
-            iperf_set_test_domain(OpaquePointer(currentTest), configuration.addressFamily.iperfConfigValue)
+            iperf_set_test_domain(currentTest, configuration.addressFamily.iperfConfigValue)
         }
         
         if let reporterInterval = configuration.reporterInterval {
@@ -760,12 +761,12 @@ public class IperfRunner {
                 secs: UInt32(seconds),
                 usecs: UInt32((seconds - seconds.rounded(.down)) * 1_000_000)
             )
-            iperf_set_test_rcv_timeout(OpaquePointer(currentTest), &interval)
+            iperf_set_test_rcv_timeout(currentTest, &interval)
         }
 
         if configuration.role == .server {
-            if let addr = addr {
-                iperf_set_test_bind_address(currentTest, addr)
+            if let address = configuration.address, !address.isEmpty {
+                iperf_set_test_bind_address(currentTest, address)
             }
             if let bindDevice = configuration.bindDevice {
                 iperf_set_test_bind_dev(currentTest, bindDevice)
@@ -775,7 +776,7 @@ public class IperfRunner {
             }
             if let idleTimeout = configuration.idleTimeout,
                let seconds = Self.idleTimeoutSeconds(idleTimeout) {
-                iperf_set_test_idle_timeout(OpaquePointer(currentTest), seconds)
+                iperf_set_test_idle_timeout(currentTest, seconds)
             }
             
             if configuration.isAuth {
@@ -835,8 +836,8 @@ public class IperfRunner {
                 iperf_set_test_mss(currentTest, Int32(mss))
             }
             
-            if let addr = addr {
-                iperf_set_test_server_hostname(currentTest, addr)
+            if let address = configuration.address, !address.isEmpty {
+                iperf_set_test_server_hostname(currentTest, address)
             }
             if let bindDevice = configuration.bindDevice {
                 iperf_set_test_bind_dev(currentTest, bindDevice)

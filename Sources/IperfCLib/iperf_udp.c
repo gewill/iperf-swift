@@ -119,7 +119,7 @@ iperf_udp_recv(struct iperf_stream *sp)
 	atomic_fetch_add(&sp->result->bytes_received_this_interval, r);
 
 	if (sp->test->debug)
-	    printf("received %d bytes of %d, total %" PRIu64 "\n", r, size, __atomic_load_n(&sp->result->bytes_received, __ATOMIC_SEQ_CST));
+	    printf("received %d bytes of %d, total %" PRIu64 "\n", r, size, (uint64_t) __atomic_load_n(&sp->result->bytes_received, __ATOMIC_SEQ_CST));
 
 	/* Unified loop: processes single packet when GRO off, multiple when GRO on */
 	dgram_buf = sp->buffer;
@@ -352,7 +352,7 @@ iperf_udp_send(struct iperf_stream *sp)
     atomic_fetch_add(&sp->result->bytes_sent_this_interval, r);
 
     if (sp->test->debug_level >=  DEBUG_LEVEL_DEBUG)
-	printf("sent %d bytes of %d, total %" PRIu64 "\n", r, size, __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST));
+	printf("sent %d bytes of %d, total %" PRIu64 "\n", r, size, (uint64_t) __atomic_load_n(&sp->result->bytes_sent, __ATOMIC_SEQ_CST));
 
     return r;
 }
