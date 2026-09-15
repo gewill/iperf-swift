@@ -4,6 +4,84 @@ import Darwin
 @testable import IperfSwift
 
 final class IperfCLIIntegrationTests: XCTestCase {
+    func testPersistentServerReportsTheNegotiatedProtocolForEachClient() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.reporterInterval = 0.25
+
+        let lock = NSLock()
+        var intervals: [IperfIntervalResult] = []
+        let finished = expectation(description: "persistent server stopped")
+        let server = IperfRunner(with: configuration)
+        addTeardownBlock { server.stop() }
+        server.start(
+            { interval in
+                lock.lock()
+                intervals.append(interval)
+                lock.unlock()
+            },
+            { error in XCTFail("server failed: \(error)") },
+            { state in
+                if state == .finished { finished.fulfill() }
+            }
+        )
+
+        for prot in [IperfProtocol.udp, .tcp] {
+            let listening = expectation(
+                for: NSPredicate { _, _ in TestTools.hasLocalTCPListener(port: port) },
+                evaluatedWith: nil
+            )
+            wait(for: [listening], timeout: 3)
+            lock.lock()
+            intervals.removeAll()
+            lock.unlock()
+
+            var arguments = [
+                "-c", "127.0.0.1", "-p", String(port),
+                "-t", "1", "-i", "0.25", "-b", "2M", "-J"
+            ]
+            if prot == .udp { arguments += ["-u", "-l", "1200"] }
+            let cli = try tools.run(tools.iperf3, arguments: arguments)
+            XCTAssertEqual(cli.status, 0, cli.output)
+            let json = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data(cli.output.utf8)) as? [String: Any]
+            )
+
+            // The server gathers and reports its closing interval before
+            // exchanging results, so the completed CLI has received all of it.
+            lock.lock()
+            let delivered = intervals.filter { !$0.streams.isEmpty }
+            lock.unlock()
+            XCTAssertFalse(delivered.isEmpty)
+            XCTAssertTrue(delivered.allSatisfy { $0.prot == prot })
+            XCTAssertGreaterThan(delivered.reduce(0) { $0 + $1.totalBytes }, 0)
+            if prot == .udp {
+                let end = try XCTUnwrap(json["end"] as? [String: Any])
+                let sum = try XCTUnwrap(end["sum"] as? [String: Any])
+                let cliPackets = try XCTUnwrap(sum["packets"] as? Int64)
+                let wrapperPackets = delivered.reduce(Int64(0)) { $0 + $1.totalPackets }
+                XCTAssertGreaterThan(cliPackets, 0)
+                XCTAssertEqual(wrapperPackets, cliPackets)
+                for interval in delivered {
+                    XCTAssertEqual(interval.upload.totalPackets, interval.totalPackets)
+                    XCTAssertEqual(
+                        interval.averageJitter,
+                        interval.streams.reduce(0) { $0 + $1.jitter } / Double(interval.streams.count)
+                    )
+                }
+            } else {
+                XCTAssertTrue(delivered.allSatisfy { $0.totalPackets == 0 && $0.averageJitter == 0 })
+            }
+        }
+
+        server.stop()
+        wait(for: [finished], timeout: 5)
+    }
+
     func testCLIInteroperabilityRejectsAnUnpinnedIperfVersion() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("iperf-swift-version-test-\(UUID().uuidString)")

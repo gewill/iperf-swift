@@ -238,7 +238,8 @@ configuration.timeSkewThreshold = 10           // positive seconds
 
 - ``IperfConfiguration/privateKey`` — Base64-encoded unencrypted PEM private key;
   invalid or incomplete server credentials fail with ``IperfError/IESETSERVERAUTH``
-- ``IperfConfiguration/authorizedUsers`` — `username,sha256` content
+- ``IperfConfiguration/authorizedUsers`` — `username,sha256` content, one account
+  per line with LF or CRLF endings; a line starting with `#` is a comment
 - ``IperfConfiguration/timeSkewThreshold`` — `--time-skew-threshold`, must be positive
 
 ### Compatibility properties
@@ -360,9 +361,12 @@ interval results of a completed run are all delivered by the time it arrives.
 ``IperfRunnerState/running`` marks the point where the configuration has been
 accepted and the run handed to the engine — not the point where a server is
 listening or a client has connected. Those happen after it, and either failing
-arrives later as ``IperfRunnerState/error``. A caller that has to know a server
-is reachable — starting a client against it, for instance — should probe the
-port rather than treat this state as that signal.
+arrives later as ``IperfRunnerState/error``. The API does not expose a
+server-ready callback. A TCP connection made only to probe readiness still
+counts as a client interaction: connecting and disconnecting without an iperf3
+handshake can end a server configured with ``IperfConfiguration/oneOff``.
+When coordinating local peers, observe the listening socket without connecting
+to it or trying to bind its port.
 
 ## Reading interval results
 

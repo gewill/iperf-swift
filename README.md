@@ -49,7 +49,7 @@ Or add the package to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/gewill/iperf-swift.git",
-        from: "3.21.17"
+        from: "3.21.18"
     )
 ]
 ```
@@ -174,6 +174,11 @@ Keep the runner alive for the duration of the test. Work runs asynchronously,
 and callbacks are not guaranteed to use a specific queue. Dispatch UI updates
 to `MainActor` or the main queue. Terminal callback handling should be
 idempotent because libiperf can emit more than one terminal state notification.
+
+The `.running` state precedes listening or connecting; the API has no
+server-ready callback. A TCP readiness probe counts as a client interaction
+and can end a `oneOff` server. When coordinating local peers, observe the
+listener without connecting to it or trying to bind its port.
 
 Vendored libiperf keeps timers and error state at process scope, so the package
 serializes all `IperfRunner` instances through one FIFO engine queue. Only one
@@ -348,7 +353,9 @@ Authentication follows iperf3's official RSA scheme:
 
 - The client uses `username`, `password`, and a Base64-encoded PEM `publicKey`.
 - The server uses a Base64-encoded, unencrypted PEM `privateKey` and
-  `authorizedUsers` in iperf3's `username,sha256` format.
+  `authorizedUsers` in iperf3's `username,sha256` format. That content is
+  tokenized with the CLI file's line rules: LF or CRLF endings, and a leading
+  `#` marks a comment instead of an account.
 - Keep `usePkcs1Padding` disabled to use OAEP, the iperf3 default since 3.17.
   Enable legacy PKCS#1 v1.5 padding only when interoperability requires it.
 - Keep client and server clocks within `timeSkewThreshold` seconds.
@@ -448,7 +455,7 @@ generated C source because the next sync will overwrite them.
 ## Versioning
 
 The Swift package and embedded engine have separate versions. For example,
-package release `3.21.17` embeds the official iperf3 `3.21` engine. See
+package release `3.21.18` embeds the official iperf3 `3.21` engine. See
 [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## Roadmap

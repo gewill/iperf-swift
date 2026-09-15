@@ -9,6 +9,50 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.18] - 2026-09-15
+
+An authentication safety and server statistics fix release. The IperfSwift
+public API and embedded iperf3 3.21 engine version are unchanged.
+
+**Migration for direct IperfCLib callers:** corrected C declarations expose
+concrete pointer types in Swift. Remove `OpaquePointer(...)` conversions when
+calling `extract_iperf_interval_results`, `iperf_set_test_domain`,
+`iperf_set_test_idle_timeout`, and `iperf_set_test_rcv_timeout` ([#187]).
+
+### Fixed
+
+- Reject oversized RSA plaintext and ciphertext without copying them into a
+  modulus-sized input buffer. Check EVP setup and operation failures, free
+  temporary allocations, and return failures without producing authentication
+  tokens or credentials. The default OAEP and optional PKCS#1 v1.5 wire
+  formats are preserved ([#185]).
+- Validate Base64 lengths, alphabet and padding before decoding, and propagate
+  failures through key loading and authentication ([#185]).
+- Accept CRLF authorized-users content and skip lines beginning with `#`,
+  matching the CLI's parser while retaining the content-only API ([#185]).
+- Label each server interval with the protocol negotiated by the active
+  client. UDP packet, loss and jitter aggregates are no longer suppressed by
+  the server's default TCP configuration; persistent servers follow protocol
+  changes between clients ([#186]).
+- Keep temporary Swift pointers valid through timestamp conversion and
+  address-setting calls. Correct C struct declaration scope and four
+  `PRIu64` diagnostic argument types ([#187]).
+
+### Changed
+
+- Clarify that `.running` is not a server-ready signal and that a TCP
+  readiness probe can consume a one-off server's only client interaction.
+  Local coordination should observe the listener without connecting or
+  binding its port ([#187]).
+- Refresh `LICENSE-iperf` to the official iperf3 3.21 license ([#187]).
+
+### Added
+
+- Authentication boundary tests and `Scripts/verify_auth_safety.sh` for
+  AddressSanitizer checks of RSA and Base64 handling; regressions for
+  consecutive UDP/TCP clients and timestamp conversion boundaries
+  ([#185], [#186], [#187]).
+
 ## [3.21.17] - 2026-09-10
 
 A statistics and native concurrency fix release. Interval measurements no
@@ -805,7 +849,8 @@ unchanged from 3.21.6.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.17...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.18...HEAD
+[3.21.18]: https://github.com/gewill/iperf-swift/compare/v3.21.17...v3.21.18
 [3.21.17]: https://github.com/gewill/iperf-swift/compare/v3.21.16...v3.21.17
 [3.21.16]: https://github.com/gewill/iperf-swift/compare/v3.21.15...v3.21.16
 [3.21.15]: https://github.com/gewill/iperf-swift/compare/v3.21.14...v3.21.15
@@ -902,3 +947,6 @@ unchanged from 3.21.6.
 [#173]: https://github.com/gewill/iperf-swift/issues/173
 [#174]: https://github.com/gewill/iperf-swift/issues/174
 [#175]: https://github.com/gewill/iperf-swift/pull/175
+[#185]: https://github.com/gewill/iperf-swift/pull/185
+[#186]: https://github.com/gewill/iperf-swift/pull/186
+[#187]: https://github.com/gewill/iperf-swift/pull/187
