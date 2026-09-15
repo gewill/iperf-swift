@@ -34,6 +34,7 @@
 #define _WITH_GETLINE
 #include <stdio.h>
 #include <termios.h>
+#include <limits.h>
 #include <inttypes.h>
 #include <stdint.h>
 
@@ -84,8 +85,10 @@ int check_authentication(const char *username, const char *password, const time_
     // Tokenize the text by lines
     while (p) {
         char *line = strsep(&p, "\n");
-        if (line == NULL || *line == '\0') {
-            continue; // Skip empty lines
+        /* Preserve the CLI authorized-users file's CRLF and comment rules. */
+        line[strcspn(line, "\r")] = '\0';
+        if (*line == '\0' || *line == '#') {
+            continue;
         }
 
         // Use strsep for thread-safe comma separation
@@ -106,50 +109,67 @@ int check_authentication(const char *username, const char *password, const time_
 }
 
 
-int Base64Encode(const unsigned char* buffer, const size_t length, char** b64text) { //Encodes a binary safe base 64 string
-    BIO *bio, *b64;
-    BUF_MEM *bufferPtr;
+int Base64Encode(const unsigned char* buffer, const size_t length, char** b64text) {
+    if (b64text == NULL)
+        return -1;
+    *b64text = NULL;
+    if (buffer == NULL || length == 0 || length > (INT_MAX / 4) * 3)
+        return -1;
 
-    b64 = BIO_new(BIO_f_base64());
-    bio = BIO_new(BIO_s_mem());
-    bio = BIO_push(b64, bio);
-
-    BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL); //Ignore newlines - write everything in one line
-    BIO_write(bio, buffer, length);
-    BIO_flush(bio);
-    BIO_get_mem_ptr(bio, &bufferPtr);
-    *b64text = strndup( (*bufferPtr).data, (*bufferPtr).length );
-    BIO_free_all(bio);
-
-    return (0); //success
+    size_t encoded_length = 4 * ((length + 2) / 3);
+    char *encoded = malloc(encoded_length + 1);
+    if (encoded == NULL)
+        return -1;
+    if (EVP_EncodeBlock((unsigned char *)encoded, buffer, (int)length) != encoded_length) {
+        free(encoded);
+        return -1;
+    }
+    *b64text = encoded;
+    return 0;
 }
 
-size_t calcDecodeLength(const char* b64input) { //Calculates the length of a decoded string
+size_t calcDecodeLength(const char* b64input) {
+    if (b64input == NULL)
+        return 0;
     size_t len = strlen(b64input), padding = 0;
-    if (len >= 2 && b64input[len-1] == '=' && b64input[len-2] == '=') //last two chars are =
+    if (len >= 2 && b64input[len - 1] == '=' && b64input[len - 2] == '=')
         padding = 2;
-    else if (len >= 1 && b64input[len-1] == '=') //last char is =
+    else if (len >= 1 && b64input[len - 1] == '=')
         padding = 1;
-
-    return (len*3)/4 - padding;
+    return len / 4 * 3 >= padding ? len / 4 * 3 - padding : 0;
 }
 
-int Base64Decode(const char* b64message, unsigned char** buffer, size_t* length) { //Decodes a base64 encoded string
-    BIO *bio, *b64;
+int Base64Decode(const char* b64message, unsigned char** buffer, size_t* length) {
+    if (buffer == NULL || length == NULL)
+        return -1;
+    *buffer = NULL;
+    *length = 0;
+    if (b64message == NULL)
+        return -1;
+    size_t input_length = strlen(b64message);
+    if (input_length == 0 || input_length > INT_MAX || input_length % 4 != 0)
+        return -1;
 
-    int decodeLen = calcDecodeLength(b64message);
-    *buffer = (unsigned char*)malloc(decodeLen + 1);
-    (*buffer)[decodeLen] = '\0';
-
-    bio = BIO_new_mem_buf(b64message, -1);
-    b64 = BIO_new(BIO_f_base64());
-    bio = BIO_push(b64, bio);
-
-    BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL); //Do not use newlines to flush buffer
-    *length = BIO_read(bio, *buffer, strlen(b64message));
-    BIO_free_all(bio);
-
-    return (0); //success
+    size_t decoded_length = calcDecodeLength(b64message);
+    size_t padding = input_length / 4 * 3 - decoded_length;
+    for (size_t i = 0; i < input_length - padding; ++i) {
+        unsigned char c = b64message[i];
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '+' || c == '/'))
+            return -1;
+    }
+    unsigned char *decoded = malloc(input_length / 4 * 3 + 1);
+    if (decoded == NULL)
+        return -1;
+    int result = EVP_DecodeBlock(decoded, (const unsigned char *)b64message, (int)input_length);
+    if (result < 0 || (size_t)result != decoded_length + padding) {
+        free(decoded);
+        return -1;
+    }
+    decoded[decoded_length] = '\0';
+    *buffer = decoded;
+    *length = decoded_length;
+    return 0;
 }
 
 EVP_PKEY *load_pubkey_from_file(const char *file) {
@@ -169,14 +189,13 @@ EVP_PKEY *load_pubkey_from_file(const char *file) {
 EVP_PKEY *load_pubkey_from_base64(const char *buffer) {
     unsigned char *key = NULL;
     size_t key_len;
-    Base64Decode(buffer, &key, &key_len);
-
-    BIO* bio = BIO_new(BIO_s_mem());
-    BIO_write(bio, key, key_len);
-    free(key);
-    EVP_PKEY *pkey = PEM_read_bio_PUBKEY(bio, NULL, NULL, NULL);
+    if (Base64Decode(buffer, &key, &key_len) != 0)
+        return NULL;
+    BIO *bio = BIO_new_mem_buf(key, (int)key_len);
+    EVP_PKEY *pkey = bio ? PEM_read_bio_PUBKEY(bio, NULL, NULL, NULL) : NULL;
     BIO_free(bio);
-    return (pkey);
+    free(key);
+    return pkey;
 }
 
 EVP_PKEY *load_privkey_from_file(const char *file) {
@@ -196,14 +215,13 @@ EVP_PKEY *load_privkey_from_file(const char *file) {
 EVP_PKEY *load_privkey_from_base64(const char *buffer) {
     unsigned char *key = NULL;
     size_t key_len;
-    Base64Decode(buffer, &key, &key_len);
-
-    BIO* bio = BIO_new(BIO_s_mem());
-    BIO_write(bio, key, key_len);
-    free(key);
-    EVP_PKEY *pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+    if (Base64Decode(buffer, &key, &key_len) != 0)
+        return NULL;
+    BIO *bio = BIO_new_mem_buf(key, (int)key_len);
+    EVP_PKEY *pkey = bio ? PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL) : NULL;
     BIO_free(bio);
-    return (pkey);
+    free(key);
+    return pkey;
 }
 
 int test_load_pubkey_from_file(const char *file){
@@ -225,147 +243,93 @@ int test_load_private_key_from_file(const char *file){
 }
 
 int encrypt_rsa_message(const char *plaintext, EVP_PKEY *public_key, unsigned char **encryptedtext, int use_pkcs1_padding) {
-#if OPENSSL_VERSION_MAJOR >= 3
-    EVP_PKEY_CTX *ctx;
-#else
-    RSA *rsa = NULL;
-#endif
-    unsigned char *rsa_buffer = NULL;
-    size_t encryptedtext_len = 0, plaintext_len = 0;
-    int rsa_buffer_len, output_buffer_len;
+    EVP_PKEY_CTX *ctx = NULL;
+    unsigned char *output = NULL;
+    size_t output_length = 0;
+    int result = 0;
+    if (encryptedtext == NULL)
+        return 0;
+    *encryptedtext = NULL;
+    if (plaintext == NULL || public_key == NULL)
+        return 0;
 
-#if OPENSSL_VERSION_MAJOR >= 3
-    int rc;
-    ctx = EVP_PKEY_CTX_new_from_pkey(NULL, public_key, "");
-    /* See evp_pkey_rsa(7) and provider-keymgmt(7) */
-    rc = EVP_PKEY_get_int_param(public_key, OSSL_PKEY_PARAM_MAX_SIZE, &output_buffer_len);
-    if (!rc) {
-        goto errreturn;
-    }
-#else
-    rsa = EVP_PKEY_get1_RSA(public_key);
-    output_buffer_len = RSA_size(rsa);
-#endif
-    plaintext_len = strlen(plaintext);
-    if (plaintext_len > output_buffer_len) {
-        fprintf(stderr, "Plaintext of size %zd truncated to %d; data is lost.\n", plaintext_len, output_buffer_len);
-    }
-    rsa_buffer  = OPENSSL_malloc(output_buffer_len);
-    *encryptedtext = (unsigned char*)OPENSSL_malloc(output_buffer_len);
-    encryptedtext_len = output_buffer_len;
+    ctx = EVP_PKEY_CTX_new(public_key, NULL);
+    int padding = use_pkcs1_padding ? RSA_PKCS1_PADDING : RSA_PKCS1_OAEP_PADDING;
+    size_t input_length = strlen(plaintext);
+    /* Let EVP enforce the padding-specific limit without copying input into
+     * an RSA-sized buffer. Oversized input must fail, never be truncated. */
+    if (ctx == NULL || EVP_PKEY_encrypt_init(ctx) <= 0 ||
+        EVP_PKEY_CTX_set_rsa_padding(ctx, padding) <= 0 ||
+        EVP_PKEY_encrypt(ctx, NULL, &output_length, (const unsigned char *)plaintext, input_length) <= 0 ||
+        output_length == 0 || output_length > INT_MAX)
+        goto cleanup;
+    output = OPENSSL_malloc(output_length);
+    if (output == NULL ||
+        EVP_PKEY_encrypt(ctx, output, &output_length, (const unsigned char *)plaintext, input_length) <= 0)
+        goto cleanup;
+    *encryptedtext = output;
+    output = NULL;
+    result = (int)output_length;
 
-    BIO *bioBuff   = BIO_new_mem_buf((void*)plaintext, (int)plaintext_len);
-    rsa_buffer_len = BIO_read(bioBuff, rsa_buffer, plaintext_len);
-
-    int padding = RSA_PKCS1_OAEP_PADDING;
-    if (use_pkcs1_padding){
-        padding = RSA_PKCS1_PADDING;
-    }
-#if OPENSSL_VERSION_MAJOR >= 3
-    EVP_PKEY_encrypt_init(ctx);
-    EVP_PKEY_CTX_set_rsa_padding(ctx, padding);
-
-    EVP_PKEY_encrypt(ctx, *encryptedtext, &encryptedtext_len, rsa_buffer, rsa_buffer_len);
+  cleanup:
+    OPENSSL_free(output);
     EVP_PKEY_CTX_free(ctx);
-#else
-    int encrypt_ret = RSA_public_encrypt(rsa_buffer_len, rsa_buffer, *encryptedtext, rsa, padding);
-    encryptedtext_len = encrypt_ret < 0 ? 0 : (size_t) encrypt_ret;
-    RSA_free(rsa);
-#endif
-
-    OPENSSL_free(rsa_buffer);
-    BIO_free(bioBuff);
-
-    if (encryptedtext_len <= 0) {
-        goto errreturn;
-    }
-
-    return encryptedtext_len;
-
-  errreturn:
-    fprintf(stderr, "%s\n", ERR_error_string(ERR_get_error(), NULL));
-    return 0;
+    return result;
 }
 
 int decrypt_rsa_message(const unsigned char *encryptedtext, const int encryptedtext_len, EVP_PKEY *private_key, unsigned char **plaintext, int use_pkcs1_padding) {
-#if OPENSSL_VERSION_MAJOR >= 3
-    EVP_PKEY_CTX *ctx;
-#else
-    RSA *rsa = NULL;
-#endif
-    unsigned char *rsa_buffer = NULL;
-    size_t plaintext_len = 0;
-    int rsa_buffer_len, output_buffer_len;
+    EVP_PKEY_CTX *ctx = NULL;
+    unsigned char *output = NULL;
+    size_t output_length = 0;
+    int result = 0;
+    if (plaintext == NULL)
+        return 0;
+    *plaintext = NULL;
+    if (encryptedtext == NULL || encryptedtext_len <= 0 || private_key == NULL)
+        return 0;
 
-#if OPENSSL_VERSION_MAJOR >= 3
-    int rc;
-    ctx = EVP_PKEY_CTX_new_from_pkey(NULL, private_key, "");
-    /* See evp_pkey_rsa(7) and provider-keymgmt(7) */
-    rc = EVP_PKEY_get_int_param(private_key, OSSL_PKEY_PARAM_MAX_SIZE, &output_buffer_len);
-    if (!rc) {
-        goto errreturn;
-    }
-#else
-    rsa = EVP_PKEY_get1_RSA(private_key);
-    output_buffer_len = RSA_size(rsa);
-#endif
-    if (encryptedtext_len > output_buffer_len) {
-        fprintf(stderr, "Encrypted text of size %d truncated to %d; likely invalid input.\n", encryptedtext_len, output_buffer_len);
-    }
-    rsa_buffer  = OPENSSL_malloc(output_buffer_len);
-    // Note: +1 for NULL
-    *plaintext = (unsigned char*)OPENSSL_malloc(output_buffer_len + 1);
+    ctx = EVP_PKEY_CTX_new(private_key, NULL);
+    int padding = use_pkcs1_padding ? RSA_PKCS1_PADDING : RSA_PKCS1_OAEP_PADDING;
+    if (ctx == NULL || EVP_PKEY_decrypt_init(ctx) <= 0 ||
+        EVP_PKEY_CTX_set_rsa_padding(ctx, padding) <= 0 ||
+        EVP_PKEY_decrypt(ctx, NULL, &output_length, encryptedtext, encryptedtext_len) <= 0 ||
+        output_length == 0 || output_length > INT_MAX)
+        goto cleanup;
+    output = OPENSSL_malloc(output_length + 1);
+    if (output == NULL ||
+        EVP_PKEY_decrypt(ctx, output, &output_length, encryptedtext, encryptedtext_len) <= 0 ||
+        output_length == 0)
+        goto cleanup;
+    output[output_length] = '\0';
+    *plaintext = output;
+    output = NULL;
+    result = (int)output_length;
 
-    BIO *bioBuff   = BIO_new_mem_buf((void*)encryptedtext, encryptedtext_len);
-    rsa_buffer_len = BIO_read(bioBuff, rsa_buffer, encryptedtext_len);
-
-    int padding = RSA_PKCS1_OAEP_PADDING;
-    if (use_pkcs1_padding){
-        padding = RSA_PKCS1_PADDING;
-    }
-#if OPENSSL_VERSION_MAJOR >= 3
-    int ret = 0;
-    plaintext_len = output_buffer_len;
-    EVP_PKEY_decrypt_init(ctx);
-
-    ret = EVP_PKEY_CTX_set_rsa_padding(ctx, padding);
-    if (ret < 0){
-        goto errreturn;
-    }
-    ret = EVP_PKEY_decrypt(ctx, *plaintext, &plaintext_len, rsa_buffer, rsa_buffer_len);
+  cleanup:
+    OPENSSL_free(output);
     EVP_PKEY_CTX_free(ctx);
-#else
-    int decrypt_ret = RSA_private_decrypt(rsa_buffer_len, rsa_buffer, *plaintext, rsa, padding);
-    plaintext_len = decrypt_ret < 0 ? 0 : (size_t) decrypt_ret;
-    RSA_free(rsa);
-#endif
-
-    OPENSSL_free(rsa_buffer);
-    BIO_free(bioBuff);
-
-    /* Treat a decryption error as an empty string. */
-    if (plaintext_len <= 0) {
-        plaintext_len = 0;
-    }
-
-    return plaintext_len;
-
-#if OPENSSL_VERSION_MAJOR >= 3
-  errreturn:
-    fprintf(stderr, "%s\n", ERR_error_string(ERR_get_error(), NULL));
-    return 0;
-#endif
+    return result;
 }
 
 int encode_auth_setting(const char *username, const char *password, EVP_PKEY *public_key, char **authtoken, int use_pkcs1_padding){
-    time_t t = time(NULL);
-    time_t utc_seconds = mktime(localtime(&t));
+    if (authtoken == NULL)
+        return -1;
+    *authtoken = NULL;
+    if (username == NULL || password == NULL || public_key == NULL)
+        return -1;
+    time_t utc_seconds = time(NULL);
 
     /*
      * Compute a pessimistic/conservative estimate of storage required.
      * It's OK to allocate too much storage but too little is bad.
      */
-    const int text_len = strlen(auth_text_format) + strlen(username) + strlen(password) + 32;
+    /* Reject credentials larger than the modulus before sizing the framing
+     * buffer from them; EVP enforces the exact padding limit afterwards. */
+    size_t username_len = strlen(username), password_len = strlen(password);
+    int key_size = EVP_PKEY_size(public_key);
+    if (key_size <= 0 || username_len > (size_t)key_size || password_len > (size_t)key_size)
+        return -1;
+    size_t text_len = strlen(auth_text_format) + username_len + password_len + 32;
     char *text = (char *) calloc(text_len, sizeof(char));
     if (text == NULL) {
         return -1;
@@ -376,20 +340,24 @@ int encode_auth_setting(const char *username, const char *password, EVP_PKEY *pu
     int encrypted_len;
     encrypted_len = encrypt_rsa_message(text, public_key, &encrypted, use_pkcs1_padding);
     free(text);
-    if (encrypted_len < 0) {
-      return -1;
-    }
-    Base64Encode(encrypted, encrypted_len, authtoken);
+    if (encrypted_len <= 0)
+        return -1;
+    int result = Base64Encode(encrypted, encrypted_len, authtoken);
     OPENSSL_free(encrypted);
-
-    return (0); //success
+    return result;
 }
 
 int decode_auth_setting(int enable_debug, const char *authtoken, EVP_PKEY *private_key, char **username, char **password, time_t *ts, int use_pkcs1_padding){
+    if (username == NULL || password == NULL || ts == NULL)
+        return -1;
+    *username = NULL;
+    *password = NULL;
+    *ts = 0;
     unsigned char *encrypted_b64 = NULL;
     size_t encrypted_len_b64;
-    int64_t utc_seconds =0;
-    Base64Decode(authtoken, &encrypted_b64, &encrypted_len_b64);
+    int64_t utc_seconds = 0;
+    if (Base64Decode(authtoken, &encrypted_b64, &encrypted_len_b64) != 0)
+        return -1;
 
     unsigned char *plaintext = NULL;
     int plaintext_len;

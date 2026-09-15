@@ -348,7 +348,9 @@ Authentication follows iperf3's official RSA scheme:
 
 - The client uses `username`, `password`, and a Base64-encoded PEM `publicKey`.
 - The server uses a Base64-encoded, unencrypted PEM `privateKey` and
-  `authorizedUsers` in iperf3's `username,sha256` format.
+  `authorizedUsers` in iperf3's `username,sha256` format. That content is
+  tokenized with the CLI file's line rules: LF or CRLF endings, and a leading
+  `#` marks a comment instead of an account.
 - Keep `usePkcs1Padding` disabled to use OAEP, the iperf3 default since 3.17.
   Enable legacy PKCS#1 v1.5 padding only when interoperability requires it.
 - Keep client and server clocks within `timeSkewThreshold` seconds.
