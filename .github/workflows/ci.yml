@@ -41,22 +41,14 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
-      # Homebrew's official iperf3 bottle supplies its OpenSSL CLI dependency.
-      # Package linking still comes exclusively from openssl-spm.
+      # Pin the CLI to the embedded engine; Homebrew's latest iperf3 can drift.
+      # This CLI's OpenSSL does not change package linking via openssl-spm.
       - name: Install test dependencies
         run: |
-          brew install iperf3
-          version_output="$(iperf3 --version 2>&1)"
-          first_line="${version_output%%$'\n'*}"
-          if [[ ! "$first_line" =~ ^iperf\ 3\.21([[:space:]]|\() ]]; then
-            echo "Expected iperf 3.21, got: $first_line" >&2
-            exit 1
-          fi
-          if [[ "$version_output" != *authentication* ]]; then
-            echo "The installed iperf3 does not report authentication support" >&2
-            exit 1
-          fi
-          echo "IPERF3_PATH=$(command -v iperf3)" >> "$GITHUB_ENV"
+          brew install openssl@3
+          ./Scripts/install_test_iperf3.sh "$RUNNER_TEMP/iperf3-3.21"
+          echo "IPERF3_PATH=$RUNNER_TEMP/iperf3-3.21/bin/iperf3" >> "$GITHUB_ENV"
+          echo "OPENSSL_PATH=$(brew --prefix openssl@3)/bin/openssl" >> "$GITHUB_ENV"
       - name: Build
         run: swift build
       # The DocC catalog and doc comments contain many ``symbol`` links that a

@@ -9,6 +9,24 @@ package release number.
 
 ## [Unreleased]
 
+## [3.21.19] - 2026-10-13
+
+A UDP connection recovery fix. The Swift public API and embedded iperf3 3.21
+engine version are unchanged.
+
+### Fixed
+
+- Release the client UDP socket when buffer setup or the connection handshake
+  fails, preserving the original error and return value. A failed connection
+  no longer keeps a fixed client port occupied, so a later test in the same
+  process can reuse that port ([#191]).
+
+### Changed
+
+- Build the CLI interoperability baseline from pinned official iperf3 3.21
+  sources instead of depending on Homebrew's moving latest version. This
+  standalone test tool does not change the package's OpenSSL dependency.
+
 ## [3.21.18] - 2026-09-15
 
 An authentication safety and server statistics fix release. The IperfSwift
@@ -849,7 +867,8 @@ unchanged from 3.21.6.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.18...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.19...HEAD
+[3.21.19]: https://github.com/gewill/iperf-swift/compare/v3.21.18...v3.21.19
 [3.21.18]: https://github.com/gewill/iperf-swift/compare/v3.21.17...v3.21.18
 [3.21.17]: https://github.com/gewill/iperf-swift/compare/v3.21.16...v3.21.17
 [3.21.16]: https://github.com/gewill/iperf-swift/compare/v3.21.15...v3.21.16
@@ -950,3 +969,4 @@ unchanged from 3.21.6.
 [#185]: https://github.com/gewill/iperf-swift/pull/185
 [#186]: https://github.com/gewill/iperf-swift/pull/186
 [#187]: https://github.com/gewill/iperf-swift/pull/187
+[#191]: https://github.com/gewill/iperf-swift/issues/191

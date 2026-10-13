@@ -49,7 +49,7 @@ Or add the package to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/gewill/iperf-swift.git",
-        from: "3.21.18"
+        from: "3.21.19"
     )
 ]
 ```
@@ -369,24 +369,32 @@ Do not commit private keys, passwords, or authorized-user data.
 ## Testing
 
 The integration tests require a local `iperf3` 3.21 executable with
-authentication support. Install the official Homebrew bottle:
+authentication support. The current Homebrew bottle can advance beyond 3.21,
+so build the pinned official CLI in an isolated prefix:
 
 ```sh
-brew install iperf3
+brew install openssl@3
+iperf_test_prefix="$HOME/Library/Caches/iperf-swift/iperf3-3.21"
+./Scripts/install_test_iperf3.sh "$iperf_test_prefix"
+export IPERF3_PATH="$iperf_test_prefix/bin/iperf3"
+export OPENSSL_PATH="$(brew --prefix openssl@3)/bin/openssl"
 ```
 
-The tests reject other iperf3 versions with an explicit diagnostic so the CLI
-baseline cannot drift from the embedded 3.21 engine. Set `IPERF3_PATH` when the
-3.21 executable is not otherwise on `PATH`:
+The installer checks official tag `3.21` against commit
+`d39cf41526626b4e5a130f115d931cd6cbdffc19`, then verifies the executable's
+version and authentication support. CI uses the same script with a prefix
+under `RUNNER_TEMP`; neither setup replaces a global `iperf3`. The tests still
+reject other versions so the CLI baseline cannot drift from the embedded
+3.21 engine. To use an existing 3.21 executable, set `IPERF3_PATH` explicitly:
 
 ```sh
 IPERF3_PATH="/path/to/iperf3" swift test
 ```
 
-Homebrew's current iperf3 bottle uses OpenSSL 4, which the tests can use to
-generate temporary authentication credentials; OpenSSL 3 remains supported via
-`OPENSSL_PATH`. OpenSSL linked by the Swift Package itself comes exclusively
-from the OpenSSL 4 XCFramework in `openssl-spm`.
+The standalone test CLI uses Homebrew's OpenSSL 3, located with `brew --prefix`.
+`OPENSSL_PATH` selects the executable that generates temporary authentication
+credentials. OpenSSL linked by the Swift Package itself remains exclusively
+the OpenSSL 4 XCFramework in `openssl-spm`; no Homebrew paths enter the package.
 
 Run the complete Swift Package test suite:
 
@@ -455,7 +463,7 @@ generated C source because the next sync will overwrite them.
 ## Versioning
 
 The Swift package and embedded engine have separate versions. For example,
-package release `3.21.18` embeds the official iperf3 `3.21` engine. See
+package release `3.21.19` embeds the official iperf3 `3.21` engine. See
 [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## Roadmap
