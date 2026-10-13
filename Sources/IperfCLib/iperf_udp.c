@@ -666,7 +666,7 @@ iperf_udp_listen(struct iperf_test *test)
 int
 iperf_udp_connect(struct iperf_test *test)
 {
-    int s, sz;
+    int s, sz, saved_errno;
     unsigned int buf;
 #ifdef SO_RCVTIMEO
     struct timeval tv;
@@ -684,7 +684,7 @@ iperf_udp_connect(struct iperf_test *test)
     rc = iperf_udp_buffercheck(test, s);
     if (rc < 0)
 	/* error */
-	return rc;
+	goto cleanup;
 
     if (test->settings->gso)
         iperf_udp_gso(test, s);
@@ -705,7 +705,7 @@ iperf_udp_connect(struct iperf_test *test)
 	    test->settings->socket_bufsize = bufsize;
 	    rc = iperf_udp_buffercheck(test, s);
 	    if (rc < 0)
-		return rc;
+		goto cleanup;
 	}
     }
 
@@ -754,7 +754,8 @@ iperf_udp_connect(struct iperf_test *test)
     if (write(s, &buf, sizeof(buf)) < 0) {
         // XXX: Should this be changed to IESTREAMCONNECT?
         iperf_set_error(IESTREAMWRITE);
-        return -1;
+        rc = -1;
+        goto cleanup;
     }
 
     /*
@@ -767,7 +768,8 @@ iperf_udp_connect(struct iperf_test *test)
     do {
         if ((sz = recv(s, &buf, sizeof(buf), 0)) < 0) {
             iperf_set_error(IESTREAMREAD);
-            return -1;
+            rc = -1;
+            goto cleanup;
         }
         if (test->debug) {
             printf("Connect received for Socket %d, sz=%d, buf=%x, i=%d, max_len_wait_for_reply=%d\n", s, sz, buf, i, max_len_wait_for_reply);
@@ -777,10 +779,18 @@ iperf_udp_connect(struct iperf_test *test)
 
     if (buf != UDP_CONNECT_REPLY  && buf != LEGACY_UDP_CONNECT_REPLY) {
         iperf_set_error(IESTREAMREAD);
-        return -1;
+        rc = -1;
+        goto cleanup;
     }
 
     return s;
+
+cleanup:
+    /* No stream owns s yet. Keep the failing operation's errno and i_errno. */
+    saved_errno = errno;
+    close(s);
+    errno = saved_errno;
+    return rc;
 }
 
 

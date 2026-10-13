@@ -2586,3 +2586,36 @@ diff --git a/iperf_auth.c b/iperf_auth.c
 +    int64_t utc_seconds = 0;
 +    if (Base64Decode(authtoken, &encrypted_b64, &encrypted_len_b64) != 0)
 +        return -1;
+diff --git a/iperf_udp.c b/iperf_udp.c
+index b28f3bb..c4ff659 100644
+--- a/iperf_udp.c
++++ b/iperf_udp.c
+@@ -669 +669 @@ iperf_udp_connect(struct iperf_test *test)
+-    int s, sz;
++    int s, sz, saved_errno;
+@@ -687 +687 @@ iperf_udp_connect(struct iperf_test *test)
+-	return rc;
++	goto cleanup;
+@@ -708 +708 @@ iperf_udp_connect(struct iperf_test *test)
+-		return rc;
++		goto cleanup;
+@@ -757 +757,2 @@ iperf_udp_connect(struct iperf_test *test)
+-        return -1;
++        rc = -1;
++        goto cleanup;
+@@ -770 +771,2 @@ iperf_udp_connect(struct iperf_test *test)
+-            return -1;
++            rc = -1;
++            goto cleanup;
+@@ -780 +782,2 @@ iperf_udp_connect(struct iperf_test *test)
+-        return -1;
++        rc = -1;
++        goto cleanup;
+@@ -783,0 +787,7 @@ iperf_udp_connect(struct iperf_test *test)
++
++cleanup:
++    /* No stream owns s yet. Keep the failing operation's errno and i_errno. */
++    saved_errno = errno;
++    close(s);
++    errno = saved_errno;
++    return rc;
