@@ -371,11 +371,11 @@ final class IperfSwiftUnitTests: XCTestCase {
 
         var negativeDscpConfiguration = IperfConfiguration()
         negativeDscpConfiguration.dscp = .min
-        testCases.append((negativeDscpConfiguration, .IEBADTOS))
+        testCases.append((negativeDscpConfiguration, .IEBADDSCP))
 
         var dscpConfiguration = IperfConfiguration()
         dscpConfiguration.dscp = .max
-        testCases.append((dscpConfiguration, .IEBADTOS))
+        testCases.append((dscpConfiguration, .IEBADDSCP))
 
         var shortReceivingTimeoutConfiguration = IperfConfiguration()
         shortReceivingTimeoutConfiguration.rcvTimeout = 0.05

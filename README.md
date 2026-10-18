@@ -7,7 +7,7 @@
 [![SwiftPM](https://img.shields.io/badge/SwiftPM-compatible-brightgreen.svg)](Package.swift)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
 
-`IperfSwift` is a Swift Package that embeds the iperf3 3.21 C engine and exposes
+`IperfSwift` is a Swift Package that embeds the iperf3 3.22 C engine and exposes
 client and server execution through a Swift API.
 
 iperf3 is developed by ESnet/Lawrence Berkeley National Laboratory. Refer to the
@@ -36,6 +36,9 @@ maintained. Development continues here without upstream involvement.
 - iOS 13+, macOS 10.15+, or tvOS 13+
 
 ## Installation
+
+The example below selects the latest published 3.21 package series. The 3.22
+engine upgrade on `develop` is unreleased; package releases will use `3.22.x`.
 
 In Xcode, choose **File > Add Package Dependencies** and enter:
 
@@ -260,7 +263,7 @@ interface, and socket constraints remain runtime decisions.
 | `duration` | `--time` | Client · TCP / UDP | Truncated toward zero to whole seconds in `0...86,400`; invalid finite values fail with `IEDURATION`; nonfinite values match the CLI's zero parsing |
 | `numberOfBytes` | `--bytes` | Client · TCP / UDP | A nonzero byte limit is an end condition; combining it with any explicitly set `duration` fails with `IEENDCONDITIONS`, while zero selects no byte end condition |
 | `timeout` | `--connect-timeout` | Client | Swift unit is seconds; `nil` or zero keeps the engine default, otherwise accepts `0.001...2,147,483.647` and truncates fractional milliseconds; invalid/nonfinite values fail preflight with wrapper error `IECONNECTTIMEOUT` |
-| `dscp` | `--dscp` | Client · TCP / UDP · IPv4 / IPv6 | Numeric `0...63`; invalid values fail with `IEBADTOS` |
+| `dscp` | `--dscp` | Client · TCP / UDP · IPv4 / IPv6 | Numeric `0...63`; invalid values fail with `IEBADDSCP` |
 | `tos` | `--tos` | Client · TCP / UDP · IPv4 / IPv6 | Requires `0...255`, otherwise fails with `IEBADTOS`; applied after `dscp` and therefore wins |
 | `clientPort` | `--cport` | Client · TCP / UDP | `1...65,535`; Server use fails with `IECLIENTONLY`; parallel streams use consecutive ports and bidirectional mode reserves two ranges, with overflow failing as `IEBADPORT` |
 | `udpCounters64Bit` | `--udp-counters-64bit` | Client · UDP | Enabling it for TCP fails with `IEUDPONLY` |
@@ -269,10 +272,9 @@ interface, and socket constraints remain runtime decisions.
 | `dontFragment` | `--dont-fragment` | Client · UDP · IPv4 | TCP fails with `IEUDPONLY`; forced IPv6 fails with `IEIPV4ONLY`; `.any` applies it only when resolution selects IPv4 |
 | `omit` | `--omit` | Client · TCP / UDP | Initial `0...600` seconds excluded from measurements; invalid values fail with `IEOMIT` |
 
-The CLI 3.21 parser accepts nonpositive `--parallel` and negative `--window` /
-`--set-mss` values, then passes unusable values into later execution. The
-wrapper intentionally rejects those values during preflight so they cannot be
-silently narrowed or reach libiperf.
+The CLI 3.22 and the wrapper both reject nonpositive `--parallel`, negative
+`--window` / `--set-mss`, and invalid `--dscp` values. The wrapper checks them
+during preflight, before entering libiperf.
 
 The CLI also accepts nonfinite `--interval` input because its floating-point
 comparisons do not reject `NaN`, and it does not range-check the integer
@@ -368,24 +370,24 @@ Do not commit private keys, passwords, or authorized-user data.
 
 ## Testing
 
-The integration tests require a local `iperf3` 3.21 executable with
-authentication support. The current Homebrew bottle can advance beyond 3.21,
+The integration tests require a local `iperf3` 3.22 executable with
+authentication support. The current Homebrew bottle can advance beyond 3.22,
 so build the pinned official CLI in an isolated prefix:
 
 ```sh
 brew install openssl@3
-iperf_test_prefix="$HOME/Library/Caches/iperf-swift/iperf3-3.21"
+iperf_test_prefix="$HOME/Library/Caches/iperf-swift/iperf3-3.22"
 ./Scripts/install_test_iperf3.sh "$iperf_test_prefix"
 export IPERF3_PATH="$iperf_test_prefix/bin/iperf3"
 export OPENSSL_PATH="$(brew --prefix openssl@3)/bin/openssl"
 ```
 
-The installer checks official tag `3.21` against commit
-`d39cf41526626b4e5a130f115d931cd6cbdffc19`, then verifies the executable's
+The installer checks official tag `3.22` against commit
+`926bd905501b792bd082d2200d1d1a84aa543e3a`, then verifies the executable's
 version and authentication support. CI uses the same script with a prefix
 under `RUNNER_TEMP`; neither setup replaces a global `iperf3`. The tests still
 reject other versions so the CLI baseline cannot drift from the embedded
-3.21 engine. To use an existing 3.21 executable, set `IPERF3_PATH` explicitly:
+3.22 engine. To use an existing 3.22 executable, set `IPERF3_PATH` explicitly:
 
 ```sh
 IPERF3_PATH="/path/to/iperf3" swift test
@@ -408,6 +410,21 @@ Run a focused suite:
 swift test --filter IperfSwiftUnitTests
 swift test --filter IperfCLIIntegrationTests
 ```
+
+Run the standalone C checks after resolving/building the package:
+
+```sh
+./Scripts/verify_auth_safety.sh
+./Scripts/verify_engine_regressions.sh
+./Scripts/verify_no_ssl_stubs.sh
+```
+
+The first two use AddressSanitizer. Authentication checks cover both RSA padding
+modes, exact plaintext capacity, malformed Base64 and failure cleanup. Engine
+checks cover remote parameter bounds, UDP stride validation, watchdog worker
+ownership, socket/FD cleanup, first UDP reply TOS, and parallel bidirectional TCP
+with timer cancellation. Set `SWIFT_BUILD_PATH` when using a SwiftPM scratch
+path instead of `.build`.
 
 The integration suite starts local Swift or CLI peers, creates temporary RSA
 credentials, and allocates random local ports. It covers TCP and UDP
@@ -445,7 +462,7 @@ git diff
 git diff --check
 ```
 
-`sync.sh` defaults to the official `3.21` tag. It creates a unique system
+`sync.sh` defaults to the official `3.22` tag. It creates a unique system
 temporary directory for checkout and a unique staging directory beside
 `Sources/IperfCLib`, applies
 `iperf_sync/patches/modifications.patch`, restores
@@ -456,7 +473,7 @@ removed. Concurrent synchronization is rejected through `.iperf-sync.lock`
 rather than allowing two processes to replace the generated tree at once. If a
 terminated process leaves a stale lock and no synchronization is active, remove
 it with `rmdir .iperf-sync.lock`. The maintained configuration's probe names are
-checked against the selected upstream tag, and CI regenerates the 3.21 tree and
+checked against the selected upstream tag, and CI regenerates the 3.22 tree and
 requires a clean diff. Do not keep project-specific changes only in the
 generated C source because the next sync will overwrite them.
 

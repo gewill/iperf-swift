@@ -4,10 +4,36 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows the embedded iperf3 engine: the major and minor components
-track the engine version (currently 3.21), and the patch component is the
+track the engine version (currently 3.22), and the patch component is the
 package release number.
 
 ## [Unreleased]
+
+### Changed
+
+- Upgrade the bundled engine and pinned CLI test baseline to official iperf3
+  3.22 (`926bd905501b792bd082d2200d1d1a84aa543e3a`). Preserve the local EVP
+  authentication implementation, content-only credentials, atomic state and
+  error access, callback semantics, and socket ownership protections.
+- Invalid Swift `dscp` values now report `IEBADDSCP`, matching CLI 3.22.
+  Add `IEBADDSCP` and `IERVRSONLYSKIPRXCOPY` error mappings.
+- Rebase compatibility changes into one context-checked synchronization patch;
+  prior targeted text substitutions now live in that patch.
+
+### Fixed
+
+- Incorporate upstream watchdog worker teardown, remote parameter validation,
+  UDP zero-stride rejection, end-of-test timer cancellation, bidirectional TCP
+  connection ordering, FD cleanup, and server socket option handling. Route new
+  failure paths through the existing TCP listener and UDP socket cleanup.
+
+### Added
+
+- Authentication tests for exact RSA capacity, malformed padding, truncated or
+  modified tokens, and wrong keys. Add an AddressSanitizer engine harness for
+  remote parameters, watchdog ownership, invalid UDP stride, socket/FD cleanup,
+  first UDP reply TOS, and parallel bidirectional TCP timer cancellation.
+  Both standalone ASan checks now run in CI.
 
 ## [3.21.19] - 2026-10-13
 

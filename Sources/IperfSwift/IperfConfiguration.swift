@@ -191,6 +191,7 @@ public struct IperfConfiguration {
     /// milliseconds and must fit in a signed 32-bit millisecond value.
     public var timeout: TimeInterval?
     /// The client DSCP value in the range `0...63`, equivalent to `--dscp`.
+    /// Values outside this range fail with ``IperfError/IEBADDSCP``.
     public var dscp: Int?
     /// The full IP type-of-service byte in the range `0...255`, equivalent to `--tos`.
     ///

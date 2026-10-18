@@ -88,7 +88,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let executable = directory.appendingPathComponent("iperf3")
-        try "#!/bin/sh\necho 'iperf 3.22 (cJSON 1.7.15)'\n".write(
+        try "#!/bin/sh\necho 'iperf 3.21 (cJSON 1.7.15)'\n".write(
             to: executable,
             atomically: true,
             encoding: .utf8
@@ -98,7 +98,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         XCTAssertThrowsError(try TestTools(iperf3Candidates: [executable.path])) { error in
             XCTAssertEqual(
                 error.localizedDescription,
-                "CLI interoperability requires iperf 3.21, but \(executable.path) reports: iperf 3.22 (cJSON 1.7.15)"
+                "CLI interoperability requires iperf 3.22, but \(executable.path) reports: iperf 3.21 (cJSON 1.7.15)"
             )
         }
     }
@@ -157,6 +157,10 @@ final class IperfCLIIntegrationTests: XCTestCase {
         typealias Mutation = (inout IperfConfiguration) -> Void
         let tools = try TestTools()
         let testCases: [(String, String, Mutation, IperfError)] = [
+            ("-P", "0", { $0.numStreams = 0 }, .IENUMSTREAMS),
+            ("-w", "-1", { $0.socketBufferSize = -1 }, .IEBUFSIZE),
+            ("-M", "-1", { $0.mss = -1 }, .IEMSS),
+            ("--dscp", "64", { $0.dscp = 64 }, .IEBADDSCP),
             ("-P", "129", { $0.numStreams = 129 }, .IENUMSTREAMS),
             ("-w", "536870913", { $0.socketBufferSize = 536_870_913 }, .IEBUFSIZE),
             ("-M", "32768", { $0.mss = 32_768 }, .IEMSS),
