@@ -91,14 +91,19 @@ iperf features such as GSO/GRO require a Linux test runner.
 When a test starts a server or subprocess, use a random local port and clean it
 up with XCTest teardown.
 
-Confirm it started before continuing, rather than sleeping a fixed interval. A
-helper that hands out a free port has already released it, so the server can
-lose the port and exit; a test that assumes otherwise proceeds without a peer
-and fails much later as something else, naming neither the cause nor the place.
-`TestTools.settleServer` performs this check — reuse it rather than adding
-another sleep. It deliberately confirms the process is alive rather than probing
-the port: connecting would consume the one client a `-1` server will serve, and
-binding could take the port from a server that has not claimed it yet.
+Confirm it is listening before connecting, rather than sleeping a fixed
+interval. A helper that hands out a free port has already released it, so the
+server can lose the port and exit; a test that assumes otherwise proceeds
+without a peer and fails much later as something else, naming neither the cause
+nor the place. Start CLI servers with `startCLIServer` in
+`IperfCLIIntegrationTests.swift` rather than adding another sleep: it waits
+until lsof shows the server's listener, starts the server again on another port
+when it could not listen, and fails with the server's output otherwise. Before
+a persistent server's next client, call `waitUntilListening()` again — the
+server replaces its listener after every run. The helper observes the listener
+rather than probing the port: connecting would consume the one client a `-1`
+server will serve, and binding could take the port from a server that has not
+claimed it yet.
 
 Do not commit private keys, passwords, logs, or machine-specific test fixtures.
 
