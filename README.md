@@ -302,7 +302,7 @@ remain higher priority than same-role credential completeness.
 | `username` | `--username` | Authenticated Client | Must be nonempty; Server use fails with `IECLIENTONLY` |
 | `password` | `IPERF3_PASSWORD` / prompt replacement | Authenticated Client | Must be nonempty and is supplied directly by the host app; Server use fails with `IECLIENTONLY` |
 | `publicKey` | `--rsa-public-key-path` content | Authenticated Client | Must be a decodable Base64-encoded PEM public key, not a file path; invalid or incomplete Client credentials fail with `IESETCLIENTAUTH`, while Server use fails with `IECLIENTONLY` |
-| `privateKey` | `--rsa-private-key-path` content | Authenticated Server | Must be a decodable Base64-encoded unencrypted PEM private key; invalid or incomplete Server credentials fail with `IESETSERVERAUTH`, while Client use fails with `IESERVERONLY` |
+| `privateKey` | `--rsa-private-key-path` content | Authenticated Server | Must be a decodable Base64-encoded unencrypted PEM private key, not a file path; invalid or incomplete Server credentials fail with `IESETSERVERAUTH`, while Client use fails with `IESERVERONLY` |
 | `authorizedUsers` | `--authorized-users-path` extension | Authenticated Server | Must be nonempty `username,sha256` content, not a file path, because the wrapper bypasses the CLI parser that would open one; Client use fails with `IESERVERONLY` |
 | `timeSkewThreshold` | `--time-skew-threshold` | Authenticated Server | Defaults to `10` seconds and must be positive; an explicit Client assignment fails with `IESERVERONLY` |
 
@@ -361,6 +361,12 @@ Authentication follows iperf3's official RSA scheme:
 - Keep `usePkcs1Padding` disabled to use OAEP, the iperf3 default since 3.17.
   Enable legacy PKCS#1 v1.5 padding only when interoperability requires it.
 - Keep client and server clocks within `timeSkewThreshold` seconds.
+
+Both RSA key properties accept Base64 of the PEM **text content**, never a file
+path or Base64 of a path. The wrapper parses the text in memory, so callers do
+not need key files. The private key stays on the server; this input format does
+not mean sending the private key over the network. The upstream CLI's explicit
+`--rsa-*-key-path` options retain their file-based behavior.
 
 See the official manual's
 [authentication examples](https://software.es.net/iperf/invoking.html#examples)

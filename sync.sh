@@ -132,6 +132,10 @@ test ! -e "$STAGING_PATH/include/iperf_openssl.h"
 grep -Fq 'iperf_openssl_version_major' "$STAGING_PATH/custom.c"
 grep -Fq '#define HAVE_SSL 1' "$STAGING_PATH/include/iperf_config.h"
 grep -Fq 'iperf_set_test_use_pkcs1_padding' "$STAGING_PATH/iperf_api.c"
+# Swift passes Base64(PEM text), unlike the CLI's explicit file-path options.
+# Fail before replacing generated sources if an upstream sync loses that route.
+grep -Fq 'ipt->settings->client_rsa_pubkey = load_pubkey_from_base64(client_rsa_pubkey_base64);' "$STAGING_PATH/iperf_api.c"
+grep -Fq 'ipt->server_rsa_private_key = load_privkey_from_base64(server_rsa_privkey_base64);' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'free(test->server_authorized_users)' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'iperf_set_test_server_authorized_users(test, optarg)' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'if (!test->server_rsa_private_key && !test->server_authorized_users)' "$STAGING_PATH/iperf_api.c"

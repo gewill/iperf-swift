@@ -10,10 +10,16 @@
 上游 RSA 缓冲区与 Base64 长度修复针对旧实现。本项目已改用 EVP 查询输出长度、
 严格校验 Base64 字母表和 padding、检查失败返回并清空输出。升级保留这套实现，
 `iperf_auth.c` 相对基线只更新上游版权年份，避免重新引入旧 RSA API 或放宽校验。
-密钥与 authorized-users 仍采用 content-only API；不恢复路径读取。
+`IperfConfiguration.publicKey` 与 `privateKey` 必须继续接收 **PEM 文本内容的
+Base64 字符串**，不能改成文件路径，也不接受 Base64 编码的路径。两者均从内存
+解析；私钥留在服务端，不通过网络发送。`authorizedUsers` 也保持内容输入。
+内存解析的安全修复保存在同步补丁中，`sync.sh` 在替换源码前检查两个 setter 仍调用
+`load_*key_from_base64`；上游 CLI 明确带 `-path` 的选项继续读文件。
 
 认证兼容性继续通过 CLI 双向互操作及 OAEP / PKCS#1 v1.5 测试约束。ASan 检查
 精确容量与超限输入，Swift 测试检查截断、篡改、错误密钥后不产生凭据。
+互操作测试删除 Swift 一端的密钥源文件后再认证；另有回归测试用真实有效的
+密钥文件，确认 Swift 预检和 C setter 都拒绝路径输入。
 
 ## 合并边界
 
