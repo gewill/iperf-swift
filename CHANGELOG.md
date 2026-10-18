@@ -9,6 +9,19 @@ package release number.
 
 ## [Unreleased]
 
+### Fixed
+
+- Internal: CLI interoperability tests wait until each `iperf3` server is
+  listening instead of sleeping, and start it again on another port when it
+  cannot listen. Three concurrent runners once connected after a fixed 0.3
+  seconds and one found no server. `freePort()` also handed out ports that only
+  looked free: it bound `127.0.0.1`, which a socket on another address does not
+  refuse, although another user's socket there makes the server's wildcard bind
+  fail with "Address already in use", and a UDP socket there takes a UDP run's
+  datagrams. It now also binds both wildcard addresses for TCP and UDP. The
+  listener is read with lsof, because connecting would consume the one client a
+  `-1` server serves.
+
 ## [3.22.0] - 2026-10-18
 
 The iperf3 3.22 engine release. IperfSwift now embeds official iperf3 3.22 and
