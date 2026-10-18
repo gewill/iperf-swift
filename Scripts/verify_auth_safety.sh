@@ -4,7 +4,8 @@
 set -eu
 
 repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-framework="$repo_root/.build/artifacts/openssl-spm/libssl/OpenSSL.Package.xcframework/macos-arm64_x86_64"
+build_path="${SWIFT_BUILD_PATH:-$repo_root/.build}"
+framework="$build_path/artifacts/openssl-spm/libssl/OpenSSL.Package.xcframework/macos-arm64_x86_64"
 if [ ! -d "$framework/libssl.framework" ]; then
     echo "Resolve package dependencies first: swift package resolve" >&2
     exit 1
@@ -49,6 +50,27 @@ int main(void)
     assert(output == NULL);
 
     for (int padding = 0; padding <= 1; ++padding) {
+        /* OAEP uses the EVP default SHA-1; PKCS#1 v1.5 has 11 overhead bytes.
+         * Prove exact capacity and the first rejected byte for both formats. */
+        size_t capacity = EVP_PKEY_size(key) - (padding ? 11 : 42);
+        char boundary[257];
+        memset(boundary, 'b', capacity);
+        boundary[capacity] = '\0';
+        unsigned char *ciphertext = NULL, *plaintext = NULL;
+        int cipher_length = encrypt_rsa_message(boundary, key, &ciphertext, padding);
+        assert(cipher_length == EVP_PKEY_size(key));
+        assert(decrypt_rsa_message(ciphertext, cipher_length, key, &plaintext, padding) == capacity);
+        assert(memcmp(boundary, plaintext, capacity + 1) == 0);
+        OPENSSL_free(plaintext);
+        OPENSSL_free(ciphertext);
+        ciphertext = NULL;
+        boundary[capacity] = 'b';
+        boundary[capacity + 1] = '\0';
+        assert(encrypt_rsa_message(boundary, key, &ciphertext, padding) == 0);
+        assert(ciphertext == NULL);
+        assert(decrypt_rsa_message(oversized, sizeof(oversized), key, &plaintext, padding) == 0);
+        assert(plaintext == NULL);
+
         char *token = NULL, *username = NULL, *password = NULL;
         time_t timestamp = 0;
         assert(encode_auth_setting("audit", "password", key, &token, padding) == 0);
@@ -72,7 +94,7 @@ int main(void)
         free(encoded);
         free(decoded);
     }
-    const char *invalid[] = { "", "A", "====", "AA=A", "AAAA=", "AA A", "AAAA!AAA" };
+    const char *invalid[] = { "", "A", "=", "==", "===", "====", "AA=A", "AAAA=", "AA A", "AAAA!AAA" };
     for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
         unsigned char *decoded = NULL;
         size_t decoded_length = 42;

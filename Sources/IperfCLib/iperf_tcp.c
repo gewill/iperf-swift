@@ -384,6 +384,14 @@ iperf_tcp_listen(struct iperf_test *test)
 	return -1;
     }
 
+    /* Set common socket options */
+    if (iperf_common_sockopts(test, s) < 0) {
+        saved_errno = errno;
+        iperf_close_test_listener_socket(test, s);
+        errno = saved_errno;
+        return -1;
+    }
+
     if (test->json_output) {
 	cJSON_AddNumberToObject(test->json_start, "sock_bufsize", test->settings->socket_bufsize);
 	cJSON_AddNumberToObject(test->json_start, "sndbuf_actual", sndbuf_actual);
@@ -602,9 +610,16 @@ iperf_tcp_connect(struct iperf_test *test)
     }
 
     /* Set common socket options */
-    iperf_common_sockopts(test, s);
+    if (iperf_common_sockopts(test, s) < 0) {
+        saved_errno = errno;
+	close(s);
+	freeaddrinfo(server_res);
+	errno = saved_errno;
+        return -1;
+    }
 
-    if (connect(s, (struct sockaddr *) server_res->ai_addr, server_res->ai_addrlen) < 0 && errno != EINPROGRESS) {
+    if (timeout_connect(s, (struct sockaddr *) server_res->ai_addr, server_res->ai_addrlen,
+                        DEFAULT_NO_MSG_RCVD_TIMEOUT) < 0 && errno != EINPROGRESS) {
 	saved_errno = errno;
 	close(s);
 	freeaddrinfo(server_res);

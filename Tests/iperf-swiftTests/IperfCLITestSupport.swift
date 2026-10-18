@@ -6,7 +6,7 @@ struct UnsupportedIperfVersionError: LocalizedError {
     let reportedVersion: String
 
     var errorDescription: String? {
-        "CLI interoperability requires iperf 3.21, but \(executable) reports: \(reportedVersion)"
+        "CLI interoperability requires iperf 3.22, but \(executable) reports: \(reportedVersion)"
     }
 }
 
@@ -24,7 +24,7 @@ enum IperfCLITestSupport {
 
         let version = try version(of: executable)
         guard version.range(
-            of: #"^iperf 3\.21(?:\s|\()"#,
+            of: #"^iperf 3\.22(?:\s|\()"#,
             options: .regularExpression
         ) != nil else {
             throw UnsupportedIperfVersionError(

@@ -8,8 +8,8 @@ case "$prefix" in
     *) echo "Install prefix must be an absolute path" >&2; exit 1 ;;
 esac
 
-tag="3.21"
-revision="d39cf41526626b4e5a130f115d931cd6cbdffc19"
+tag="3.22"
+revision="926bd905501b792bd082d2200d1d1a84aa543e3a"
 openssl_prefix="$(brew --prefix openssl@3)"
 test -x "$openssl_prefix/bin/openssl"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/iperf-test-cli.XXXXXX")"
@@ -34,8 +34,8 @@ git -C "$work_dir" checkout --quiet --detach "$revision"
 
 version_output="$("$prefix/bin/iperf3" --version 2>&1)"
 first_line="${version_output%%$'\n'*}"
-if [[ ! "$first_line" =~ ^iperf\ 3\.21([[:space:]]|\() ]]; then
-    echo "Expected iperf 3.21, got: $first_line" >&2
+if [[ ! "$first_line" =~ ^iperf\ 3\.22([[:space:]]|\() ]]; then
+    echo "Expected iperf 3.22, got: $first_line" >&2
     exit 1
 fi
 if [[ "$version_output" != *authentication* ]]; then
