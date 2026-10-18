@@ -57,6 +57,13 @@
  */
 int readentropy(void *out, size_t outsize)
 {
+#if defined(__APPLE__)
+    /* The engine runs inside a host app. Opening a descriptor per stream can
+     * hit EMFILE mid-test, and iperf_errexit() would then terminate the host.
+     * arc4random_buf() uses the kernel CSPRNG without a descriptor or failure. */
+    arc4random_buf(out, outsize);
+    return 0;
+#else
     FILE *frandom;
     static const char rndfile[] = "/dev/urandom";
     int is_eof = 0;
@@ -78,6 +85,7 @@ int readentropy(void *out, size_t outsize)
     }
     fclose(frandom);
     return 0;
+#endif
 }
 
 

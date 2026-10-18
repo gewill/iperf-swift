@@ -26,13 +26,22 @@ package release number.
   UDP zero-stride rejection, end-of-test timer cancellation, bidirectional TCP
   connection ordering, FD cleanup, and server socket option handling. Route new
   failure paths through the existing TCP listener and UDP socket cleanup.
+- Keep engine failures inside the run instead of the host process. Stream and
+  cookie entropy no longer opens a descriptor per call, so running out of
+  descriptors fails the run instead of exiting the app. Watchdog and server
+  teardown shut TCP streams down before joining their workers, so a zerocopy
+  sender blocked in `sendfile()` no longer hangs the engine; streams already
+  released at test end are left alone. A stream socket is closed when stream
+  setup fails after `connect()` or `accept()`.
 
 ### Added
 
 - Authentication tests for exact RSA capacity, malformed padding, truncated or
   modified tokens, and wrong keys. Add an AddressSanitizer engine harness for
   remote parameters, watchdog ownership, invalid UDP stride, socket/FD cleanup,
-  first UDP reply TOS, and parallel bidirectional TCP timer cancellation.
+  first UDP reply TOS, parallel bidirectional TCP timer cancellation, descriptor
+  exhaustion, blocked zerocopy teardown, released stream descriptors, and
+  stream-setup socket cleanup.
   Both standalone ASan checks now run in CI.
 
 ## [3.21.19] - 2026-10-13

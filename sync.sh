@@ -140,6 +140,13 @@ grep -Fq 'free(test->server_authorized_users)' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'iperf_set_test_server_authorized_users(test, optarg)' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'if (!test->server_rsa_private_key && !test->server_authorized_users)' "$STAGING_PATH/iperf_api.c"
 test "$(grep -Fc 'iperf_set_error(IEAUTHTEST)' "$STAGING_PATH/iperf_api.c")" -eq 4
+# The engine runs inside a host app: never exit it, hang its teardown, or leak a
+# stream socket. See docs/upstream-3.22-audit.md before dropping these.
+grep -Fq 'arc4random_buf(out, outsize);' "$STAGING_PATH/iperf_util.c"
+test "$(grep -Fc 'stop_stream_worker(test, sp);' "$STAGING_PATH/iperf_server_api.c")" -eq 2
+test "$(grep -Fc 'Released: teardown must not touch this descriptor number.' "$STAGING_PATH/iperf_server_api.c")" -eq 2
+grep -Fq 's never joined test->streams, so cleanup_server() cannot close it.' "$STAGING_PATH/iperf_server_api.c"
+grep -Fq 's never joined test->streams, so iperf_client_end() cannot close it.' "$STAGING_PATH/iperf_client_api.c"
 
 rm -rf "$SRC_PATH"
 mv "$STAGING_PATH" "$SRC_PATH"

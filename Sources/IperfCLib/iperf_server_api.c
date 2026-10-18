@@ -284,6 +284,8 @@ iperf_handle_message_server(struct iperf_test *test)
             SLIST_FOREACH(sp, &test->streams, streams) {
                 FD_CLR(sp->socket, &test->read_set);
                 FD_CLR(sp->socket, &test->write_set);
+                /* Released: teardown must not touch this descriptor number. */
+                __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
                 close(sp->socket);
             }
             test->reporter_callback(test);
@@ -314,6 +316,8 @@ iperf_handle_message_server(struct iperf_test *test)
             SLIST_FOREACH(sp, &test->streams, streams) {
                 FD_CLR(sp->socket, &test->read_set);
                 FD_CLR(sp->socket, &test->write_set);
+                /* Released: teardown must not touch this descriptor number. */
+                __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
                 close(sp->socket);
             }
             iperf_set_test_state(test, IPERF_DONE);
@@ -326,12 +330,31 @@ iperf_handle_message_server(struct iperf_test *test)
     return 0;
 }
 
+/* Tell a stream's worker to stop before it is joined. A zerocopy sender blocked
+ * in Darwin's sendfile() survives pthread_cancel(): the call is interrupted at
+ * most once, and if part of the block was sent the send loop re-enters it and
+ * blocks for good. Shutting the TCP stream down makes it return while the
+ * descriptor stays reserved until it is closed. A stream already marked done
+ * was released by TEST_END or CLIENT_TERMINATE, whose close() woke its worker;
+ * that number may belong to someone else by now. UDP is left alone: its workers
+ * block only in cancellable calls, and without SO_NOSIGPIPE a send after
+ * shutdown would raise SIGPIPE in the host. */
+static void
+stop_stream_worker(struct iperf_test *test, struct iperf_stream *sp)
+{
+    if (__atomic_exchange_n(&sp->done, 1, __ATOMIC_SEQ_CST))
+        return;
+    if (test->protocol->id == Ptcp && sp->socket >= 0)
+        shutdown(sp->socket, SHUT_RDWR);
+}
+
 static void
 server_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
 {
     struct iperf_test *test = client_data.p;
     struct iperf_stream *sp;
     int32_t err;
+    int i_errno_save;
 
     test->timer = NULL;
     if (__atomic_load_n(&test->done, __ATOMIC_SEQ_CST))
@@ -348,14 +371,16 @@ server_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
     }
     /* Cancel and join per-stream worker threads BEFORE freeing any stream,
      * mirroring cleanup_server(), so no live worker dereferences a freed sp. */
+    i_errno_save = iperf_get_error();
     SLIST_FOREACH(sp, &test->streams, streams) {
-        __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
+        stop_stream_worker(test, sp);
         if (sp->thread_created == 1) {
             if (pthread_cancel(sp->thr) == 0)
                 pthread_join(sp->thr, NULL);
             sp->thread_created = 0;
         }
     }
+    iperf_set_error(i_errno_save);
     /* Free streams */
     while (!SLIST_EMPTY(&test->streams)) {
         sp = SLIST_FIRST(&test->streams);
@@ -499,7 +524,7 @@ cleanup_server(struct iperf_test *test)
     int i_errno_save = iperf_get_error();
     SLIST_FOREACH(sp, &test->streams, streams) {
         int rc;
-        __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
+        stop_stream_worker(test, sp);
         if (sp->thread_created == 1) {
             rc = pthread_cancel(sp->thr);
             if (rc != 0 && rc != ESRCH) {
@@ -901,6 +926,10 @@ iperf_run_server(struct iperf_test *test)
                         if (flag != -1) {
                             sp = iperf_new_stream(test, s, flag);
                             if (!sp) {
+                                /* s never joined test->streams, so cleanup_server() cannot close it. */
+                                int close_errno = errno;
+                                close(s);
+                                errno = close_errno;
                                 cleanup_server(test);
                                 return -1;
                             }

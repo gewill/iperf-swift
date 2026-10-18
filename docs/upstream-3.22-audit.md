@@ -31,12 +31,39 @@ Base64 字符串**，不能改成文件路径，也不接受 Base64 编码的路
 - Swift 非法 DSCP 从 `IEBADTOS` 改为上游 `IEBADDSCP`；TOS 仍使用 `IEBADTOS`。
   新增两个 C 错误码映射。结果模型、回调生命周期、最低系统版本与 OpenSSL 依赖不变。
 
+## 嵌入进程约束
+
+引擎跑在宿主 App 进程里，任何失败都只能结束本次测试，不能终止或卡死宿主。为此在
+上游 3.22 之外保留三处补丁：
+
+- `readentropy()` 在 Apple 平台改用 `arc4random_buf()`。3.22 改为每次调用都打开
+  `/dev/urandom`，失败时 `iperf_errexit()` 会 `exit(1)`。每个流因此多占一个临时 FD，
+  FD 耗尽时宿主进程会被直接终止，而不是得到 `IECREATESTREAM`。改回缓存句柄同样能
+  避免逐流 FD，但首次打开失败时仍会退出；`arc4random_buf()` 既不占 FD 也不会失败。
+- 看门狗和 `cleanup_server()` 在 cancel/join 工作线程之前先 `shutdown()` TCP 流。
+  Darwin 上 `pthread_cancel()` 最多打断一次阻塞的 `sendfile()`（zerocopy 发送）；
+  如果这次调用已经发出部分数据，`Nsendfile()` 会再次进入并永久阻塞，join 随之挂住，
+  `stop()` 也无法恢复。`shutdown()` 能唤醒阻塞调用，FD 编号则保留到 join 之后才关闭，
+  不会被其他代码复用。UDP 流不做 shutdown：它的阻塞调用都能被取消，而 UDP socket 没有
+  `SO_NOSIGPIPE`，shutdown 之后再 send 会让宿主进程收到 SIGPIPE。上游的 TEST_END 和
+  CLIENT_TERMINATE 处理会先关闭全部流 socket，之后才拆除线程；这两处关闭时把流标为
+  done，拆除时跳过这些流，因为 `close()` 已唤醒线程，而该编号可能已被宿主复用。
+- `iperf_new_stream()` 失败时，服务端和客户端都由调用方关闭这个尚未进入
+  `test->streams` 的 socket，否则每次失败都会留下一个半开连接。
+
 ## 验证边界
 
 `Scripts/verify_engine_regressions.sh` 将真实 C 实现包含进测试翻译单元，访问私有
 参数解析和 watchdog 路径，不增加生产测试 API。故障注入只用于确定性触发 socket
 选项失败和无效 UDP stride。CLI 互操作、定时器和 UDP 首包 TOS 使用真实本地 socket。
 子进程设有超时，服务器监听观察不消耗 one-off 连接。
+
+上面三项嵌入约束都有回归检查，撤掉其中任一处修复都会让对应检查失败：
+降低 `RLIMIT_NOFILE` 后只留一个 FD 创建流和 cookie；用大于回环缓冲区的块让
+zerocopy 发送线程停在 `sendfile()` 中途，分别经看门狗和 `cleanup_server()` 拆除；
+TEST_END、CLIENT_TERMINATE 释放的编号被复用后，停止线程不得对其 shutdown；
+客户端建流失败后对端必须读到 EOF；嵌入式服务端在奇、偶两种 FD 预算下接受 CLI
+客户端，本次测试必须以错误结束，进程正常退出且不残留 FD。
 
 Linux GSO/GRO 和零拷贝平台能力随上游源码同步；Apple 构建与本地 socket 测试不能
 替代 Linux 运行验证。具体命令、结果及源码提交记录在升级 PR，本文只保存长期决策。

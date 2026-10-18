@@ -428,9 +428,12 @@ Run the standalone C checks after resolving/building the package:
 The first two use AddressSanitizer. Authentication checks cover both RSA padding
 modes, exact plaintext capacity, malformed Base64 and failure cleanup. Engine
 checks cover remote parameter bounds, UDP stride validation, watchdog worker
-ownership, socket/FD cleanup, first UDP reply TOS, and parallel bidirectional TCP
-with timer cancellation. Set `SWIFT_BUILD_PATH` when using a SwiftPM scratch
-path instead of `.build`.
+ownership, socket/FD cleanup, first UDP reply TOS, parallel bidirectional TCP
+with timer cancellation, descriptor exhaustion, teardown of a zerocopy sender
+blocked in `sendfile()`, descriptors released at test end, and stream sockets
+after failed stream setup. The
+engine checks also run the pinned `iperf3` CLI, found through `IPERF3_PATH`.
+Set `SWIFT_BUILD_PATH` when using a SwiftPM scratch path instead of `.build`.
 
 The integration suite starts local Swift or CLI peers, creates temporary RSA
 credentials, and allocates random local ports. It covers TCP and UDP

@@ -2,6 +2,7 @@
  * protocol parsing is exercised without exporting test-only library APIs. */
 #include "iperf_api.c"
 #include <assert.h>
+#include <sys/resource.h>
 
 void verify_remote_parameters(void)
 {
@@ -71,5 +72,36 @@ void verify_stream_failure_cleanup(void)
     unsigned char entropy[32];
     assert(readentropy(entropy, sizeof(entropy)) == 0);
     assert(open_descriptor_count() == baseline);
+    iperf_free_test(test);
+}
+
+/* Stream setup spends the last free descriptor on its buffer file. Payload and
+ * cookie entropy must not need another one: running out used to exit the host
+ * process from readentropy() instead of failing the run. */
+void verify_entropy_under_descriptor_pressure(void)
+{
+    struct iperf_test *test = iperf_new_test();
+    assert(test && iperf_defaults(test) == 0);
+    int pair[2];
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
+    struct rlimit original, limited;
+    assert(getrlimit(RLIMIT_NOFILE, &original) == 0);
+    limited = original;
+    if (limited.rlim_cur > 512)
+        limited.rlim_cur = 512;
+    assert(setrlimit(RLIMIT_NOFILE, &limited) == 0);
+    int fillers[512], count = 0, fd;
+    while (count < 512 && (fd = open("/dev/null", O_RDONLY)) >= 0)
+        fillers[count++] = fd;
+    assert(count > 0 && errno == EMFILE);
+    char cookie[COOKIE_SIZE];
+    make_cookie(cookie);
+    close(fillers[--count]);
+    assert(iperf_new_stream(test, pair[0], 1) != NULL);
+    while (count > 0)
+        close(fillers[--count]);
+    (void)setrlimit(RLIMIT_NOFILE, &original);
+    close(pair[0]);
+    close(pair[1]);
     iperf_free_test(test);
 }

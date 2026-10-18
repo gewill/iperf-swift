@@ -166,8 +166,13 @@ iperf_create_streams(struct iperf_test *test, int sender)
 #endif /* HAVE_TCP_CONGESTION */
 
         sp = iperf_new_stream(test, s, sender);
-        if (!sp)
+        if (!sp) {
+            /* s never joined test->streams, so iperf_client_end() cannot close it. */
+            int close_errno = errno;
+            close(s);
+            errno = close_errno;
             return -1;
+        }
 
         /* Perform the new stream callback */
         if (test->on_new_stream)

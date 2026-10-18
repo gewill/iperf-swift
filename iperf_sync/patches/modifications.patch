@@ -2531,7 +2531,22 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
  		    return -1;
  		}
  	        if (test->congestion_used) {
-@@ -183,7 +183,7 @@
+@@ -166,8 +166,13 @@
+ #endif /* HAVE_TCP_CONGESTION */
+ 
+         sp = iperf_new_stream(test, s, sender);
+-        if (!sp)
++        if (!sp) {
++            /* s never joined test->streams, so iperf_client_end() cannot close it. */
++            int close_errno = errno;
++            close(s);
++            errno = close_errno;
+             return -1;
++        }
+ 
+         /* Perform the new stream callback */
+         if (test->on_new_stream)
+@@ -183,7 +188,7 @@
      struct iperf_test *test = client_data.p;
  
      test->timer = NULL;
@@ -2540,7 +2555,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
  }
  
  static void
-@@ -191,7 +191,7 @@
+@@ -191,7 +196,7 @@
  {
      struct iperf_test *test = client_data.p;
  
@@ -2549,7 +2564,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
          return;
      if (test->stats_callback)
  	test->stats_callback(test);
-@@ -202,7 +202,7 @@
+@@ -202,7 +207,7 @@
  {
      struct iperf_test *test = client_data.p;
  
@@ -2558,7 +2573,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
          return;
      if (test->reporter_callback)
  	test->reporter_callback(test);
-@@ -216,35 +216,35 @@
+@@ -216,35 +221,35 @@
      if (NULL == test)
      {
          iperf_err(NULL, "No test\n");
@@ -2600,7 +2615,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
              return -1;
  	}
      }
-@@ -285,14 +285,14 @@
+@@ -285,14 +290,14 @@
          test->omitting = 0;
      } else {
  	if (iperf_time_now(&now) < 0) {
@@ -2617,7 +2632,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
  	    return -1;
  	}
      }
-@@ -308,30 +308,33 @@
+@@ -308,30 +313,33 @@
      if (NULL == test)
      {
          iperf_err(NULL, "No test\n");
@@ -2663,7 +2678,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
          case PARAM_EXCHANGE:
              if (iperf_exchange_parameters(test) < 0)
                  return -1;
-@@ -374,40 +377,40 @@
+@@ -374,40 +382,40 @@
          case IPERF_DONE:
              break;
          case SERVER_TERMINATE:
@@ -2715,7 +2730,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
              return -1;
      }
  
-@@ -438,14 +441,15 @@
+@@ -438,14 +446,15 @@
  	// Create the control channel using an ephemeral port
  	test->ctrl_sck = netdial(test->settings->domain, Ptcp, test->bind_address, test->bind_dev, 0, test->server_hostname, test->server_port, test->settings->connect_timeout);
      if (test->ctrl_sck < 0) {
@@ -2733,7 +2748,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
          return -1;
      }
  
-@@ -458,14 +462,14 @@
+@@ -458,14 +467,14 @@
  #if defined(HAVE_TCP_USER_TIMEOUT)
      if ((opt = test->settings->snd_timeout)) {
          if (setsockopt(test->ctrl_sck, IPPROTO_TCP, TCP_USER_TIMEOUT, &opt, sizeof(opt)) < 0) {
@@ -2750,7 +2765,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
          return -1;
      }
  
-@@ -577,7 +581,7 @@
+@@ -577,7 +586,7 @@
      test->reporter_callback(test);
  
      /* Send response only if no error in server */
@@ -2759,7 +2774,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
          if (iperf_set_send_state(test, IPERF_DONE) != 0)
              return -1;
      }
-@@ -653,14 +657,14 @@
+@@ -653,14 +662,14 @@
      last_receive_blocks = 0;
  
      startup = 1;
@@ -2776,7 +2791,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
              timeout_us = -1;
              if (timeout != NULL) {
                  used_timeout.tv_sec = timeout->tv_sec;
-@@ -685,16 +689,16 @@
+@@ -685,16 +694,16 @@
  
      result = select(test->max_fd + 1,
                      &read_set,
@@ -2796,7 +2811,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
              /*
               * If nothing was received in non-reverse running state
               * then probably something got stuck - either client,
-@@ -705,8 +709,8 @@
+@@ -705,8 +714,8 @@
                  t_usecs = iperf_time_in_usecs(&diff_time);
                  if (t_usecs > rcv_timeout_us) {
                      /* Idle timeout if no new blocks received */
@@ -2807,7 +2822,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
                          goto cleanup_and_fail;
                      }
                  }
-@@ -715,8 +719,8 @@
+@@ -715,8 +724,8 @@
          }
  
          /* See if the test is making progress */
@@ -2818,7 +2833,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
              last_receive_time = now;
          }
  
-@@ -729,7 +733,7 @@
+@@ -729,7 +738,7 @@
  	    }
  	}
  
@@ -2827,7 +2842,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
  
  	    /* Is this our first time really running? */
  	    if (startup) {
-@@ -738,13 +742,13 @@
+@@ -738,13 +747,13 @@
                  /* Create and spin up threads */
                  pthread_attr_t attr;
                  if (pthread_attr_init(&attr) != 0) {
@@ -2843,7 +2858,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
                          goto cleanup_and_fail;
                      }
                      sp->thread_created = 1;
-@@ -756,7 +760,7 @@
+@@ -756,7 +765,7 @@
                      iperf_printf(test, "All threads created\n");
                  }
                  if (pthread_attr_destroy(&attr) != 0) {
@@ -2852,7 +2867,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
                      goto cleanup_and_fail;
                  }
  
-@@ -775,11 +779,11 @@
+@@ -775,11 +784,11 @@
  	     * being the receiver.
  	     */
  	    if ((!test->omitting) &&
@@ -2869,7 +2884,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
  
                  /*
                   * Cancel the periodic timers.  As the timers are not re-set in this stage their expiration time
-@@ -799,20 +803,20 @@
+@@ -799,20 +808,20 @@
                  SLIST_FOREACH(sp, &test->streams, streams) {
                      if (sp->sender) {
                          int rc;
@@ -2895,7 +2910,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
                                  goto cleanup_and_fail;
                              }
                              if (test->debug_level >= DEBUG_LEVEL_INFO) {
-@@ -827,7 +831,7 @@
+@@ -827,7 +836,7 @@
                  }
  
  		/* Yes, done!  Send TEST_END. */
@@ -2904,7 +2919,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
  		cpu_util(test->cpu_util);
  		test->stats_callback(test);
  		if (iperf_set_send_state(test, TEST_END) != 0)
-@@ -840,20 +844,20 @@
+@@ -840,20 +849,20 @@
      SLIST_FOREACH(sp, &test->streams, streams) {
          if (!sp->sender) {
              int rc;
@@ -2930,7 +2945,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
                      goto cleanup_and_fail;
                  }
                  if (test->debug_level >= DEBUG_LEVEL_INFO) {
-@@ -881,25 +885,25 @@
+@@ -881,25 +890,25 @@
  
    cleanup_and_fail:
      /* Cancel all outstanding threads */
@@ -2963,7 +2978,7 @@ diff --git a/iperf_client_api.c b/iperf_client_api.c
              }
              if (test->debug_level >= DEBUG_LEVEL_INFO) {
                  iperf_printf(test, "Thread FD %d stopped\n", sp->socket);
-@@ -910,11 +914,11 @@
+@@ -910,11 +919,11 @@
      if (test->debug_level >= DEBUG_LEVEL_INFO) {
          iperf_printf(test, "All threads stopped\n");
      }
@@ -3508,7 +3523,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
              goto error_handling;
          }
          FD_SET(test->ctrl_sck, &test->read_set);
-@@ -242,31 +251,34 @@
+@@ -242,36 +251,41 @@
      struct iperf_stream *sp;
  
      if (test->debug_level >= DEBUG_LEVEL_INFO) {
@@ -3552,7 +3567,14 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
              cpu_util(test->cpu_util);
              test->stats_callback(test);
              SLIST_FOREACH(sp, &test->streams, streams) {
-@@ -287,15 +299,15 @@
+                 FD_CLR(sp->socket, &test->read_set);
+                 FD_CLR(sp->socket, &test->write_set);
++                /* Released: teardown must not touch this descriptor number. */
++                __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
+                 close(sp->socket);
+             }
+             test->reporter_callback(test);
+@@ -287,48 +301,69 @@
          case IPERF_DONE:
              break;
          case CLIENT_TERMINATE:
@@ -3572,7 +3594,13 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
  
              // XXX: Remove this line below!
  	    iperf_err(test, "the client has terminated");
-@@ -307,7 +319,7 @@
+             SLIST_FOREACH(sp, &test->streams, streams) {
+                 FD_CLR(sp->socket, &test->read_set);
+                 FD_CLR(sp->socket, &test->write_set);
++                /* Released: teardown must not touch this descriptor number. */
++                __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
+                 close(sp->socket);
+             }
              iperf_set_test_state(test, IPERF_DONE);
              break;
          default:
@@ -3581,8 +3609,34 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
              return -1;
      }
  
-@@ -322,13 +334,13 @@
+     return 0;
+ }
+ 
++/* Tell a stream's worker to stop before it is joined. A zerocopy sender blocked
++ * in Darwin's sendfile() survives pthread_cancel(): the call is interrupted at
++ * most once, and if part of the block was sent the send loop re-enters it and
++ * blocks for good. Shutting the TCP stream down makes it return while the
++ * descriptor stays reserved until it is closed. A stream already marked done
++ * was released by TEST_END or CLIENT_TERMINATE, whose close() woke its worker;
++ * that number may belong to someone else by now. UDP is left alone: its workers
++ * block only in cancellable calls, and without SO_NOSIGPIPE a send after
++ * shutdown would raise SIGPIPE in the host. */
++static void
++stop_stream_worker(struct iperf_test *test, struct iperf_stream *sp)
++{
++    if (__atomic_exchange_n(&sp->done, 1, __ATOMIC_SEQ_CST))
++        return;
++    if (test->protocol->id == Ptcp && sp->socket >= 0)
++        shutdown(sp->socket, SHUT_RDWR);
++}
++
+ static void
+ server_timer_proc(TimerClientData client_data, struct iperf_time *nowP)
+ {
+     struct iperf_test *test = client_data.p;
+     struct iperf_stream *sp;
      int32_t err;
++    int i_errno_save;
  
      test->timer = NULL;
 -    if (test->done)
@@ -3599,16 +3653,25 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
          if (Nwrite(test->ctrl_sck, (char*) &err, sizeof(err), Ptcp) == sizeof(err)) {
              err = 0;
              Nwrite(test->ctrl_sck, (char*) &err, sizeof(err), Ptcp);
-@@ -337,7 +349,7 @@
+@@ -336,14 +371,16 @@
+     }
      /* Cancel and join per-stream worker threads BEFORE freeing any stream,
       * mirroring cleanup_server(), so no live worker dereferences a freed sp. */
++    i_errno_save = iperf_get_error();
      SLIST_FOREACH(sp, &test->streams, streams) {
 -        sp->done = 1;
-+        __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
++        stop_stream_worker(test, sp);
          if (sp->thread_created == 1) {
              if (pthread_cancel(sp->thr) == 0)
                  pthread_join(sp->thr, NULL);
-@@ -363,7 +375,7 @@
+             sp->thread_created = 0;
+         }
+     }
++    iperf_set_error(i_errno_save);
+     /* Free streams */
+     while (!SLIST_EMPTY(&test->streams)) {
+         sp = SLIST_FIRST(&test->streams);
+@@ -363,7 +400,7 @@
  {
      struct iperf_test *test = client_data.p;
  
@@ -3617,7 +3680,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
          return;
      if (test->stats_callback)
  	test->stats_callback(test);
-@@ -374,7 +386,7 @@
+@@ -374,7 +411,7 @@
  {
      struct iperf_test *test = client_data.p;
  
@@ -3626,7 +3689,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
          return;
      if (test->reporter_callback)
  	test->reporter_callback(test);
-@@ -390,16 +402,16 @@
+@@ -390,16 +427,16 @@
      int grace_period = max_rtt * state_transitions;
  
      if (iperf_time_now(&now) < 0) {
@@ -3646,7 +3709,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
              return -1;
          }
      }
-@@ -408,14 +420,14 @@
+@@ -408,14 +445,14 @@
      if (test->stats_interval != 0) {
          test->stats_timer = tmr_create(&now, server_stats_timer_proc, cd, test->stats_interval * SEC_TO_US, 1);
          if (test->stats_timer == NULL) {
@@ -3663,7 +3726,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
              return -1;
  	}
      }
-@@ -451,14 +463,14 @@
+@@ -451,14 +488,14 @@
  	test->omitting = 0;
      } else {
  	if (iperf_time_now(&now) < 0) {
@@ -3680,7 +3743,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
  	    return -1;
  	}
      }
-@@ -473,9 +485,9 @@
+@@ -473,9 +510,9 @@
      int32_t err;
  
      /* Try to send the error code to the client*/
@@ -3692,7 +3755,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
              if (Nwrite(test->ctrl_sck, (char*) &err, sizeof(err), Ptcp) >= 0) {
                  err = htonl(errno);
                  Nwrite(test->ctrl_sck, (char*) &err, sizeof(err), Ptcp);
-@@ -484,22 +496,22 @@
+@@ -484,22 +521,22 @@
      }
  
      /* Cancel outstanding threads */
@@ -3701,7 +3764,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
      SLIST_FOREACH(sp, &test->streams, streams) {
          int rc;
 -        sp->done = 1;
-+        __atomic_store_n(&sp->done, 1, __ATOMIC_SEQ_CST);
++        stop_stream_worker(test, sp);
          if (sp->thread_created == 1) {
              rc = pthread_cancel(sp->thr);
              if (rc != 0 && rc != ESRCH) {
@@ -3721,7 +3784,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
              }
              if (test->debug_level >= DEBUG_LEVEL_INFO) {
                  iperf_printf(test, "Thread FD %d stopped\n", sp->socket);
-@@ -507,7 +519,7 @@
+@@ -507,7 +544,7 @@
              sp->thread_created = 0;
          }
      }
@@ -3730,7 +3793,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
  
      if (test->debug_level >= DEBUG_LEVEL_INFO) {
          iperf_printf(test, "All threads stopped\n");
-@@ -529,10 +541,7 @@
+@@ -529,10 +566,7 @@
          iperf_sync_close_socket(test->ctrl_sck);
          test->ctrl_sck = -1;
      }
@@ -3742,7 +3805,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
      if (test->prot_listener > -1) {     // May remain open if create socket failed
  	close(test->prot_listener);
          test->prot_listener = -1;
-@@ -619,6 +628,10 @@
+@@ -619,6 +653,10 @@
  	cleanup_server(test);
          return -2;
      }
@@ -3753,7 +3816,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
  
      iperf_time_now(&last_receive_time); // Initialize last time something was received
      last_receive_blocks = 0;
-@@ -628,27 +641,27 @@
+@@ -628,27 +666,27 @@
      rec_streams_accepted = 0;
      rcv_timeout_us = (test->settings->rcv_timeout.secs * SEC_TO_US) + test->settings->rcv_timeout.usecs;
  
@@ -3786,7 +3849,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
              return -1;
          }
  
-@@ -663,7 +676,7 @@
+@@ -663,7 +701,7 @@
  	timeout = tmr_timeout(&now);
  
          // Ensure select() will timeout to allow handling error cases that require server restart
@@ -3795,7 +3858,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
              if (timeout == NULL && test->settings->idle_timeout > 0) {
                  used_timeout.tv_sec = test->settings->idle_timeout;
                  used_timeout.tv_usec = 0;
-@@ -687,10 +700,22 @@
+@@ -687,10 +725,22 @@
              timeout = &used_timeout;
          }
  
@@ -3819,7 +3882,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
              return -1;
          } else if (result == 0) {
              /*
-@@ -705,20 +730,14 @@
+@@ -705,20 +755,14 @@
                  t_usecs = iperf_time_in_usecs(&diff_time);
  
                  /* We're in the state where we're still accepting connections */
@@ -3842,7 +3905,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
                          return 2;
                      }
                  }
-@@ -729,9 +748,9 @@
+@@ -729,9 +773,9 @@
                   */
                  else if (test->mode != SENDER && t_usecs > rcv_timeout_us) {
                      /* Idle timeout if no new blocks received */
@@ -3854,7 +3917,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
                          if (iperf_get_verbose(test))
                              iperf_err(test, "Server restart (#%d) during active test due to idle timeout for receiving data",
                                        test->server_forced_no_msg_restarts_count);
-@@ -743,14 +762,14 @@
+@@ -743,14 +787,14 @@
          }
  
          /* See if the test is making progress */
@@ -3872,7 +3935,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
                      if (iperf_accept(test) < 0) {
  			cleanup_server(test);
                          return -1;
-@@ -778,7 +797,7 @@
+@@ -778,7 +822,7 @@
                  FD_CLR(test->ctrl_sck, &read_set);
              }
  
@@ -3881,7 +3944,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
                  if (FD_ISSET(test->prot_listener, &read_set)) {
  
                      if ((s = test->protocol->accept(test)) < 0) {
-@@ -804,7 +823,7 @@
+@@ -804,7 +848,7 @@
                                  close(s);
                                  cleanup_server(test);
                                  errno = saved_errno;
@@ -3890,7 +3953,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
                                  return -1;
                              }
                          }
-@@ -832,7 +851,7 @@
+@@ -832,7 +876,7 @@
  				    close(s);
  				    cleanup_server(test);
  				    errno = saved_errno;
@@ -3899,7 +3962,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
  				    return -1;
  				}
  			    }
-@@ -847,7 +866,7 @@
+@@ -847,7 +891,7 @@
  				close(s);
  				cleanup_server(test);
  				errno = saved_errno;
@@ -3908,7 +3971,18 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
  				return -1;
  			    }
                              /*
-@@ -906,11 +925,10 @@
+@@ -882,6 +926,10 @@
+                         if (flag != -1) {
+                             sp = iperf_new_stream(test, s, flag);
+                             if (!sp) {
++                                /* s never joined test->streams, so cleanup_server() cannot close it. */
++                                int close_errno = errno;
++                                close(s);
++                                errno = close_errno;
+                                 cleanup_server(test);
+                                 return -1;
+                             }
+@@ -906,11 +954,10 @@
                      } else {
                          if (test->no_delay || test->settings->mss || test->settings->socket_bufsize) {
                              FD_CLR(test->listener, &test->read_set);
@@ -3922,7 +3996,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
                                  return -1;
                              }
                              test->listener = s;
-@@ -927,7 +945,7 @@
+@@ -927,7 +974,7 @@
                              iperf_err(test, "Client total requested throughput rate of %" PRIu64 " bps exceeded %" PRIu64 " bps limit",
                                        total_requested_rate, test->settings->bitrate_limit);
  			cleanup_server(test);
@@ -3931,7 +4005,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
  			return -1;
  		    }
  
-@@ -963,13 +981,13 @@
+@@ -963,13 +1010,13 @@
                      /* Create and spin up threads */
                      pthread_attr_t attr;
                      if (pthread_attr_init(&attr) != 0) {
@@ -3947,7 +4021,7 @@ diff --git a/iperf_server_api.c b/iperf_server_api.c
                              cleanup_server(test);
                              return -1;
                          }
-@@ -982,12 +1000,12 @@
+@@ -982,12 +1029,12 @@
                          iperf_printf(test, "All threads created\n");
                      }
                      if (pthread_attr_destroy(&attr) != 0) {
@@ -4677,6 +4751,31 @@ diff --git a/iperf_udp.c b/iperf_udp.c
 +    close(s);
 +    errno = saved_errno;
 +    return rc;
+ }
+ 
+ 
+diff --git a/iperf_util.c b/iperf_util.c
+--- a/iperf_util.c
++++ b/iperf_util.c
+@@ -57,6 +57,13 @@
+  */
+ int readentropy(void *out, size_t outsize)
+ {
++#if defined(__APPLE__)
++    /* The engine runs inside a host app. Opening a descriptor per stream can
++     * hit EMFILE mid-test, and iperf_errexit() would then terminate the host.
++     * arc4random_buf() uses the kernel CSPRNG without a descriptor or failure. */
++    arc4random_buf(out, outsize);
++    return 0;
++#else
+     FILE *frandom;
+     static const char rndfile[] = "/dev/urandom";
+     int is_eof = 0;
+@@ -78,6 +85,7 @@
+     }
+     fclose(frandom);
+     return 0;
++#endif
  }
  
  
