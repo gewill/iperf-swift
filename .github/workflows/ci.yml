@@ -46,8 +46,8 @@ jobs:
       - name: Install test dependencies
         run: |
           brew install openssl@3
-          ./Scripts/install_test_iperf3.sh "$RUNNER_TEMP/iperf3-3.21"
-          echo "IPERF3_PATH=$RUNNER_TEMP/iperf3-3.21/bin/iperf3" >> "$GITHUB_ENV"
+          ./Scripts/install_test_iperf3.sh "$RUNNER_TEMP/iperf3-3.22"
+          echo "IPERF3_PATH=$RUNNER_TEMP/iperf3-3.22/bin/iperf3" >> "$GITHUB_ENV"
           echo "OPENSSL_PATH=$(brew --prefix openssl@3)/bin/openssl" >> "$GITHUB_ENV"
       - name: Build
         run: swift build
@@ -57,6 +57,10 @@ jobs:
         run: swift package generate-documentation --target IperfSwift --warnings-as-errors
       - name: Run tests
         run: swift test
+      - name: Verify authentication and engine regressions with AddressSanitizer
+        run: |
+          ./Scripts/verify_auth_safety.sh
+          ./Scripts/verify_engine_regressions.sh
       # HAVE_SSL is hardcoded on, so the no-SSL fallback in custom.c is never
       # compiled by swift build/test. Exercise it directly so the unconditional
       # RSA-validation declarations can never regress into a link failure.

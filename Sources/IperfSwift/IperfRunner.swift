@@ -530,7 +530,7 @@ public class IperfRunner {
             return .IEBLOCKSIZE
         }
         // Clang cannot import MIN_UDP_BLOCKSIZE / MAX_UDP_BLOCKSIZE because
-        // they are expression macros. Keep their iperf 3.21 values together.
+        // they are expression macros. Keep their iperf 3.22 values together.
         if prot == .udp,
            !(16...65_507).contains(blockSize) {
             return .IEUDPBLOCKSIZE
@@ -610,7 +610,7 @@ public class IperfRunner {
         // ClangImporter surfaces a macro that is a literal (MAX_STREAMS = 128)
         // or a single-operation expression (MAX_TCP_BUFFER = 512 * MB), but not
         // a chained expression. MAX_MSS is `(32 * 1024 - 1)`, so keep its
-        // iperf 3.21 value inline.
+        // iperf 3.22 value inline.
         if let mss = configuration.mss,
            !(0...32_767).contains(mss) {
             return .IEMSS
@@ -703,7 +703,7 @@ public class IperfRunner {
 
         if configuration.role == .client {
             if let dscp = configuration.dscp, !(0...63).contains(dscp) {
-                return .IEBADTOS
+                return .IEBADDSCP
             }
         }
 

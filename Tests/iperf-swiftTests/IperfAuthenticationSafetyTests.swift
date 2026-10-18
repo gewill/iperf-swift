@@ -40,16 +40,50 @@ final class IperfAuthenticationSafetyTests: XCTestCase {
     func testMalformedAndOversizedTokensLeaveNoCredentials() throws {
         let test = try makeAuthenticationTest()
         defer { iperf_free_test(test) }
-        let tokens = ["", "!", "A", "====", "aGVsbG8=", Data(repeating: 65, count: 1_024).base64EncodedString()]
-        for token in tokens {
-            var username: UnsafeMutablePointer<CChar>?
-            var password: UnsafeMutablePointer<CChar>?
-            var timestamp: time_t = 42
-            XCTAssertNotEqual(decode_auth_setting(0, token, test.pointee.server_rsa_private_key, &username, &password, &timestamp, 0), 0)
-            defer { free(username); free(password) }
-            XCTAssertNil(username)
-            XCTAssertNil(password)
-            XCTAssertEqual(timestamp, 0)
+        // Single '=' caused the upstream decoded-length underflow. Exercise
+        // both wire formats, including strict padding/alphabet rejection.
+        let tokens = ["", "!", "A", "=", "==", "===", "====", "AA=A", "AAAA=", "AA A", "aGVsbG8=",
+                      Data(repeating: 65, count: 1_024).base64EncodedString()]
+        for padding: Int32 in [0, 1] {
+            for token in tokens {
+                var username: UnsafeMutablePointer<CChar>?
+                var password: UnsafeMutablePointer<CChar>?
+                var timestamp: time_t = 42
+                XCTAssertNotEqual(decode_auth_setting(0, token, test.pointee.server_rsa_private_key, &username, &password, &timestamp, padding), 0)
+                defer { free(username); free(password) }
+                XCTAssertNil(username)
+                XCTAssertNil(password)
+                XCTAssertEqual(timestamp, 0)
+            }
+        }
+    }
+
+    func testTruncatedTamperedAndWrongKeyTokensLeaveNoCredentials() throws {
+        let test = try makeAuthenticationTest()
+        let other = try makeAuthenticationTest()
+        defer { iperf_free_test(test); iperf_free_test(other) }
+        for padding: Int32 in [0, 1] {
+            var token: UnsafeMutablePointer<CChar>?
+            XCTAssertEqual(encode_auth_setting("audit", "password", test.pointee.server_rsa_private_key, &token, padding), 0)
+            let encoded = try XCTUnwrap(token)
+            defer { free(encoded) }
+            let data = try XCTUnwrap(Data(base64Encoded: String(cString: encoded)))
+            var tampered = data
+            tampered[tampered.startIndex] ^= 0xff
+            for (candidate, key) in [
+                (Data(data.dropLast()).base64EncodedString(), test.pointee.server_rsa_private_key),
+                (tampered.base64EncodedString(), test.pointee.server_rsa_private_key),
+                (String(cString: encoded), other.pointee.server_rsa_private_key),
+            ] {
+                var username: UnsafeMutablePointer<CChar>?
+                var password: UnsafeMutablePointer<CChar>?
+                var timestamp: time_t = 42
+                XCTAssertNotEqual(decode_auth_setting(0, candidate, key, &username, &password, &timestamp, padding), 0)
+                defer { free(username); free(password) }
+                XCTAssertNil(username)
+                XCTAssertNil(password)
+                XCTAssertEqual(timestamp, 0)
+            }
         }
     }
 
@@ -63,7 +97,7 @@ final class IperfAuthenticationSafetyTests: XCTestCase {
     }
 
     func testInvalidBase64KeysAreRejected() {
-        for key in ["", "A", "====", "AA=A", "aGVsbG8="] {
+        for key in ["", "A", "=", "==", "===", "====", "AA=A", "aGVsbG8="] {
             XCTAssertEqual(iperf_validate_client_rsa_pubkey(key), -1)
             XCTAssertEqual(iperf_validate_server_rsa_privkey(key), -1)
         }

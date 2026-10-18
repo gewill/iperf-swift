@@ -1,7 +1,7 @@
 #!/bin/sh -e
 
 REPO_URL="https://github.com/esnet/iperf.git"
-TAG="${1:-3.21}"
+TAG="${1:-3.22}"
 SRC_PATH="Sources/IperfCLib"
 SYNC_DATA="iperf_sync"
 LOCK_PATH=".iperf-sync.lock"
@@ -86,35 +86,7 @@ if [ ! -f "$SYNC_DATA/patches/modifications.patch" ]; then
 fi
 patch --batch --forward -p1 -d "$STAGING_PATH" < "$SYNC_DATA/patches/modifications.patch"
 
-# Inserts the guard and collapses the blank lines around it in one step. The
-# substitution must match the pristine upstream header, which has no guard.
-perl -0pi -e '
-    $count = s/(#define[ \t]+__FLOW_LABEL_H[ \t]*\n)\n*/$1\n#ifdef __linux__\n/g;
-    die "flowlabel start guard: expected 1 replacement, got $count\n" unless $count == 1;
-    $count = s/(\n#define IPV6_FLOWINFO_SEND\s+33\s*\n\s*#endif\s*)\z/$1\n#endif\n/g;
-    die "flowlabel end guard: expected 1 replacement, got $count\n" unless $count == 1;
-' "$STAGING_PATH/include/flowlabel.h"
-
-perl -0pi -e '
-    $count = s/if \( !\(test->server_rsa_private_key && test->server_authorized_users\)\) \{\n        return 0;\n    \}/if (!test->server_rsa_private_key && !test->server_authorized_users) {\n        return 0;\n    }\n\n    if (!(test->server_rsa_private_key && test->server_authorized_users)) {\n        iperf_set_error(IEAUTHTEST);\n        return -1;\n    }/g;
-    die "server credentials check: expected 1 replacement, got $count\n" unless $count == 1;
-    $count = s/(\tif \(rc\) \{\n)\t    return -1;/$1\t    iperf_set_error(IEAUTHTEST);\n\t    return -1;/g;
-    die "authentication token failure: expected 1 replacement, got $count\n" unless $count == 1;
-    $count = s/(        \} else \{\n)(            if \(test->debug\) \{)/$1            iperf_set_error(IEAUTHTEST);\n$2/g;
-    die "authentication result failure: expected 1 replacement, got $count\n" unless $count == 1;
-    $count = s/(\n    \}\n    return -1;\n\}\n#endif \/\/HAVE_SSL)/\n    }\n    iperf_set_error(IEAUTHTEST);\n    return -1;\n}\n#endif \/\/HAVE_SSL/g;
-    die "authentication fallback failure: expected 1 replacement, got $count\n" unless $count == 1;
-' "$STAGING_PATH/iperf_api.c"
-
-perl -0pi -e '
-    $count = s/#include <openssl\/bio\.h>/typedef struct evp_pkey_st EVP_PKEY;/g;
-    die "iperf_auth.h OpenSSL declaration: expected 1 replacement, got $count\n" unless $count == 1;
-' "$STAGING_PATH/include/iperf_auth.h"
-perl -0pi -e '
-    $count = s/#include <openssl\/bio\.h>\n#include <openssl\/evp\.h>/typedef struct evp_pkey_st EVP_PKEY;/g;
-    die "iperf.h OpenSSL declaration: expected 1 replacement, got $count\n" unless $count == 1;
-' "$STAGING_PATH/include/iperf.h"
-
+# All upstream-file compatibility changes live in the context-checked patch.
 if [ ! -d "$SYNC_DATA/custom_files" ]; then
     echo "Missing $SYNC_DATA/custom_files" >&2
     exit 1
@@ -160,10 +132,21 @@ test ! -e "$STAGING_PATH/include/iperf_openssl.h"
 grep -Fq 'iperf_openssl_version_major' "$STAGING_PATH/custom.c"
 grep -Fq '#define HAVE_SSL 1' "$STAGING_PATH/include/iperf_config.h"
 grep -Fq 'iperf_set_test_use_pkcs1_padding' "$STAGING_PATH/iperf_api.c"
+# Swift passes Base64(PEM text), unlike the CLI's explicit file-path options.
+# Fail before replacing generated sources if an upstream sync loses that route.
+grep -Fq 'ipt->settings->client_rsa_pubkey = load_pubkey_from_base64(client_rsa_pubkey_base64);' "$STAGING_PATH/iperf_api.c"
+grep -Fq 'ipt->server_rsa_private_key = load_privkey_from_base64(server_rsa_privkey_base64);' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'free(test->server_authorized_users)' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'iperf_set_test_server_authorized_users(test, optarg)' "$STAGING_PATH/iperf_api.c"
 grep -Fq 'if (!test->server_rsa_private_key && !test->server_authorized_users)' "$STAGING_PATH/iperf_api.c"
 test "$(grep -Fc 'iperf_set_error(IEAUTHTEST)' "$STAGING_PATH/iperf_api.c")" -eq 4
+# The engine runs inside a host app: never exit it, hang its teardown, or leak a
+# stream socket. See docs/upstream-3.22-audit.md before dropping these.
+grep -Fq 'arc4random_buf(out, outsize);' "$STAGING_PATH/iperf_util.c"
+test "$(grep -Fc 'stop_stream_worker(test, sp);' "$STAGING_PATH/iperf_server_api.c")" -eq 2
+test "$(grep -Fc 'Released: teardown must not touch this descriptor number.' "$STAGING_PATH/iperf_server_api.c")" -eq 2
+grep -Fq 's never joined test->streams, so cleanup_server() cannot close it.' "$STAGING_PATH/iperf_server_api.c"
+grep -Fq 's never joined test->streams, so iperf_client_end() cannot close it.' "$STAGING_PATH/iperf_client_api.c"
 
 rm -rf "$SRC_PATH"
 mv "$STAGING_PATH" "$SRC_PATH"

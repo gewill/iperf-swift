@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`iperf-swift` is a Swift Package that exposes the iperf3 3.21 C engine through
+`iperf-swift` is a Swift Package that exposes the iperf3 3.22 C engine through
 the `IperfSwift` wrapper. It supports both client and server execution,
 authentication, DSCP, interface binding, and interval statistics on Apple
 platforms.
@@ -24,7 +24,7 @@ the maintained changes applied by `sync.sh`.
   `Package.resolved`. Do not add Homebrew include or linker paths to the
   package manifest; downstream apps must not inherit absolute Homebrew dylib
   references.
-- CLI integration tests use a locally installed `iperf3` 3.21 executable.
+- CLI integration tests use a locally installed `iperf3` 3.22 executable.
 
 ## Change Boundaries
 
@@ -68,7 +68,7 @@ bug — and do not "fix" it — before confirming it is not defined behavior.
 ## Synchronization
 
 Run `./sync.sh` to update the bundled iperf source. The script defaults to tag
-`3.21` and stages all generated source in a temporary directory before
+`3.22` and stages all generated source in a temporary directory before
 replacing `Sources/IperfCLib/`. Check `git diff` and `git diff --check` after a
 sync. Do not manually edit only the generated source and assume the change will
 survive the next sync.
