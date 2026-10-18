@@ -216,7 +216,7 @@ final class IperfSwiftUnitTests: XCTestCase {
         // Comparing the two sources only constrains what the engine block
         // declares. A case added after the wrapper marker is never parsed, so
         // without this the engine's own value range is open for one to land in:
-        // it is not contiguous, and 39...99, 149, 161...199, 209...299 and
+        // it is not contiguous, and 41...99, 149, 161...199, 209...299 and
         // 302...399 are all unused.
         let engineValues = Set(cErrors.map(\.rawValue))
         let highestEngineValue = engineValues.max() ?? 0

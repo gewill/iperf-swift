@@ -135,8 +135,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 tools.iperf3,
                 arguments: ["-c", "127.0.0.1"] + arguments
             )
-            XCTAssertNotEqual(cliResult.status, 0)
-            XCTAssertTrue(cliResult.output.contains("parameter error"), cliResult.output)
+            cliResult.assertParameterError(expectedError)
 
             var configuration = IperfConfiguration()
             configuration.address = "invalid.invalid"
@@ -173,8 +172,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 tools.iperf3,
                 arguments: ["-c", "127.0.0.1", option, value]
             )
-            XCTAssertNotEqual(cliResult.status, 0)
-            XCTAssertTrue(cliResult.output.contains("parameter error"), cliResult.output)
+            cliResult.assertParameterError(expectedError)
 
             var configuration = IperfConfiguration()
             configuration.address = "invalid.invalid"
@@ -4112,6 +4110,19 @@ final class IperfCLIIntegrationTests: XCTestCase {
 private struct ProcessResult {
     let status: Int32
     let output: String
+
+    /// The CLI prints `parameter error - <iperf_strerror(i_errno)>`, so the
+    /// engine's own message identifies which error the argument was rejected
+    /// with; matching only the prefix would accept any parameter error.
+    func assertParameterError(
+        _ error: IperfError,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertNotEqual(status, 0, file: file, line: line)
+        let message = String(cString: iperf_strerror(error.rawValue))
+        XCTAssertTrue(output.contains("parameter error - \(message)"), output, file: file, line: line)
+    }
 }
 
 private struct Credentials {
