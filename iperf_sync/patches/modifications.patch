@@ -19,15 +19,17 @@ diff --git a/include/flowlabel.h b/include/flowlabel.h
 diff --git a/include/iperf.h b/include/iperf.h
 --- a/include/iperf.h
 +++ b/include/iperf.h
-@@ -31,6 +31,7 @@
+@@ -31,7 +31,9 @@
  
  #include <sys/time.h>
  #include <sys/types.h>
 +#include <stdio.h>
  #include <stdint.h>
++#include "iperf_bounded_log.h"
  #include <inttypes.h>
  #include <sys/select.h>
-@@ -57,8 +58,7 @@
+ #include <sys/socket.h>
+@@ -57,8 +59,7 @@
  #include "portable_endian.h"
  
  #if defined(HAVE_SSL)
@@ -37,7 +39,7 @@ diff --git a/include/iperf.h b/include/iperf.h
  #endif // HAVE_SSL
  
  #include "iperf_pthread.h"
-@@ -68,9 +68,9 @@
+@@ -68,9 +69,9 @@
   * with normal integers and warn.
   */
  #ifdef HAVE_STDATOMIC_H
@@ -49,6 +51,14 @@ diff --git a/include/iperf.h b/include/iperf.h
  typedef uint64_t atomic_uint_fast64_t;
  #endif // HAVE_STDATOMIC_H
  
+@@ -335,6 +336,7 @@
+ 
+     char     *logfile;				/* --logfile option */
+     FILE     *outfile;
++    struct iperf_log_status logfile_status;
+ 
+     int       ctrl_sck;
+     int       mapped_v4;
 diff --git a/iperf_api.c b/iperf_api.c
 --- a/iperf_api.c
 +++ b/iperf_api.c
@@ -696,16 +706,21 @@ diff --git a/iperf_api.c b/iperf_api.c
          return -1;
      }
  
-@@ -2045,7 +2067,7 @@
+@@ -2043,9 +2065,11 @@
+  */
+ int iperf_open_logfile(struct iperf_test *test)
  {
-     test->outfile = fopen(test->logfile, "a+");
+-    test->outfile = fopen(test->logfile, "a+");
++    test->outfile = test->logfile_status.limit
++        ? iperf_bounded_log_open(test->logfile, &test->logfile_status)
++        : fopen(test->logfile, "a+");
      if (test->outfile == NULL) {
 -        i_errno = IELOGFILE;
 +        iperf_set_error(IELOGFILE);
          return -1;
      }
  
-@@ -2066,7 +2088,7 @@
+@@ -2066,7 +2090,7 @@
      if (test->ctrl_sck >= 0) {
          iperf_set_test_state(test, state);
          if (Nwrite(test->ctrl_sck, (char*) &state, sizeof(state), Ptcp) < 0) {
@@ -714,7 +729,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  	    return -1;
          }
      }
-@@ -2091,11 +2113,11 @@
+@@ -2091,11 +2115,11 @@
      int64_t ns;
  #endif /* HAVE_CLOCK_NANOSLEEP */
  
@@ -728,7 +743,7 @@ diff --git a/iperf_api.c b/iperf_api.c
      bits_per_second = bits_sent / seconds;
      missing_rate = sp->test->settings->rate - bits_per_second;
  
-@@ -2157,7 +2179,7 @@
+@@ -2157,7 +2181,7 @@
      iperf_size_t total_bytes;
      int i;
  
@@ -737,7 +752,7 @@ diff --git a/iperf_api.c b/iperf_api.c
          return;
  
      /* Add last interval's transferred bytes to the array */
-@@ -2226,19 +2248,19 @@
+@@ -2226,19 +2250,19 @@
      for (message_sent = 0; sp->green_light && multisend > 0; --multisend) {
          // XXX If we hit one of these ending conditions maybe
          // want to stop even trying to send something?
@@ -762,7 +777,7 @@ diff --git a/iperf_api.c b/iperf_api.c
          if (throttle_check_per_message) {
              if (message_sent == 0)
                  iperf_time_now(&now);
-@@ -2265,7 +2287,7 @@
+@@ -2265,7 +2289,7 @@
      struct iperf_test *test = sp->test;
  
  	    if ((r = sp->rcv(sp)) < 0) {
@@ -771,7 +786,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  		return r;
  	    }
  
-@@ -2273,8 +2295,8 @@
+@@ -2273,8 +2297,8 @@
               * This is also important for `--rcv-timeout` to work properly.
               */
              if (r > 0) {
@@ -782,7 +797,7 @@ diff --git a/iperf_api.c b/iperf_api.c
              }
  
      return 0;
-@@ -2293,7 +2315,7 @@
+@@ -2293,7 +2317,7 @@
  
      /* Init each stream. */
      if (iperf_time_now(&now) < 0) {
@@ -791,7 +806,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  	return -1;
      }
      SLIST_FOREACH(sp, &test->streams, streams) {
-@@ -2321,8 +2343,13 @@
+@@ -2321,8 +2345,13 @@
  
  #if defined(HAVE_SSL)
  int test_is_authorized(struct iperf_test *test){
@@ -806,7 +821,7 @@ diff --git a/iperf_api.c b/iperf_api.c
      }
  
      if (test->settings->authtoken){
-@@ -2330,6 +2357,7 @@
+@@ -2330,6 +2359,7 @@
          time_t ts;
          int rc = decode_auth_setting(test->debug, test->settings->authtoken, test->server_rsa_private_key, &username, &password, &ts, test->use_pkcs1_padding);
  	if (rc) {
@@ -814,7 +829,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  	    return -1;
  	}
          int ret = check_authentication(username, password, ts, test->server_authorized_users, test->server_skew_threshold);
-@@ -2341,6 +2369,7 @@
+@@ -2341,6 +2371,7 @@
              free(password);
              return 0;
          } else {
@@ -822,7 +837,7 @@ diff --git a/iperf_api.c b/iperf_api.c
              if (test->debug) {
                  iperf_printf(test, report_authentication_failed, ret, username, (uint64_t)ts);
              }
-@@ -2349,6 +2378,7 @@
+@@ -2349,6 +2380,7 @@
              return -1;
          }
      }
@@ -830,7 +845,7 @@ diff --git a/iperf_api.c b/iperf_api.c
      return -1;
  }
  #endif //HAVE_SSL
-@@ -2430,7 +2460,7 @@
+@@ -2430,7 +2462,7 @@
  
      j = cJSON_CreateObject();
      if (j == NULL) {
@@ -839,7 +854,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  	r = -1;
      } else {
  	if (test->protocol->id == Ptcp)
-@@ -2511,7 +2541,7 @@
+@@ -2511,7 +2543,7 @@
  
  	    if (rc) {
  		cJSON_Delete(j);
@@ -848,7 +863,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  		return -1;
  	    }
  
-@@ -2529,7 +2559,7 @@
+@@ -2529,7 +2561,7 @@
  	}
  
  	if (JSON_write(test->ctrl_sck, j) < 0) {
@@ -857,7 +872,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  	    r = -1;
  	}
  	cJSON_Delete(j);
-@@ -2549,7 +2579,7 @@
+@@ -2549,7 +2581,7 @@
  
      j = JSON_read(test->ctrl_sck, MAX_PARAMS_JSON_STRING);
      if (j == NULL) {
@@ -866,7 +881,7 @@ diff --git a/iperf_api.c b/iperf_api.c
          r = -1;
      } else {
  	if (test->debug) {
-@@ -2564,7 +2594,7 @@
+@@ -2564,7 +2596,7 @@
          if ((j_p = iperf_cJSON_GetObjectItemType(j, "udp", cJSON_True)) != NULL) {
              /* Disallow UDP transfers if we already are to/from a file */
              if (test->diskfile_name != NULL) {
@@ -875,7 +890,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              }
              else {
-@@ -2576,7 +2606,7 @@
+@@ -2576,7 +2608,7 @@
              set_protocol(test, Psctp);
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "omit", cJSON_Number)) != NULL){
              if (j_p->valueint < 0  || j_p->valueint > MAX_OMIT_TIME){
@@ -884,7 +899,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->omit = j_p->valueint;
-@@ -2584,7 +2614,7 @@
+@@ -2584,7 +2616,7 @@
          }
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "server_affinity", cJSON_Number)) != NULL){
              if (j_p->valueint < 0  || j_p->valueint > 1024) {
@@ -893,7 +908,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->server_affinity = j_p->valueint;
-@@ -2592,7 +2622,7 @@
+@@ -2592,7 +2624,7 @@
          }
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "time", cJSON_Number)) != NULL){
              if (j_p->valueint < 0  || j_p->valueint > MAX_TIME) {
@@ -902,7 +917,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->duration = j_p->valueint;
-@@ -2601,7 +2631,7 @@
+@@ -2601,7 +2633,7 @@
          test->settings->bytes = 0;
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "num", cJSON_Number)) != NULL){
              if (j_p->valueint < 0){
@@ -911,7 +926,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
                  test->settings->bytes = j_p->valueint;
-@@ -2610,7 +2640,7 @@
+@@ -2610,7 +2642,7 @@
          test->settings->blocks = 0;
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "blockcount", cJSON_Number)) != NULL){
              if (j_p->valueint < 0){
@@ -920,7 +935,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->settings->blocks = j_p->valueint;
-@@ -2618,7 +2648,7 @@
+@@ -2618,7 +2650,7 @@
          }
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "MSS", cJSON_Number)) != NULL){
              if (j_p->valueint < 0  || j_p->valueint > MAX_MSS) {
@@ -929,7 +944,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->settings->mss = j_p->valueint;
-@@ -2628,7 +2658,7 @@
+@@ -2628,7 +2660,7 @@
  	    test->no_delay = 1;
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "parallel", cJSON_Number)) != NULL){
              if (j_p->valueint < 1  || j_p->valueint > MAX_STREAMS) {
@@ -938,7 +953,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->num_streams = j_p->valueint;
-@@ -2644,7 +2674,7 @@
+@@ -2644,7 +2676,7 @@
  #endif
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "window", cJSON_Number)) != NULL){
              if (j_p->valueint < 0 || j_p->valueint > MAX_TCP_BUFFER){
@@ -947,7 +962,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              }
              else {
-@@ -2653,7 +2683,7 @@
+@@ -2653,7 +2685,7 @@
          }
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "len", cJSON_Number)) != NULL){
              if (j_p->valueint < 0){
@@ -956,7 +971,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->settings->blksize = j_p->valueint;
-@@ -2665,7 +2695,7 @@
+@@ -2665,7 +2697,7 @@
          // Should be TrueObject
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "gso", cJSON_Number)) != NULL){
              if (j_p->valueint < 0){
@@ -965,7 +980,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
                  test->settings->gso = j_p->valueint;
-@@ -2673,7 +2703,7 @@
+@@ -2673,7 +2705,7 @@
          }
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "gso_dg_size", cJSON_Number)) != NULL){
              if (j_p->valueint < 0){
@@ -974,7 +989,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->settings->gso_dg_size = j_p->valueint;
-@@ -2681,7 +2711,7 @@
+@@ -2681,7 +2713,7 @@
          }
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "gso_bf_size", cJSON_Number)) != NULL){
              if (j_p->valueint < 0){
@@ -983,7 +998,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->settings->gso_bf_size = j_p->valueint;
-@@ -2700,7 +2730,7 @@
+@@ -2700,7 +2732,7 @@
  
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "gro", cJSON_Number)) != NULL){
              if (j_p->valueint < 0 || j_p->valueint > 1){
@@ -992,7 +1007,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->settings->gro = j_p->valueint;
-@@ -2708,7 +2738,7 @@
+@@ -2708,7 +2740,7 @@
          }
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "gro_bf_size", cJSON_Number)) != NULL){
              if (j_p->valueint < 0){
@@ -1001,7 +1016,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->settings->gro_bf_size = j_p->valueint;
-@@ -2716,7 +2746,7 @@
+@@ -2716,7 +2748,7 @@
          }
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "bandwidth", cJSON_Number)) != NULL){
              if (j_p->valueint < 0){
@@ -1010,7 +1025,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->settings->rate = j_p->valueint;
-@@ -2724,7 +2754,7 @@
+@@ -2724,7 +2756,7 @@
          }
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "fqrate", cJSON_Number)) != NULL){
              if (j_p->valueint < 0){
@@ -1019,7 +1034,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->settings->fqrate = j_p->valueint;
-@@ -2732,7 +2762,7 @@
+@@ -2732,7 +2764,7 @@
          }
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "pacing_timer", cJSON_Number)) != NULL){
              if (j_p->valueint < 0){
@@ -1028,7 +1043,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->settings->pacing_timer = j_p->valueint;
-@@ -2740,7 +2770,7 @@
+@@ -2740,7 +2772,7 @@
          }
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "burst", cJSON_Number)) != NULL){
              if (j_p->valueint <= 0 || j_p->valueint > MAX_BURST){
@@ -1037,7 +1052,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->settings->burst = j_p->valueint;
-@@ -2748,7 +2778,7 @@
+@@ -2748,7 +2780,7 @@
          }
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "TOS", cJSON_Number)) != NULL){
              if (j_p->valueint < 0 || j_p->valueint > 255){
@@ -1046,7 +1061,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->settings->tos = j_p->valueint;
-@@ -2757,7 +2787,7 @@
+@@ -2757,7 +2789,7 @@
  #if defined(HAVE_FLOWLABEL)
  	if ((j_p = iperf_cJSON_GetObjectItemType(j, "flowlabel", cJSON_Number)) != NULL){
              if (j_p->valueint < 1 || j_p->valueint > 0xfffff ){
@@ -1055,7 +1070,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  r = -1;
              } else {
  	        test->settings->flowlabel = j_p->valueint;
-@@ -2804,13 +2834,13 @@
+@@ -2804,13 +2836,13 @@
          /* Check flag / role compatibility. */
          if ((test->protocol->id != Pudp && test->settings->blksize <= 0)
              || test->settings->blksize > MAX_BLOCKSIZE) {
@@ -1071,7 +1086,7 @@ diff --git a/iperf_api.c b/iperf_api.c
              return -1;
          }
  
-@@ -2825,7 +2855,7 @@
+@@ -2825,7 +2857,7 @@
  
          /* Ensure that the client does not request to run longer than the server's configured max */
          if ((test->max_server_duration > 0) && (((test->duration + test->omit) > test->max_server_duration) || (test->duration == 0))) {
@@ -1080,7 +1095,7 @@ diff --git a/iperf_api.c b/iperf_api.c
              r = -1;
          }
  
-@@ -2833,26 +2863,26 @@
+@@ -2833,26 +2865,26 @@
          /* Ensure that total requested data rate is not above the server's limit */
          iperf_size_t total_requested_rate = test->num_streams * test->settings->rate * (test->mode == BIDIRECTIONAL? 2 : 1);
          if (test->settings->bitrate_limit && total_requested_rate > test->settings->bitrate_limit) {
@@ -1111,7 +1126,7 @@ diff --git a/iperf_api.c b/iperf_api.c
              return -1;
          }
  #endif /* !HAVE_MSG_TRUNC */
-@@ -2880,7 +2910,7 @@
+@@ -2880,7 +2912,7 @@
  
      j = cJSON_CreateObject();
      if (j == NULL) {
@@ -1120,7 +1135,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  	r = -1;
      } else {
  	cJSON_AddNumberToObject(j, "cpu_util_total", test->cpu_util[0]);
-@@ -2925,26 +2955,26 @@
+@@ -2925,26 +2957,26 @@
  
  	j_streams = cJSON_CreateArray();
  	if (j_streams == NULL) {
@@ -1153,7 +1168,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                      cJSON_AddNumberToObject(j_stream, "omitted_packets", sp->omitted_packet_count);
  
  		    iperf_time_diff(&sp->result->start_time, &sp->result->start_time, &temp_time);
-@@ -2962,7 +2992,7 @@
+@@ -2962,7 +2994,7 @@
                  cJSON_free(str);
  	    }
  	    if (r == 0 && JSON_write(test->ctrl_sck, j) < 0) {
@@ -1162,7 +1177,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  		r = -1;
  	    }
  	}
-@@ -3008,7 +3038,7 @@
+@@ -3008,7 +3040,7 @@
  
      j = JSON_read(test->ctrl_sck, 0);
      if (j == NULL) {
@@ -1171,7 +1186,7 @@ diff --git a/iperf_api.c b/iperf_api.c
          r = -1;
      } else {
  	j_cpu_util_total = iperf_cJSON_GetObjectItemType(j, "cpu_util_total", cJSON_Number);
-@@ -3016,7 +3046,7 @@
+@@ -3016,7 +3048,7 @@
  	j_cpu_util_system = iperf_cJSON_GetObjectItemType(j, "cpu_util_system", cJSON_Number);
  	j_sender_has_retransmits = iperf_cJSON_GetObjectItemType(j, "sender_has_retransmits", cJSON_Number);
  	if (j_cpu_util_total == NULL || j_cpu_util_user == NULL || j_cpu_util_system == NULL || j_sender_has_retransmits == NULL) {
@@ -1180,7 +1195,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  	    r = -1;
  	} else {
  	    if (test->debug) {
-@@ -3038,14 +3068,14 @@
+@@ -3038,14 +3070,14 @@
  
  	    j_streams = iperf_cJSON_GetObjectItemType(j, "streams", cJSON_Array);
  	    if (j_streams == NULL) {
@@ -1197,7 +1212,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  			r = -1;
  		    } else {
  			j_id = iperf_cJSON_GetObjectItemType(j_stream, "id", cJSON_Number);
-@@ -3059,11 +3089,11 @@
+@@ -3059,11 +3091,11 @@
  			j_start_time = iperf_cJSON_GetObjectItemType(j_stream, "start_time", cJSON_Number);
  			j_end_time = iperf_cJSON_GetObjectItemType(j_stream, "end_time", cJSON_Number);
  			if (j_id == NULL || j_bytes == NULL || j_retransmits == NULL || j_jitter == NULL || j_errors == NULL || j_packets == NULL) {
@@ -1211,7 +1226,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  			    r = -1;
  			} else {
  			    sid = j_id->valueint;
-@@ -3079,14 +3109,14 @@
+@@ -3079,14 +3111,14 @@
  			    SLIST_FOREACH(sp, &test->streams, streams)
  				if (sp->id == sid) break;
  			    if (sp == NULL) {
@@ -1230,7 +1245,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                                      if (j_omitted_packets != NULL) {
                                          sp->omitted_cnt_error = omitted_cerror;
                                          sp->peer_omitted_packet_count = omitted_pcount;
-@@ -3094,9 +3124,9 @@
+@@ -3094,9 +3126,9 @@
                                          sp->peer_omitted_packet_count = sp->omitted_packet_count;
                                          if (sp->peer_omitted_packet_count > 0) {
                                              /* -1 indicates unknown error count since it includes the omitted count */
@@ -1242,7 +1257,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                                          }
                                      }
  				    /*
-@@ -3116,7 +3146,7 @@
+@@ -3116,7 +3148,7 @@
  				    }
  				} else {
  				    sp->peer_packet_count = pcount;
@@ -1251,7 +1266,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  				    sp->result->stream_retrans = retransmits;
                                      if (j_omitted_packets != NULL) {
                                          sp->peer_omitted_packet_count = omitted_pcount;
-@@ -3357,7 +3387,7 @@
+@@ -3357,7 +3389,7 @@
  
      test = (struct iperf_test *) malloc(sizeof(struct iperf_test));
      if (!test) {
@@ -1260,7 +1275,7 @@ diff --git a/iperf_api.c b/iperf_api.c
          return NULL;
      }
      /* initialize everything to zero */
-@@ -3381,7 +3411,7 @@
+@@ -3381,7 +3413,7 @@
      test->settings = (struct iperf_settings *) malloc(sizeof(struct iperf_settings));
      if (!test->settings) {
          free(test);
@@ -1269,7 +1284,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  	return NULL;
      }
      memset(test->settings, 0, sizeof(struct iperf_settings));
-@@ -3390,7 +3420,7 @@
+@@ -3390,7 +3422,7 @@
      if (!test->bitrate_limit_intervals_traffic_bytes) {
          free(test->settings);
          free(test);
@@ -1278,7 +1293,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  	return NULL;
      }
      memset(test->bitrate_limit_intervals_traffic_bytes, 0, sizeof(iperf_size_t) * MAX_INTERVAL);
-@@ -3597,6 +3627,9 @@
+@@ -3597,6 +3629,9 @@
      }
  #if defined(HAVE_SSL)
  
@@ -1288,7 +1303,7 @@ diff --git a/iperf_api.c b/iperf_api.c
      if (test->server_rsa_private_key)
        EVP_PKEY_free(test->server_rsa_private_key);
      test->server_rsa_private_key = NULL;
-@@ -3732,7 +3765,7 @@
+@@ -3732,7 +3767,7 @@
  	tmr_cancel(test->reporter_timer);
  	test->reporter_timer = NULL;
      }
@@ -1297,7 +1312,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  
      SLIST_INIT(&test->streams);
  
-@@ -3752,17 +3785,17 @@
+@@ -3752,17 +3787,17 @@
  #if defined(HAVE_CPUSET_SETAFFINITY)
      CPU_ZERO(&test->cpumask);
  #endif /* HAVE_CPUSET_SETAFFINITY */
@@ -1321,7 +1336,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  
      test->other_side_has_retransmits = 0;
  
-@@ -3848,18 +3881,19 @@
+@@ -3848,18 +3883,19 @@
      struct iperf_stream *sp;
      struct iperf_stream_result *rp;
  
@@ -1350,7 +1365,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  	if (test->sender_has_retransmits == 1) {
  	    struct iperf_interval_results ir; /* temporary results structure */
  	    save_tcpinfo(sp, &ir);
-@@ -3867,6 +3901,8 @@
+@@ -3867,6 +3903,8 @@
  	}
  	rp->stream_retrans = 0;
  	rp->start_time = now;
@@ -1359,7 +1374,7 @@ diff --git a/iperf_api.c b/iperf_api.c
      }
  }
  
-@@ -3895,10 +3931,13 @@
+@@ -3895,10 +3933,13 @@
      temp.pmtu = 0;
      SLIST_FOREACH(sp, &test->streams, streams) {
          rp = sp->result;
@@ -1375,7 +1390,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  
  	irp = TAILQ_LAST(&rp->interval_results, irlisthead);
          /* result->end_time contains timestamp of previous interval */
-@@ -3948,19 +3987,14 @@
+@@ -3948,19 +3989,14 @@
  		}
  	    }
  	} else {
@@ -1403,7 +1418,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  	}
  
  #if defined(HAVE_SCTP_H)
-@@ -3993,7 +4027,6 @@
+@@ -3993,7 +4029,6 @@
  #endif /* HAVE_SCTP_H */
  
          add_to_interval_list(rp, &temp);
@@ -1411,7 +1426,7 @@ diff --git a/iperf_api.c b/iperf_api.c
      }
  
      /* Verify that total server's throughput is not above specified limit */
-@@ -4041,7 +4074,7 @@
+@@ -4041,7 +4076,7 @@
  	    iperf_time_diff(&irp->interval_start_time, &irp->interval_end_time, &temp_time);
  	    double interval_len = iperf_time_in_secs(&temp_time);
  	    if (test->debug) {
@@ -1420,7 +1435,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  	    }
  
  	    /*
-@@ -4388,13 +4421,13 @@
+@@ -4388,13 +4423,13 @@
                      cJSON_AddItemToArray(json_summary_streams, json_summary_stream);
                  }
  
@@ -1437,7 +1452,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                      sender_omitted_packet_count = sp->omitted_packet_count;
                      receiver_packet_count = sp->peer_packet_count;
                      receiver_omitted_packet_count = sp->peer_omitted_packet_count;
-@@ -4402,7 +4435,7 @@
+@@ -4402,7 +4437,7 @@
                  else {
                      sender_packet_count = sp->peer_packet_count;
                      sender_omitted_packet_count = sp->peer_omitted_packet_count;
@@ -1446,7 +1461,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                      receiver_omitted_packet_count = sp->omitted_packet_count;
                  }
  
-@@ -4419,10 +4452,10 @@
+@@ -4419,10 +4454,10 @@
                      total_packets += (packet_count - sp->omitted_packet_count);
                      sender_total_packets += (sender_packet_count - sender_omitted_packet_count);
                      receiver_total_packets += (receiver_packet_count - receiver_omitted_packet_count);
@@ -1459,7 +1474,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  }
  
                  unit_snprintf(ubuf, UNIT_LEN, (double) bytes_sent, 'A');
-@@ -4462,7 +4495,7 @@
+@@ -4462,7 +4497,7 @@
                  } else {
                      /* Sender summary, UDP. */
                      if (sender_packet_count - sender_omitted_packet_count > 0) {
@@ -1468,7 +1483,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                      }
                      else {
                          lost_percent = 0.0;
-@@ -4485,7 +4518,7 @@
+@@ -4485,7 +4520,7 @@
                           * instead.
                           */
                          int64_t packet_count = sender_packet_count ? sender_packet_count : receiver_packet_count;
@@ -1477,7 +1492,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                      }
                      else {
                          /*
-@@ -4502,8 +4535,8 @@
+@@ -4502,8 +4537,8 @@
                          else {
                              iperf_printf(test, report_bw_udp_format, sp->socket, mbuf, start_time, sender_time, ubuf, nbuf, 0.0, (int64_t) 0, (sender_packet_count - sender_omitted_packet_count), (double) 0, report_sender);
                          }
@@ -1488,7 +1503,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                      }
                  }
  
-@@ -4558,9 +4591,9 @@
+@@ -4558,9 +4593,9 @@
                       */
                      if (! test->json_output) {
                          if (test->omit == 0 && receiver_packet_count > 0) {
@@ -1500,7 +1515,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                          }
                          else {
                              lost_percent = 0.0;
-@@ -4572,11 +4605,11 @@
+@@ -4572,11 +4607,11 @@
                          }
                          else {
                              if (test->omit == 0) {
@@ -1515,7 +1530,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                              }
                          }
                      }
-@@ -4797,7 +4830,7 @@
+@@ -4797,7 +4832,7 @@
  void
  iperf_reporter_callback(struct iperf_test *test)
  {
@@ -1524,7 +1539,7 @@ diff --git a/iperf_api.c b/iperf_api.c
          case TEST_RUNNING:
          case STREAM_RUNNING:
              /* print interval results for each stream */
-@@ -4989,7 +5022,7 @@
+@@ -4989,7 +5024,7 @@
  
      sp = (struct iperf_stream *) malloc(sizeof(struct iperf_stream));
      if (!sp) {
@@ -1533,7 +1548,7 @@ diff --git a/iperf_api.c b/iperf_api.c
          goto err_exit;
      }
  
-@@ -5000,7 +5033,7 @@
+@@ -5000,7 +5035,7 @@
      sp->settings = test->settings;
      sp->result = (struct iperf_stream_result *) malloc(sizeof(struct iperf_stream_result));
      if (!sp->result) {
@@ -1542,7 +1557,7 @@ diff --git a/iperf_api.c b/iperf_api.c
          goto err_exit_free_sp;
      }
  
-@@ -5010,11 +5043,11 @@
+@@ -5010,11 +5045,11 @@
      /* Create and randomize the buffer */
      sp->buffer_fd = mkstemp(template);
      if (sp->buffer_fd == -1) {
@@ -1556,7 +1571,7 @@ diff --git a/iperf_api.c b/iperf_api.c
          goto err_exit_close_buffer;
      }
      size = test->settings->blksize;
-@@ -5025,12 +5058,12 @@
+@@ -5025,12 +5060,12 @@
      if (sp->test->debug)
          printf("Buffer %d bytes\n", size);
      if (ftruncate(sp->buffer_fd, size) < 0) {
@@ -1571,7 +1586,7 @@ diff --git a/iperf_api.c b/iperf_api.c
          goto err_exit_close_buffer;
      }
      sp->pending_size = 0;
-@@ -5044,7 +5077,7 @@
+@@ -5044,7 +5079,7 @@
      if (test->diskfile_name != (char*) 0) {
          sp->diskfile_fd = open(test->diskfile_name, sender ? O_RDONLY : (O_WRONLY|O_CREAT|O_TRUNC), S_IRUSR|S_IWUSR);
          if (sp->diskfile_fd == -1) {
@@ -1580,7 +1595,7 @@ diff --git a/iperf_api.c b/iperf_api.c
              goto err_exit_munmap_buffer;
          }
          sp->snd2 = sp->snd;
-@@ -5095,7 +5128,7 @@
+@@ -5095,7 +5130,7 @@
  	if (getsockdomain(s) == AF_INET6) {
  #ifdef IPV6_TCLASS
  	    if (setsockopt(s, IPPROTO_IPV6, IPV6_TCLASS, &opt, sizeof(opt)) < 0) {
@@ -1589,7 +1604,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  return -1;
              }
  
-@@ -5107,12 +5140,12 @@
+@@ -5107,12 +5142,12 @@
                  }
              }
  #else
@@ -1604,7 +1619,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  return -1;
              }
          }
-@@ -5129,12 +5162,12 @@
+@@ -5129,12 +5164,12 @@
  
      len = sizeof(struct sockaddr_storage);
      if (getsockname(sp->socket, (struct sockaddr *) &sp->local_addr, &len) < 0) {
@@ -1619,7 +1634,7 @@ diff --git a/iperf_api.c b/iperf_api.c
          return -1;
      }
  
-@@ -5152,25 +5185,25 @@
+@@ -5152,25 +5187,25 @@
  #if defined(IP_MTU_DISCOVER) /* Linux version of IP_DONTFRAG */
          opt = IP_PMTUDISC_DO;
          if (setsockopt(sp->socket, IPPROTO_IP, IP_MTU_DISCOVER, &opt, sizeof(opt)) < 0) {
@@ -1649,7 +1664,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  	return -1;
  #endif /* IP_DONTFRAGMENT */
  #endif /* IP_DONTFRAG */
-@@ -5226,7 +5259,7 @@
+@@ -5226,7 +5261,7 @@
      static int rtot;
  
      /* if needed, read enough data from the disk to fill up the buffer */
@@ -1658,7 +1673,7 @@ diff --git a/iperf_api.c b/iperf_api.c
      	r = read(sp->diskfile_fd, sp->buffer, sp->test->settings->blksize -
      		 sp->diskfile_left);
          buffer_left += r;
-@@ -5248,7 +5281,7 @@
+@@ -5248,7 +5283,7 @@
  
          // If there's no work left, we're done.
          if (buffer_left == 0) {
@@ -1667,7 +1682,7 @@ diff --git a/iperf_api.c b/iperf_api.c
      	    if (sp->test->debug)
      		  printf("done\n");
      	}
-@@ -5257,10 +5290,10 @@
+@@ -5257,10 +5292,10 @@
      // If there's no data left in the file or in the buffer, we're done.
      // No more data available to be sent.
      // Return without sending data to the network
@@ -1680,7 +1695,7 @@ diff --git a/iperf_api.c b/iperf_api.c
          return 0;
      }
  
-@@ -5329,9 +5362,9 @@
+@@ -5329,9 +5364,9 @@
       * then dump out the accumulated stats so far.
       */
      if (test->role == 'c' ||
@@ -1693,7 +1708,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  	cpu_util(test->cpu_util);
  	test->stats_callback(test);
  	iperf_set_test_state(test, DISPLAY_RESULTS); /* change local state only */
-@@ -5342,9 +5375,10 @@
+@@ -5342,9 +5377,10 @@
  
      if (test->ctrl_sck >= 0) {
  	iperf_set_test_state(test, (test->role == 'c') ? CLIENT_TERMINATE : SERVER_TERMINATE);
@@ -1707,7 +1722,7 @@ diff --git a/iperf_api.c b/iperf_api.c
  
      exit_normal = 0;
  #ifdef SIGTERM
-@@ -5360,9 +5394,9 @@
+@@ -5360,9 +5396,9 @@
          exit_normal = 1;
  #endif
      if (exit_normal) {
@@ -1719,7 +1734,7 @@ diff --git a/iperf_api.c b/iperf_api.c
      }
  }
  
-@@ -5551,7 +5585,7 @@
+@@ -5551,7 +5587,7 @@
      CPU_ZERO(&cpu_set);
      CPU_SET(affinity, &cpu_set);
      if (sched_setaffinity(0, sizeof(cpu_set_t), &cpu_set) != 0) {
@@ -1728,7 +1743,7 @@ diff --git a/iperf_api.c b/iperf_api.c
          return -1;
      }
      return 0;
-@@ -5560,7 +5594,7 @@
+@@ -5560,7 +5596,7 @@
  
      if(cpuset_getaffinity(CPU_LEVEL_WHICH, CPU_WHICH_PID, -1,
                            sizeof(cpuset_t), &test->cpumask) != 0) {
@@ -1737,7 +1752,7 @@ diff --git a/iperf_api.c b/iperf_api.c
          return -1;
      }
  
-@@ -5569,7 +5603,7 @@
+@@ -5569,7 +5605,7 @@
  
      if(cpuset_setaffinity(CPU_LEVEL_WHICH,CPU_WHICH_PID, -1,
                            sizeof(cpuset_t), &cpumask) != 0) {
@@ -1746,7 +1761,7 @@ diff --git a/iperf_api.c b/iperf_api.c
          return -1;
      }
      return 0;
-@@ -5578,12 +5612,12 @@
+@@ -5578,12 +5614,12 @@
  	DWORD_PTR processAffinityMask = 1 << affinity;
  
  	if (SetProcessAffinityMask(process, processAffinityMask) == 0) {
@@ -1761,7 +1776,7 @@ diff --git a/iperf_api.c b/iperf_api.c
      return -1;
  #endif /* neither HAVE_SCHED_SETAFFINITY nor HAVE_CPUSET_SETAFFINITY nor HAVE_SETPROCESSAFFINITYMASK */
  }
-@@ -5599,14 +5633,14 @@
+@@ -5599,14 +5635,14 @@
      for (i = 0; i < CPU_SETSIZE; ++i)
  	CPU_SET(i, &cpu_set);
      if (sched_setaffinity(0, sizeof(cpu_set_t), &cpu_set) != 0) {
@@ -1778,7 +1793,7 @@ diff --git a/iperf_api.c b/iperf_api.c
          return -1;
      }
      return 0;
-@@ -5617,12 +5651,12 @@
+@@ -5617,12 +5653,12 @@
  
  	if (GetProcessAffinityMask(process, &processAffinityMask, &lpSystemAffinityMask) == 0
  			|| SetProcessAffinityMask(process, lpSystemAffinityMask) == 0) {
@@ -1793,7 +1808,7 @@ diff --git a/iperf_api.c b/iperf_api.c
      return -1;
  #endif /* neither HAVE_SCHED_SETAFFINITY nor HAVE_CPUSET_SETAFFINITY nor HAVE_SETPROCESSAFFINITYMASK */
  }
-@@ -5761,7 +5795,7 @@
+@@ -5761,7 +5797,7 @@
          // Set keepalive using system defaults
          opt = 1;
          if (setsockopt(test->ctrl_sck, SOL_SOCKET, SO_KEEPALIVE, (char *) &opt, sizeof(opt))) {
@@ -1802,7 +1817,7 @@ diff --git a/iperf_api.c b/iperf_api.c
              return -1;
          }
  
-@@ -5769,21 +5803,21 @@
+@@ -5769,21 +5805,21 @@
          if ((kaidle = test->settings->cntl_ka_keepidle) == 0) {
              len = sizeof(kaidle);
              if (getsockopt(test->ctrl_sck, IPPROTO_TCP, TCP_KEEPIDLE, (char *) &kaidle, &len)) {
@@ -1827,7 +1842,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  return -1;
              }
          }
-@@ -5793,7 +5827,7 @@
+@@ -5793,7 +5829,7 @@
          if (test->settings->cntl_ka_keepidle) {
              if (test->settings->cntl_ka_keepidle <= (kainterval * kacount)) {
                  iperf_err(test, "Keepalive Idle time (%d) should be greater than Retries-interval (%d) times Retries-count (%d)", kaidle, kainterval, kacount);
@@ -1836,7 +1851,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  return -1;
              }
          }
-@@ -5801,19 +5835,19 @@
+@@ -5801,19 +5837,19 @@
          // Set keep alive values when specified
          if ((opt = test->settings->cntl_ka_keepidle)) {
              if (setsockopt(test->ctrl_sck, IPPROTO_TCP, TCP_KEEPIDLE, (char *) &opt, sizeof(opt))) {
@@ -1859,7 +1874,7 @@ diff --git a/iperf_api.c b/iperf_api.c
                  return -1;
              }
          }
-@@ -5827,3 +5861,19 @@
+@@ -5827,3 +5863,19 @@
      return 0;
  }
  #endif //HAVE_TCP_KEEPALIVE

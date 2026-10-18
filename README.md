@@ -218,6 +218,70 @@ effect only when the resulting UDP socket is IPv4.
 
 ## Configuration mapping
 
+### Optional bounded logs and resource release
+
+`logfileByteLimit` is opt-in; `nil` keeps the existing CLI logfile behavior.
+Set a byte limit together with `logfile` to retain a prefix within a fixed
+file budget. The minimum is `IperfConfiguration.minimumLogfileByteLimit`;
+invalid limits or a missing path fail preflight with `IELOGFILELIMIT`.
+
+```swift
+var configuration = IperfConfiguration()
+configuration.logfile = ownedLogURL.path
+configuration.logfileByteLimit = 8 * 1024 * 1024
+let runner = IperfRunner(with: configuration)
+runner.start(
+    { interval in /* consume measurements promptly */ },
+    { error in /* handle measurement errors */ },
+    { state in /* update presentation */ },
+    onResourcesReleased: { completion in
+        // All native resources, including the logfile FILE, are now released.
+        // Inspect completion.logfile before using or reclaiming the owned file.
+    }
+)
+```
+
+The budget includes existing bytes and at most one new `[iperf log truncated]`
+marker per accepted run.
+Overflow discards subsequent output without stopping measurement or callbacks.
+The retained prefix ends at a UTF-8 scalar boundary for valid UTF-8 input; it
+does not promise a whole grapheme, line, or JSON document. A bounded logfile is
+not a replacement for structured result callbacks. At most the marker length
+plus three bytes remain buffered until close, including after `fflush`, so an
+exactly full file is not incorrectly labelled truncated.
+
+The existing Swift JSON streaming callback route bypasses logfile output; its
+file can be empty in both bounded and unbounded mode. This option limits only
+actual file writes, not JSON callback payloads or captured server-output memory.
+
+Existing content is never overwritten. If fewer than a marker's bytes remain,
+new output is discarded and truncation is reported only in the completion. An
+already oversized file is untouched and reports `EFBIG`; its existing size
+is not claimed to satisfy the new limit. Only regular files are supported.
+The caller must exclusively own the path throughout the run. Concurrent writers,
+external replacement, filesystem allocation overhead, and other files are
+outside this per-file byte budget. This does not promise persistent storage on
+tvOS or a whole-app memory/disk budget.
+
+With bounded logging enabled, open/write/close failures are recorded separately
+in `IperfLogfileResult` and do not fail the measurement. The first write failure
+disables later writes for that run. Default unbounded logging retains its
+existing engine error behavior. A persistent server shares one budget across
+client connections and closes/reopens its sink without repeating the marker.
+
+The existing `.finished` callback timing is unchanged and can precede native
+teardown. Use `onResourcesReleased` to delete an owned file safely. Each accepted
+start completes once, including validation failure, queued cancellation, and
+deallocation while queued; ignored overlapping starts do not complete. A
+persistent server completes only when it exits. `completion.runID` identifies
+the generation and `completion.logfile` is nil if bounded logging was disabled
+or no file open was attempted. Callbacks have no guaranteed delivery queue and
+must return promptly. The runner's `completion` property is cleared by a new
+accepted start, so retain the callback payload when restarting.
+Prefer a unique logfile path per run. If another run reuses a path before an
+older completion is delivered, that completion does not authorize deleting the
+new run's file; coordinate path ownership separately from the runner state.
+
 The wrapper follows the official iperf3 options where the embedded API exposes
 them. “Client” and “Server” below refer to the local Swift endpoint. Unless a
 row narrows it, a client test supports upload, download, and bidirectional modes
@@ -241,7 +305,8 @@ interface, and socket constraints remain runtime decisions.
 | `rcvTimeout` | `--rcv-timeout` | Server; Client download / bidirectional | `0.1...86,400` seconds; invalid values fail with `IERCVTIMEOUT`, while Client upload fails with `IERVRSONLYRCVTIMEOUT` |
 | `reporterInterval` | `--interval` | Client / Server | Seconds; zero disables periodic callbacks, otherwise accepts `0.1...60` (iperf3's `MIN_INTERVAL`/`MAX_INTERVAL`); values below the minimum, out of range, or nonfinite fail with `IEINTERVAL` before timer creation |
 | `statsInterval` | — | Ignored | Retained for compatibility; statistics always sample at `reporterInterval` |
-| `logfile` | `--logfile` | Client / Server | File-open failures are reported by the engine at runtime |
+| `logfile` | `--logfile` | Client / Server | Default unbounded mode reports file-open failures through the engine; bounded mode reports them separately at resource release |
+| `logfileByteLimit` | — | Client / Server | Optional per-file byte budget; see bounded-log semantics above |
 | `verbose` | `--verbose` | Client / Server | Enables verbose libiperf text logging |
 
 ### Client test options
@@ -413,6 +478,17 @@ Run a focused suite:
 swift test --filter IperfSwiftUnitTests
 swift test --filter IperfCLIIntegrationTests
 ```
+
+For Xcode's macOS test runner, explicitly forward the selected executables:
+
+```sh
+TEST_RUNNER_IPERF3_PATH="$IPERF3_PATH" \
+TEST_RUNNER_OPENSSL_PATH="$OPENSSL_PATH" \
+xcodebuild -scheme IperfSwift -destination 'platform=macOS' test
+```
+
+`xcodebuild` strips the `TEST_RUNNER_` prefix when passing these environment
+variables to test processes; a shell-only override does not select the CLI there.
 
 Run the standalone C checks after resolving/building the package:
 

@@ -2065,7 +2065,9 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
  */
 int iperf_open_logfile(struct iperf_test *test)
 {
-    test->outfile = fopen(test->logfile, "a+");
+    test->outfile = test->logfile_status.limit
+        ? iperf_bounded_log_open(test->logfile, &test->logfile_status)
+        : fopen(test->logfile, "a+");
     if (test->outfile == NULL) {
         iperf_set_error(IELOGFILE);
         return -1;

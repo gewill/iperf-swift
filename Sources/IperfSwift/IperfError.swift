@@ -260,6 +260,8 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
     case IEIPV4ONLY = 404
     /// The client connection timeout is invalid or out of range.
     case IECONNECTTIMEOUT = 405
+    /// The optional logfile budget is too small or has no logfile path.
+    case IELOGFILELIMIT = 406
     
     /// A human-readable description of the error code.
     public var debugDescription: String {
@@ -506,6 +508,8 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
             return "This option is IPv4 only"
         case .IECONNECTTIMEOUT:
             return "Client connection timeout is invalid or out of range"
+        case .IELOGFILELIMIT:
+            return "Logfile byte limit requires a path and room for the truncation marker"
         }
     }
 
