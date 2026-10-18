@@ -37,9 +37,6 @@ maintained. Development continues here without upstream involvement.
 
 ## Installation
 
-The example below selects the latest published 3.21 package series. The 3.22
-engine upgrade on `develop` is unreleased; package releases will use `3.22.x`.
-
 In Xcode, choose **File > Add Package Dependencies** and enter:
 
 ```text
@@ -52,7 +49,7 @@ Or add the package to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/gewill/iperf-swift.git",
-        from: "3.21.19"
+        from: "3.22.0"
     )
 ]
 ```
@@ -489,7 +486,7 @@ generated C source because the next sync will overwrite them.
 ## Versioning
 
 The Swift package and embedded engine have separate versions. For example,
-package release `3.21.19` embeds the official iperf3 `3.21` engine. See
+package release `3.22.0` embeds the official iperf3 `3.22` engine. See
 [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## Roadmap

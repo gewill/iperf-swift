@@ -9,6 +9,17 @@ package release number.
 
 ## [Unreleased]
 
+## [3.22.0] - 2026-10-18
+
+The iperf3 3.22 engine release. IperfSwift now embeds official iperf3 3.22 and
+keeps its authentication, socket ownership and in-process safety protections
+([#198], [#199]).
+
+**Migration:** an out-of-range `dscp` now fails with `IEBADDSCP` instead of
+`IEBADTOS`, matching CLI 3.22. Exhaustive `switch` statements over
+`IperfError` must also handle the new `IEBADDSCP` and `IERVRSONLYSKIPRXCOPY`
+cases.
+
 ### Changed
 
 - Upgrade the bundled engine and pinned CLI test baseline to official iperf3
@@ -43,6 +54,10 @@ package release number.
   exhaustion, blocked zerocopy teardown, released stream descriptors, and
   stream-setup socket cleanup.
   Both standalone ASan checks now run in CI.
+- Document that `publicKey` and `privateKey` take Base64-encoded PEM text, never
+  a file path or Base64 of a path, and test that Swift preflight and the C
+  setters reject paths. CLI parity tests now compare the engine's exact
+  parameter error rather than only its prefix.
 
 ## [3.21.19] - 2026-10-13
 
@@ -902,7 +917,8 @@ unchanged from 3.21.6.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.21.19...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.22.0...HEAD
+[3.22.0]: https://github.com/gewill/iperf-swift/compare/v3.21.19...v3.22.0
 [3.21.19]: https://github.com/gewill/iperf-swift/compare/v3.21.18...v3.21.19
 [3.21.18]: https://github.com/gewill/iperf-swift/compare/v3.21.17...v3.21.18
 [3.21.17]: https://github.com/gewill/iperf-swift/compare/v3.21.16...v3.21.17
@@ -1005,3 +1021,5 @@ unchanged from 3.21.6.
 [#186]: https://github.com/gewill/iperf-swift/pull/186
 [#187]: https://github.com/gewill/iperf-swift/pull/187
 [#191]: https://github.com/gewill/iperf-swift/issues/191
+[#198]: https://github.com/gewill/iperf-swift/issues/198
+[#199]: https://github.com/gewill/iperf-swift/pull/199

@@ -28,7 +28,7 @@ public struct IperfStreamIntervalResult {
     public var intervalRetrans: Int = 0
     /// TCP send window in bytes as reported by libiperf.
     public var snd_wnd: Int = 0
-    /// Congestion window in bytes, populated from macOS `tcp_info` in iperf 3.21.
+    /// Congestion window in bytes, populated from macOS `tcp_info`.
     public var sndCwnd: Int = 0
     /// Round-trip time in microseconds, when the platform exposes TCP info.
     public var rtt: Int = 0
