@@ -166,8 +166,13 @@ iperf_create_streams(struct iperf_test *test, int sender)
 #endif /* HAVE_TCP_CONGESTION */
 
         sp = iperf_new_stream(test, s, sender);
-        if (!sp)
+        if (!sp) {
+            /* s never joined test->streams, so iperf_client_end() cannot close it. */
+            int close_errno = errno;
+            close(s);
+            errno = close_errno;
             return -1;
+        }
 
         /* Perform the new stream callback */
         if (test->on_new_stream)
@@ -423,7 +428,7 @@ iperf_handle_message_client(struct iperf_test *test)
 int
 iperf_connect(struct iperf_test *test)
 {
-    int opt;
+    int opt, n;
     socklen_t len;
 
     if (NULL == test)
@@ -530,7 +535,11 @@ iperf_connect(struct iperf_test *test)
 	    test->settings->gso_dg_size = test->settings->blksize;
 	    /* use the multiple of datagram size for the best efficiency. */
 	    if (test->settings->gso_dg_size > 0) {
-		test->settings->gso_bf_size = (test->settings->gso_bf_size / test->settings->gso_dg_size) * test->settings->gso_dg_size;
+                n = test->settings->gso_bf_size / test->settings->gso_dg_size;
+                if (n > GSO_MAX_DG_IN_BF) {
+                    n = GSO_MAX_DG_IN_BF;
+                }
+		test->settings->gso_bf_size = n * test->settings->gso_dg_size;
 	    } else {
 		/* If gso_dg_size is 0 (unlimited bandwidth), use default UDP datagram size */
 		test->settings->gso_dg_size = DEFAULT_UDP_BLKSIZE;
@@ -567,6 +576,10 @@ iperf_client_end(struct iperf_test *test)
     /* Close all stream sockets */
     SLIST_FOREACH(sp, &test->streams, streams) {
         close(sp->socket);
+        if (sp->buffer_fd >= 0) {
+            close(sp->buffer_fd);
+            sp->buffer_fd = -1;
+        }
     }
 
     /* show final summary */
@@ -776,6 +789,20 @@ iperf_run_client(struct iperf_test * test)
 						 __atomic_load_n(&test->bytes_received, __ATOMIC_SEQ_CST) >= test->settings->bytes)) ||
 	         (test->settings->blocks != 0 && (__atomic_load_n(&test->blocks_sent, __ATOMIC_SEQ_CST) >= test->settings->blocks ||
 						  __atomic_load_n(&test->blocks_received, __ATOMIC_SEQ_CST) >= test->settings->blocks)))) {
+
+                /*
+                 * Cancel the periodic timers.  As the timers are not re-set in this stage their expiration time
+                 * is in the past, so without the cancellation the select() timeout is set to 0,
+                 * and it enters a loop while waiting the exchanged results, etc.
+                 */
+                if (test->stats_timer != NULL) {
+                    tmr_cancel(test->stats_timer);
+                    test->stats_timer = NULL;
+                }
+                if (test->reporter_timer != NULL) {
+                    tmr_cancel(test->reporter_timer);
+                    test->reporter_timer = NULL;
+                }
 
                 /* Cancel outstanding sender threads */
                 SLIST_FOREACH(sp, &test->streams, streams) {

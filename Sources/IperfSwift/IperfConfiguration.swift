@@ -191,6 +191,7 @@ public struct IperfConfiguration {
     /// milliseconds and must fit in a signed 32-bit millisecond value.
     public var timeout: TimeInterval?
     /// The client DSCP value in the range `0...63`, equivalent to `--dscp`.
+    /// Values outside this range fail with ``IperfError/IEBADDSCP``.
     public var dscp: Int?
     /// The full IP type-of-service byte in the range `0...255`, equivalent to `--tos`.
     ///
@@ -305,6 +306,9 @@ public struct IperfConfiguration {
     // MARK: Client authentication
 
     /// A PEM public key encoded as Base64 for authenticated client encryption.
+    ///
+    /// Pass Base64 of the PEM content itself, not a file path or Base64 of a
+    /// path. The key is parsed from memory; no key file is opened.
     public var publicKey: String = ""
     /// The nonempty username sent by an authenticated client.
     public var username: String = ""
@@ -314,6 +318,9 @@ public struct IperfConfiguration {
     // MARK: Server authentication
 
     /// An unencrypted PEM private key encoded as Base64 for authenticated server decryption.
+    ///
+    /// Pass Base64 of the PEM content itself, not a file path or Base64 of a
+    /// path. The key is parsed from memory and stays on the server.
     public var privateKey: String = ""
     /// Nonempty authorized-user content in iperf3's `username,sha256` format.
     ///

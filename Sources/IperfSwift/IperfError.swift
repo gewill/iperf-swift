@@ -31,7 +31,7 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
     case IECLIENTONLY = 4
     /// The test duration exceeds the engine's `MAX_TIME` limit.
     case IEDURATION = 5
-    /// The number of parallel streams exceeds `MAX_STREAMS`.
+    /// The number of parallel streams is outside `1...MAX_STREAMS`.
     case IENUMSTREAMS = 6
     /// The block size exceeds `MAX_BLOCKSIZE`.
     case IEBLOCKSIZE = 7
@@ -97,6 +97,10 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
     case IEMAXSERVERTESTDURATIONEXCEEDED = 37
     /// A value or unit suffix is invalid.
     case IEUNITVAL = 38
+    /// The required endpoint does not support skipping receive copies.
+    case IERVRSONLYSKIPRXCOPY = 39
+    /// The DSCP value is invalid.
+    case IEBADDSCP = 40
     /* Test errors */
     /// The engine could not create a new test.
     case IENEWTEST = 100
@@ -276,7 +280,7 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
         case .IEDURATION:
             return "test duration too long. Maximum value = %dMAX_TIME"
         case .IENUMSTREAMS:
-            return "Number of parallel streams too large. Maximum value = %dMAX_STREAMS"
+            return "Invalid number of parallel streams. Valid range = 1...128"
         case .IEBLOCKSIZE:
             return "Block size too large. Maximum value = %dMAX_BLOCKSIZE"
         case .IEBUFSIZE:
@@ -305,6 +309,10 @@ public enum IperfError: Int32, CaseIterable, Error, LocalizedError, CustomString
             return "UNUSED:  Local port specified with no local bind option"
         case .IEUDPBLOCKSIZE:
             return "Block size invalid"
+        case .IERVRSONLYSKIPRXCOPY:
+            return "This OS does not support skipping receive copies"
+        case .IEBADDSCP:
+            return "Bad DSCP value (must be between 0 and 63 inclusive)"
         case .IEBADTOS:
             return "Bad TOS value"
         case .IESETCLIENTAUTH:

@@ -1,6 +1,7 @@
 import XCTest
 import Foundation
 import Darwin
+import IperfCLib
 @testable import IperfSwift
 
 final class IperfCLIIntegrationTests: XCTestCase {
@@ -88,7 +89,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let executable = directory.appendingPathComponent("iperf3")
-        try "#!/bin/sh\necho 'iperf 3.22 (cJSON 1.7.15)'\n".write(
+        try "#!/bin/sh\necho 'iperf 3.21 (cJSON 1.7.15)'\n".write(
             to: executable,
             atomically: true,
             encoding: .utf8
@@ -98,7 +99,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         XCTAssertThrowsError(try TestTools(iperf3Candidates: [executable.path])) { error in
             XCTAssertEqual(
                 error.localizedDescription,
-                "CLI interoperability requires iperf 3.21, but \(executable.path) reports: iperf 3.22 (cJSON 1.7.15)"
+                "CLI interoperability requires iperf 3.22, but \(executable.path) reports: iperf 3.21 (cJSON 1.7.15)"
             )
         }
     }
@@ -134,8 +135,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 tools.iperf3,
                 arguments: ["-c", "127.0.0.1"] + arguments
             )
-            XCTAssertNotEqual(cliResult.status, 0)
-            XCTAssertTrue(cliResult.output.contains("parameter error"), cliResult.output)
+            cliResult.assertParameterError(expectedError)
 
             var configuration = IperfConfiguration()
             configuration.address = "invalid.invalid"
@@ -157,6 +157,10 @@ final class IperfCLIIntegrationTests: XCTestCase {
         typealias Mutation = (inout IperfConfiguration) -> Void
         let tools = try TestTools()
         let testCases: [(String, String, Mutation, IperfError)] = [
+            ("-P", "0", { $0.numStreams = 0 }, .IENUMSTREAMS),
+            ("-w", "-1", { $0.socketBufferSize = -1 }, .IEBUFSIZE),
+            ("-M", "-1", { $0.mss = -1 }, .IEMSS),
+            ("--dscp", "64", { $0.dscp = 64 }, .IEBADDSCP),
             ("-P", "129", { $0.numStreams = 129 }, .IENUMSTREAMS),
             ("-w", "536870913", { $0.socketBufferSize = 536_870_913 }, .IEBUFSIZE),
             ("-M", "32768", { $0.mss = 32_768 }, .IEMSS),
@@ -168,8 +172,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 tools.iperf3,
                 arguments: ["-c", "127.0.0.1", option, value]
             )
-            XCTAssertNotEqual(cliResult.status, 0)
-            XCTAssertTrue(cliResult.output.contains("parameter error"), cliResult.output)
+            cliResult.assertParameterError(expectedError)
 
             var configuration = IperfConfiguration()
             configuration.address = "invalid.invalid"
@@ -994,6 +997,9 @@ final class IperfCLIIntegrationTests: XCTestCase {
     func testSwiftServerAcceptsAuthenticatedCLIClient() throws {
         let tools = try TestTools()
         let credentials = try tools.makeCredentials()
+        // Only the CLI needs a key file. The Swift server receives PEM text
+        // encoded as Base64 and must work after its source file is deleted.
+        try FileManager.default.removeItem(at: credentials.privateKeyURL)
         let port = try TestTools.freePort()
 
         var configuration = IperfConfiguration()
@@ -3117,6 +3123,50 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
     // MARK: Client-side authentication
 
+    func testRSAKeyConfigurationRejectsExistingFilePaths() throws {
+        let tools = try TestTools()
+        let credentials = try tools.makeCredentials()
+        let publicKeyBase64 = try credentials.publicKeyBase64()
+
+        for role in [IperfRole.client, .server] {
+            let keyURL = role == .client ? credentials.publicKeyURL : credentials.privateKeyURL
+            let keyText = role == .client ? publicKeyBase64 : credentials.privateKeyBase64
+            XCTAssertTrue(FileManager.default.fileExists(atPath: keyURL.path))
+            XCTAssertEqual(try Data(contentsOf: keyURL).base64EncodedString(), keyText)
+
+            var configuration = IperfConfiguration()
+            configuration.role = role
+            configuration.isAuth = true
+            if role == .client {
+                configuration.username = credentials.username
+                configuration.password = credentials.password
+                configuration.publicKey = keyText
+            } else {
+                configuration.privateKey = keyText
+                configuration.authorizedUsers = credentials.authorizedUsers
+            }
+            // Prove these are valid keys before checking that neither a path
+            // nor Base64(path) can substitute for Base64(PEM content).
+            XCTAssertNil(IperfRunner.authenticationError(for: configuration))
+            for path in [keyURL.path, Data(keyURL.path.utf8).base64EncodedString()] {
+                let test = try XCTUnwrap(iperf_new_test())
+                defer { iperf_free_test(test) }
+                XCTAssertEqual(iperf_defaults(test), 0)
+                if role == .client {
+                    configuration.publicKey = path
+                    XCTAssertEqual(IperfRunner.authenticationError(for: configuration), .IESETCLIENTAUTH)
+                    iperf_set_test_client_rsa_pubkey(test, path)
+                    XCTAssertNil(test.pointee.settings.pointee.client_rsa_pubkey)
+                } else {
+                    configuration.privateKey = path
+                    XCTAssertEqual(IperfRunner.authenticationError(for: configuration), .IESETSERVERAUTH)
+                    iperf_set_test_server_rsa_privkey(test, path)
+                    XCTAssertNil(test.pointee.server_rsa_private_key)
+                }
+            }
+        }
+    }
+
     func testSwiftClientAuthenticatesWithCLIServer() throws {
         try assertSwiftClientAuthenticates(usePkcs1Padding: false)
     }
@@ -3131,6 +3181,10 @@ final class IperfCLIIntegrationTests: XCTestCase {
     private func assertSwiftClientAuthenticates(usePkcs1Padding: Bool) throws {
         let tools = try TestTools()
         let credentials = try tools.makeCredentials()
+        let publicKeyBase64 = try credentials.publicKeyBase64()
+        // The CLI server reads its private-key file; the Swift client must
+        // authenticate using only the public-key text, in both padding modes.
+        try FileManager.default.removeItem(at: credentials.publicKeyURL)
         let port = try TestTools.freePort()
         let server = try tools.startAuthenticatedCLIServer(
             port: port, credentials: credentials, usePkcs1Padding: usePkcs1Padding)
@@ -3152,7 +3206,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         configuration.usePkcs1Padding = usePkcs1Padding
         configuration.username = credentials.username
         configuration.password = credentials.password
-        configuration.publicKey = try credentials.publicKeyBase64()
+        configuration.publicKey = publicKeyBase64
 
         let finished = expectation(description: "authenticated Swift client finished")
         var didFinish = false
@@ -4056,12 +4110,26 @@ final class IperfCLIIntegrationTests: XCTestCase {
 private struct ProcessResult {
     let status: Int32
     let output: String
+
+    /// The CLI prints `parameter error - <iperf_strerror(i_errno)>`, so the
+    /// engine's own message identifies which error the argument was rejected
+    /// with; matching only the prefix would accept any parameter error.
+    func assertParameterError(
+        _ error: IperfError,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertNotEqual(status, 0, file: file, line: line)
+        let message = String(cString: iperf_strerror(error.rawValue))
+        XCTAssertTrue(output.contains("parameter error - \(message)"), output, file: file, line: line)
+    }
 }
 
 private struct Credentials {
     let username = "iperf-test-user"
     let password = "iperf-test-password"
     let privateKeyBase64: String
+    let privateKeyURL: URL
     let publicKeyURL: URL
     let authorizedUsers: String
 
@@ -4148,6 +4216,7 @@ private final class TestTools {
         let privateKeyBase64 = try Data(contentsOf: privateKeyURL).base64EncodedString()
         return Credentials(
             privateKeyBase64: privateKeyBase64,
+            privateKeyURL: privateKeyURL,
             publicKeyURL: publicKeyURL,
             authorizedUsers: "iperf-test-user,\(hash)\n"
         )

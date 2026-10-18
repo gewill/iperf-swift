@@ -141,6 +141,8 @@ configuration.reporterInterval = 1
 - ``IperfConfiguration/dscp`` — `--dscp` (`0...63`) and ``IperfConfiguration/tos`` —
   `--tos` (`0...255`). The runner always applies `dscp` first and `tos` second, so
   when both are set `tos` wins regardless of the order you assign them.
+  Out-of-range values fail with ``IperfError/IEBADDSCP`` for `dscp` and
+  ``IperfError/IEBADTOS`` for `tos`.
 - ``IperfConfiguration/clientPort`` — `--cport` local bind port
 - ``IperfConfiguration/repeatingPayload`` — `--repeating-payload`
 - ``IperfConfiguration/getServerOutput`` — `--get-server-output`; see *Server output*
@@ -468,7 +470,7 @@ English message:
 > healthy interval whose ``IperfIntervalResult/debugDescription`` is `"OK"`. The
 > error callback is the authoritative failure channel.
 
-The bundled iperf3 3.21 engine error codes are mapped to their corresponding
+The bundled iperf3 3.22 engine error codes are mapped to their corresponding
 ``IperfError`` cases. ``IperfError/UNKNOWN`` is reserved for an engine code
 that is not declared by the bundled version.
 
