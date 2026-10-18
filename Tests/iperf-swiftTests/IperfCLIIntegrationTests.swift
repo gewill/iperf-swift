@@ -32,11 +32,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         )
 
         for prot in [IperfProtocol.udp, .tcp] {
-            let listening = expectation(
-                for: NSPredicate { _, _ in TestTools.hasLocalTCPListener(port: port) },
-                evaluatedWith: nil
-            )
-            wait(for: [listening], timeout: 3)
+            try waitUntilSwiftServerListens(on: port)
             lock.lock()
             intervals.removeAll()
             lock.unlock()
@@ -938,6 +934,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
             }
         )
         wait(for: [serverRunning], timeout: 3)
+        try waitUntilSwiftServerListens(on: port)
 
         let result = try tools.run(
             tools.iperf3,
@@ -995,6 +992,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
             }
         )
         wait(for: [serverRunning], timeout: 3)
+        try waitUntilSwiftServerListens(on: port)
 
         let result = try tools.run(
             tools.iperf3,
@@ -1041,6 +1039,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
             }
         )
         wait(for: [serverRunning], timeout: 3)
+        try waitUntilSwiftServerListens(on: port)
 
         let result = try tools.run(
             tools.iperf3,
@@ -1097,6 +1096,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
             }
         )
         wait(for: [serverRunning], timeout: 3)
+        try waitUntilSwiftServerListens(on: port)
 
         let result = try tools.run(
             tools.iperf3,
@@ -1619,6 +1619,8 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
         wait(for: [running], timeout: 3)
         wait(for: [prematureTerminal], timeout: 1.5)
+        // An idle restart replaces the listener, as the end of a run does.
+        try waitUntilSwiftServerListens(on: port)
 
         let clientResult = try tools.run(tools.iperf3, arguments: [
             "-c", "127.0.0.1", "-p", String(port), "-n", "1M"
@@ -1676,14 +1678,14 @@ final class IperfCLIIntegrationTests: XCTestCase {
         )
 
         wait(for: [running], timeout: 3)
-        Thread.sleep(forTimeInterval: 0.3)
 
         for clientNumber in 1...2 {
+            // The server replaces its listener after each client.
+            try waitUntilSwiftServerListens(on: port)
             let result = try tools.run(tools.iperf3, arguments: [
                 "-c", "127.0.0.1", "-p", String(port), "-n", "1M"
             ])
             XCTAssertEqual(result.status, 0, "client \(clientNumber): \(result.output)")
-            Thread.sleep(forTimeInterval: 0.1)
         }
         wait(for: [prematureTerminal], timeout: 0.1)
 
@@ -1730,15 +1732,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                 }
             }
         )
-        let listening = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            TestTools.hasLocalTCPListener(port: port)
-        }, object: nil)
-        guard XCTWaiter.wait(for: [listening], timeout: 3) == .completed else {
-            XCTFail("One-off server did not establish its listener")
-            if !didFinish { didFinish = true; finished.fulfill() }
-            wait(for: [finished], timeout: 0.1)
-            return
-        }
+        try waitUntilSwiftServerListens(on: port)
 
         let clientResult = try tools.run(tools.iperf3, arguments: [
             "-c", "127.0.0.1", "-p", String(port), "-t", "1"
@@ -2640,6 +2634,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
             }
         )
         wait(for: [serverRunning], timeout: 3)
+        try waitUntilSwiftServerListens(on: port)
 
         let result = try tools.run(
             tools.iperf3,
@@ -2704,6 +2699,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
             }
         )
         wait(for: [serverRunning], timeout: 3)
+        try waitUntilSwiftServerListens(on: port)
 
         let rejected = try tools.run(
             tools.iperf3,
@@ -2717,7 +2713,9 @@ final class IperfCLIIntegrationTests: XCTestCase {
         XCTAssertNotEqual(rejected.status, 0, "the CLI client was expected to be rejected")
 
         // The server must still be serving, and must not have reported the
-        // rejection as its own failure.
+        // rejection as its own failure. It replaces its listener after a
+        // rejected client as after any other.
+        try waitUntilSwiftServerListens(on: port)
         let accepted = try tools.run(
             tools.iperf3,
             arguments: [
@@ -2771,6 +2769,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
             }
         )
         wait(for: [serverRunning], timeout: 3)
+        try waitUntilSwiftServerListens(on: port)
 
         let result = try tools.run(
             tools.iperf3,
@@ -3450,8 +3449,8 @@ final class IperfCLIIntegrationTests: XCTestCase {
         )
 
         wait(for: [running], timeout: 5)
-        // Let the listener socket bind before stop() shuts it down.
-        Thread.sleep(forTimeInterval: 0.5)
+        // Wait for the listener, so that stop() has one to shut down.
+        try waitUntilSwiftServerListens(on: port)
         server.stop()
         wait(for: [finished], timeout: 5)
         XCTAssertTrue(sawStopping, "a stopped server should pass through the .stopping state")
@@ -3573,7 +3572,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
             }
         )
 
-        Thread.sleep(forTimeInterval: 0.5)
+        try waitUntilSwiftServerListens(on: port)
 
         let cliClient = Process()
         cliClient.executableURL = URL(fileURLWithPath: tools.iperf3)
@@ -3715,6 +3714,42 @@ private extension IperfCLIIntegrationTests {
             }
         }
     }
+
+    struct SwiftServerNotListening: LocalizedError, CustomStringConvertible {
+        let description: String
+
+        var errorDescription: String? { description }
+    }
+
+    /// Returns once the Swift server this process runs on `port` holds no TCP
+    /// socket there but its listener, the condition
+    /// ``CLIServer/waitUntilListening(timeout:)`` waits for in an `iperf3`
+    /// server.
+    ///
+    /// ``IperfRunnerState/running`` is no such signal: the runner reports it
+    /// before the engine opens its listener, so a client started then can find
+    /// nothing listening. Nor, between a persistent server's runs, is a
+    /// listener alone. The engine closes the previous client's control
+    /// connection, then that listener, and only then opens a new one; a client
+    /// that connects in between is refused, or reset when the old listener
+    /// closes.
+    func waitUntilSwiftServerListens(on port: Int, timeout: TimeInterval = 10) throws {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        while true {
+            let states = try TestTools.tcpSocketStates(pid: getpid(), port: port)
+            if states == ["LISTEN"] {
+                return
+            }
+            guard Date() < deadline else {
+                let held = states.isEmpty ? "no TCP socket" : states.joined(separator: ", ")
+                throw SwiftServerNotListening(
+                    description: "the Swift server on port \(port) was not listening alone after "
+                        + "\(timeout)s; this process held \(held) on that port"
+                )
+            }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+    }
 }
 
 private struct ProcessResult {
@@ -3843,36 +3878,6 @@ private final class CLIServer {
 }
 
 private final class TestTools {
-    // Observe this process's listening socket without consuming a one-off client.
-    static func hasLocalTCPListener(port: Int) -> Bool {
-        for descriptor in 0..<min(getdtablesize(), 1_024) {
-            var connection = tcp_connection_info()
-            var size = socklen_t(MemoryLayout<tcp_connection_info>.size)
-            guard getsockopt(descriptor, IPPROTO_TCP, TCP_CONNECTION_INFO, &connection, &size) == 0,
-                  connection.tcpi_state == TCPS_LISTEN else { continue }
-            var address = sockaddr_storage()
-            var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
-            let result = withUnsafeMutablePointer(to: &address) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    getsockname(descriptor, $0, &length)
-                }
-            }
-            guard result == 0 else { continue }
-            let family = address.ss_family
-            let boundPort: UInt16? = withUnsafePointer(to: &address) {
-                if family == sa_family_t(AF_INET) {
-                    return $0.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_port }
-                }
-                if family == sa_family_t(AF_INET6) {
-                    return $0.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { $0.pointee.sin6_port }
-                }
-                return nil
-            }
-            if let boundPort, Int(UInt16(bigEndian: boundPort)) == port { return true }
-        }
-        return false
-    }
-
     let directory: URL
     let iperf3: String
     private let openssl: String?

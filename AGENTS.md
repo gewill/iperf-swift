@@ -105,6 +105,10 @@ rather than probing the port: connecting would consume the one client a `-1`
 server will serve, and binding could take the port from a server that has not
 claimed it yet.
 
+A Swift server in the test process needs the same wait, since `.running`
+arrives before the engine listens: call `waitUntilSwiftServerListens(on:)`
+before each of its clients.
+
 Do not commit private keys, passwords, logs, or machine-specific test fixtures.
 
 ## Documentation

@@ -21,6 +21,13 @@ package release number.
   datagrams. It now also binds both wildcard addresses for TCP and UDP. The
   listener is read with lsof, because connecting would consume the one client a
   `-1` server serves.
+- Internal: tests that connect the CLI to a Swift server wait until it is
+  listening, reading the test process's own sockets with lsof, instead of
+  sleeping a fixed interval or connecting at `.running`, which arrives before
+  the engine listens ([#160]). Between a persistent server's clients the
+  listener must be its only socket on the port: the engine closes the previous
+  client's connection before it replaces the listener, so finding a listener did
+  not mean the next client would reach it.
 
 ## [3.22.0] - 2026-10-18
 
