@@ -5,6 +5,371 @@ import IperfCLib
 @testable import IperfSwift
 
 final class IperfCLIIntegrationTests: XCTestCase {
+    func testBoundedOutputThroughRunnerWithAdversarialResultsAndReuse() throws {
+        let client = IperfRunner(with: IperfConfiguration())
+        addTeardownBlock { client.stop() }
+        for response in [BoundedOutputPeer.Response.missing, .empty, .largeText, .largeJSON] {
+            try runBoundedPeer(client, response: response)
+        }
+        try runBoundedPeer(client, response: .largeText, requested: false)
+        for response in [BoundedOutputPeer.Response.malformed, .excessiveLength, .shortFrame] {
+            try runBoundedPeer(client, response: response)
+            // The same public runner must clear the failure and old output.
+            try runBoundedPeer(client, response: .empty)
+        }
+    }
+
+    func testBoundedOutputRunnerStopInterruptsStalledExchange() throws {
+        let client = IperfRunner(with: IperfConfiguration())
+        addTeardownBlock { client.stop() }
+        try runBoundedPeer(client, response: .stall, cancel: true)
+        try runBoundedPeer(client, response: .empty)
+    }
+
+    func testBoundedOutputRunnerEnforcesFrameDeadline() throws {
+        let client = IperfRunner(with: IperfConfiguration())
+        addTeardownBlock { client.stop() }
+        try runBoundedPeer(client, response: .stall)
+        try runBoundedPeer(client, response: .empty)
+    }
+
+    private func runBoundedPeer(
+        _ client: IperfRunner,
+        response: BoundedOutputPeer.Response,
+        requested: Bool = true,
+        cancel: Bool = false
+    ) throws {
+        let listener = try TestTools.boundListener()
+        let peer = BoundedOutputPeer(listener: listener.descriptor)
+        defer { peer.stop() }
+        let peerDone = expectation(description: "peer cleanup \(response)")
+        let finished = expectation(description: "runner terminal \(response)")
+        let lock = NSLock()
+        var measuredBytes = 0
+        var errors: [IperfError] = []
+        var terminalCount = 0
+        var didSignal = false
+        var exchangeStarted: TimeInterval?
+        let expectsError = [.malformed, .excessiveLength, .shortFrame, .stall].contains(response) && !cancel
+        peer.start(response: response, onExchange: {
+            lock.lock()
+            exchangeStarted = ProcessInfo.processInfo.systemUptime
+            lock.unlock()
+            if cancel { client.stop() }
+        }, completion: { result in
+            switch result {
+            case .success(let bytes): XCTAssertGreaterThan(bytes, 0)
+            case .failure(let error): XCTFail("controlled peer \(response): \(error)")
+            }
+            peerDone.fulfill()
+        })
+        var config = IperfConfiguration()
+        config.address = "127.0.0.1"
+        config.port = listener.port
+        config.duration = 1
+        config.reporterInterval = 0.25
+        config.rate = 2_000_000
+        config.getServerOutput = requested
+        config.serverOutputByteLimit = 64
+        client.start(with: config, { result in
+            lock.lock()
+            measuredBytes += result.totalBytes
+            lock.unlock()
+        }, { error in
+            lock.lock()
+            errors.append(error)
+            terminalCount += 1
+            let signal = !didSignal
+            didSignal = true
+            lock.unlock()
+            if signal { finished.fulfill() }
+        }, { state in
+            if state == .initialising {
+                XCTAssertNil(client.serverOutput)
+                XCTAssertEqual(client.serverOutputStatus?.state, requested ? .waiting : .notRequested)
+            }
+            if state == .finished {
+                lock.lock()
+                terminalCount += 1
+                let signal = !expectsError && !didSignal
+                if signal { didSignal = true }
+                lock.unlock()
+                XCTAssertFalse(expectsError, "result-exchange failure must not announce success")
+                if signal { finished.fulfill() }
+            }
+        })
+        wait(for: [finished, peerDone], timeout: response == .stall && !cancel ? 38 : 10)
+        let status = try XCTUnwrap(client.serverOutputStatus)
+        lock.lock()
+        let observedErrors = errors
+        let observedTerminals = terminalCount
+        let observedBytes = measuredBytes
+        let exchangeTime = exchangeStarted
+        lock.unlock()
+        XCTAssertEqual(observedTerminals, 1)
+        XCTAssertGreaterThan(observedBytes, 0, "real intervals survive result-exchange failure")
+        XCTAssertLessThanOrEqual(status.retainedByteCount, 64)
+        if let exchangeTime {
+            let elapsed = ProcessInfo.processInfo.systemUptime - exchangeTime
+            XCTAssertLessThan(elapsed, cancel ? 3 : 35)
+            if !cancel { XCTAssertGreaterThanOrEqual(elapsed, 29) }
+        }
+        if !requested {
+            XCTAssertEqual(status.state, .notRequested)
+            XCTAssertNil(client.serverOutput)
+            XCTAssertTrue(observedErrors.isEmpty)
+            return
+        }
+        switch response {
+        case .missing:
+            XCTAssertEqual(status.state, .missing)
+            XCTAssertNil(client.serverOutput)
+        case .empty:
+            XCTAssertEqual(status.state, .complete)
+            XCTAssertEqual(client.serverOutput, "")
+        case .largeText:
+            XCTAssertEqual(status.state, .truncated)
+            let output = try XCTUnwrap(client.serverOutput)
+            XCTAssertEqual(output, String(repeating: "網😀\n", count: 8))
+            XCTAssertEqual(status.observedByteCount, 320_000)
+        case .largeJSON:
+            XCTAssertEqual(status.state, .discarded)
+            XCTAssertNil(client.serverOutput)
+        case .malformed, .excessiveLength, .shortFrame, .stall:
+            XCTAssertEqual(status.state, .invalid)
+            XCTAssertNil(client.serverOutput)
+            XCTAssertEqual(observedErrors, cancel ? [] : [.IERECVRESULTS])
+            return
+        }
+        XCTAssertTrue(observedErrors.isEmpty)
+    }
+
+    func testBoundedOutputOneOffServerCanBeReused() throws {
+        let tools = try TestTools()
+        let server = IperfRunner(with: IperfConfiguration())
+        addTeardownBlock { server.stop() }
+        for json in [false, true] {
+            for limit in [64, 262_144] {
+                var config = IperfConfiguration()
+                config.role = .server
+                config.address = "127.0.0.1"
+                config.port = try TestTools.freePort()
+                config.oneOff = true
+                config.jsonStream = json
+                config.serverOutputByteLimit = limit
+                let finished = expectation(description: "bounded one-off server finished")
+                server.start(with: config, { _ in }, { error in XCTFail("one-off: \(error)") }, { state in
+                    if state == .initialising {
+                        XCTAssertEqual(server.localServerOutputStatus?.state, .notRequested)
+                    }
+                    if state == .finished { finished.fulfill() }
+                })
+                let port = config.port
+                try waitUntilSwiftServerListens(on: port)
+                let cli = try tools.run(tools.iperf3, arguments: [
+                    "-c", "127.0.0.1", "-p", String(port), "-t", "1", "-b", "2M", "-J", "--get-server-output"
+                ])
+                XCTAssertEqual(cli.status, 0)
+                wait(for: [finished], timeout: 5)
+                let status = try XCTUnwrap(server.localServerOutputStatus)
+                XCTAssertEqual(status.state, limit == 64 ? (json ? .discarded : .truncated) : .complete)
+                XCTAssertLessThanOrEqual(status.retainedByteCount, limit)
+                XCTAssertNil(server.serverOutput)
+            }
+        }
+    }
+
+    func testBoundedOutputMaximumBidirectionalStreamsPreserveStatistics() throws {
+        let tools = try TestTools()
+        for role in [IperfRole.client, .server] {
+            var config = IperfConfiguration()
+            config.role = role
+            config.address = "127.0.0.1"
+            config.serverOutputByteLimit = 64
+            config.jsonStream = true
+            let peer: Process
+            if role == .client {
+                let server = try startCLIServer(tools, ["-1", "-J"])
+                peer = server.process
+                config.port = server.port
+                config.numStreams = 128
+                config.mode = .bidirectional
+                config.duration = 1
+                config.rate = 64_000
+                config.blockSize = 1024
+                config.getServerOutput = true
+            } else {
+                config.port = try TestTools.freePort()
+                config.oneOff = true
+                peer = Process()
+                peer.executableURL = URL(fileURLWithPath: tools.iperf3)
+                peer.arguments = ["-c", "127.0.0.1", "-p", String(config.port), "-t", "1",
+                                  "-P", "128", "--bidir", "-b", "64K", "-l", "1024", "-J", "--get-server-output"]
+                peer.standardOutput = FileHandle.nullDevice
+                peer.standardError = FileHandle.nullDevice
+            }
+            defer { if peer.isRunning { peer.terminate() } }
+            let runner = IperfRunner(with: config)
+            addTeardownBlock { runner.stop() }
+            let finished = expectation(description: "maximum-stream \(role) finished")
+            let lock = NSLock()
+            var maximumStreams = 0
+            var uploadBytes = 0
+            var downloadBytes = 0
+            runner.start({ interval in
+                lock.lock()
+                maximumStreams = max(maximumStreams, interval.streams.count)
+                uploadBytes += interval.upload.totalBytes
+                downloadBytes += interval.download.totalBytes
+                lock.unlock()
+            }, { error in XCTFail("maximum-stream \(role): \(error)"); finished.fulfill() }, { state in
+                if state == .finished { finished.fulfill() }
+            })
+            if role == .server {
+                try waitUntilSwiftServerListens(on: config.port)
+                try peer.run()
+            }
+            let peerDone = expectation(for: NSPredicate { _, _ in !peer.isRunning }, evaluatedWith: nil)
+            wait(for: [finished, peerDone], timeout: 20)
+            XCTAssertEqual(peer.terminationStatus, 0)
+            lock.lock()
+            let streams = maximumStreams, upload = uploadBytes, download = downloadBytes
+            lock.unlock()
+            XCTAssertEqual(streams, 256, "128 streams in each direction")
+            XCTAssertGreaterThan(upload, 0)
+            XCTAssertGreaterThan(download, 0)
+            let status = role == .client ? runner.serverOutputStatus : runner.localServerOutputStatus
+            XCTAssertEqual(status?.state, .discarded)
+            XCTAssertNil(runner.serverOutput)
+        }
+    }
+
+    func testBoundedOutputClientInteroperatesWithCLITextAndJSON() throws {
+        let tools = try TestTools()
+        let client = IperfRunner(with: IperfConfiguration())
+        addTeardownBlock { client.stop() }
+        for prot in [IperfProtocol.tcp, .udp] {
+            for mode in [IperfTestMode.upload, .download, .bidirectional] {
+                for json in [false, true] {
+                    for limit in [64, 262_144] {
+                        let server = try startCLIServer(tools, ["-1"] + (json ? ["-J"] : []))
+                        var config = IperfConfiguration()
+                        config.address = "127.0.0.1"
+                        config.port = server.port
+                        config.prot = prot
+                        config.mode = mode
+                        config.duration = 1
+                        config.reporterInterval = 0.25
+                        config.rate = 2_000_000
+                        if prot == .udp { config.blockSize = 1200 }
+                        config.getServerOutput = true
+                        config.serverOutputByteLimit = limit
+                        config.jsonStream = json
+                        let finished = expectation(description: "bounded client \(prot) \(mode) \(json) \(limit)")
+                        var terminal = false
+                        var bytes = 0
+                        var events = 0
+                        var closingState: IperfServerOutputStatus.State?
+                        client.start(with: config, { result in
+                            bytes += result.totalBytes
+                            if result.state == .DISPLAY_RESULTS {
+                                closingState = client.serverOutputStatus?.state
+                            }
+                        }, { error in
+                            XCTFail("bounded client failed: \(error)")
+                            if !terminal { terminal = true; finished.fulfill() }
+                        }, { state in
+                            if state == .initialising {
+                                XCTAssertNil(client.serverOutput, "reuse must clear old text before callbacks")
+                                XCTAssertEqual(client.serverOutputStatus?.state, .waiting)
+                            }
+                            if state == .finished && !terminal { terminal = true; finished.fulfill() }
+                        }, onJSONStream: { _ in events += 1 })
+                        wait(for: [finished], timeout: 8)
+                        XCTAssertTrue(terminal)
+                        XCTAssertGreaterThan(bytes, 0)
+                        let expected: IperfServerOutputStatus.State = limit == 64 ? (json ? .discarded : .truncated) : .complete
+                        let status = try XCTUnwrap(client.serverOutputStatus)
+                        XCTAssertEqual(status.state, expected)
+                        XCTAssertEqual(closingState, expected, "available before final reporter")
+                        XCTAssertEqual(status.format, json ? .json : .text)
+                        XCTAssertLessThanOrEqual(status.retainedByteCount, limit)
+                        if expected == .discarded {
+                            XCTAssertNil(client.serverOutput)
+                        } else {
+                            let output = try XCTUnwrap(client.serverOutput)
+                            XCTAssertEqual(output.utf8.count, status.retainedByteCount)
+                            if json {
+                                XCTAssertNoThrow(try JSONSerialization.jsonObject(with: Data(output.utf8)))
+                            }
+                        }
+                        if json { XCTAssertGreaterThan(events, 0) }
+                        XCTAssertNil(client.jsonOutput, "bounded streaming does not retain full history")
+                    }
+                }
+            }
+        }
+    }
+
+    func testBoundedOutputServerInteroperatesWithCLIAndResetsBetweenClients() throws {
+        let tools = try TestTools()
+        for json in [false, true] {
+            for limit in [64, 262_144] {
+                let port = try TestTools.freePort()
+                var config = IperfConfiguration()
+                config.role = .server
+                config.address = "127.0.0.1"
+                config.port = port
+                config.reporterInterval = 0.25
+                config.jsonStream = json
+                config.serverOutputByteLimit = limit
+                let server = IperfRunner(with: config)
+                addTeardownBlock { server.stop() }
+                let finished = expectation(description: "bounded persistent server stopped")
+                server.start({ _ in }, { error in XCTFail("bounded server failed: \(error)") }, { state in
+                    if state == .finished { finished.fulfill() }
+                })
+                for prot in [IperfProtocol.tcp, .udp] {
+                    for flags in [[], ["-R"], ["--bidir"]] {
+                        // The server replaces its listener after every client.
+                        try waitUntilSwiftServerListens(on: port)
+                        var arguments = ["-c", "127.0.0.1", "-p", String(port), "-t", "1", "-i", "0.25", "-b", "2M", "-J", "--get-server-output"] + flags
+                        if prot == .udp { arguments += ["-u", "-l", "1200"] }
+                        let cli = try tools.run(tools.iperf3, arguments: arguments)
+                        XCTAssertEqual(cli.status, 0, "CLI failed for \(prot), flags \(flags)")
+                        let result = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(cli.output.utf8)) as? [String: Any])
+                        XCTAssertNotNil(result["end"])
+                        XCTAssertNil(result["error"])
+                        let status = try XCTUnwrap(server.localServerOutputStatus)
+                        let expected: IperfServerOutputStatus.State = limit == 64 ? (json ? .discarded : .truncated) : .complete
+                        XCTAssertEqual(status.state, expected)
+                        XCTAssertLessThanOrEqual(status.retainedByteCount, limit)
+                        if json {
+                            if limit == 64 {
+                                XCTAssertNil(result["server_output_json"])
+                            } else {
+                                let output = try XCTUnwrap(result["server_output_json"] as? [String: Any])
+                                XCTAssertGreaterThan((output["intervals"] as? [Any])?.count ?? 0, 0)
+                            }
+                        } else {
+                            let output = try XCTUnwrap(result["server_output_text"] as? String)
+                            XCTAssertEqual(output.utf8.count, status.retainedByteCount)
+                        }
+                        XCTAssertNil(server.serverOutput, "local collection does not copy the payload to Swift")
+                    }
+                }
+                try waitUntilSwiftServerListens(on: port)
+                let withoutOutput = try tools.run(tools.iperf3, arguments: [
+                    "-c", "127.0.0.1", "-p", String(port), "-t", "1", "-b", "2M", "-J"
+                ])
+                XCTAssertEqual(withoutOutput.status, 0)
+                XCTAssertEqual(server.localServerOutputStatus?.state, .notRequested)
+                server.stop()
+                wait(for: [finished], timeout: 5)
+            }
+        }
+    }
+
     func testPersistentServerReportsTheNegotiatedProtocolForEachClient() throws {
         let tools = try TestTools()
         let port = try TestTools.freePort()
@@ -728,6 +1093,14 @@ final class IperfCLIIntegrationTests: XCTestCase {
     }
 
     func testQueuedRunnerCanBeStoppedBeforeItUsesTheEngine() throws {
+        try assertQueuedRunnerCanBeStopped(outputLimit: nil)
+    }
+
+    func testBoundedOutputQueuedCancellationDoesNotCapture() throws {
+        try assertQueuedRunnerCanBeStopped(outputLimit: 64)
+    }
+
+    private func assertQueuedRunnerCanBeStopped(outputLimit: Int?) throws {
         var serverConfiguration = IperfConfiguration()
         serverConfiguration.role = .server
         serverConfiguration.address = "127.0.0.1"
@@ -737,6 +1110,8 @@ final class IperfCLIIntegrationTests: XCTestCase {
         var queuedConfiguration = IperfConfiguration()
         queuedConfiguration.address = "127.0.0.1"
         queuedConfiguration.port = try TestTools.freePort()
+        queuedConfiguration.serverOutputByteLimit = outputLimit
+        queuedConfiguration.getServerOutput = true
         let queuedClient = IperfRunner(with: queuedConfiguration)
 
         addTeardownBlock {
@@ -795,6 +1170,8 @@ final class IperfCLIIntegrationTests: XCTestCase {
 
         activeServer.stop()
         wait(for: [serverFinished], timeout: 3)
+        XCTAssertNil(queuedClient.serverOutput)
+        XCTAssertEqual(queuedClient.serverOutputStatus?.state, outputLimit == nil ? nil : .missing)
     }
 
     func testSerializedFailuresKeepTheirOwnTypedErrors() throws {
@@ -2654,6 +3031,14 @@ final class IperfCLIIntegrationTests: XCTestCase {
     }
 
     func testPersistentServerKeepsListeningAfterARejectedClient() throws {
+        try assertPersistentServerSurvivesRejectedClient(outputLimit: nil)
+    }
+
+    func testBoundedOutputPersistentServerSurvivesRejectedClient() throws {
+        try assertPersistentServerSurvivesRejectedClient(outputLimit: 64)
+    }
+
+    private func assertPersistentServerSurvivesRejectedClient(outputLimit: Int?) throws {
         // The engine returns -1 from iperf_run_server for a failed client
         // interaction and -2 only when it cannot listen at all. The CLI's loop
         // reports a -1 and goes back to listening, so a rejected password must
@@ -2670,6 +3055,8 @@ final class IperfCLIIntegrationTests: XCTestCase {
         configuration.isAuth = true
         configuration.privateKey = credentials.privateKeyBase64
         configuration.authorizedUsers = credentials.authorizedUsers
+        configuration.serverOutputByteLimit = outputLimit
+        configuration.jsonStream = outputLimit != nil
 
         let server = IperfRunner(with: configuration)
         addTeardownBlock {
@@ -2677,6 +3064,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
         }
 
         let serverRunning = expectation(description: "persistent authenticated server is running")
+        let serverFinished = expectation(description: "persistent authenticated server stopped")
         let lock = NSLock()
         var serverError: IperfError?
         var reachedFinished = false
@@ -2695,6 +3083,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
                     lock.lock()
                     reachedFinished = true
                     lock.unlock()
+                    serverFinished.fulfill()
                 }
             }
         )
@@ -2735,6 +3124,10 @@ final class IperfCLIIntegrationTests: XCTestCase {
         // server is still there afterwards.
         XCTAssertEqual(observedError, .IEAUTHTEST)
         XCTAssertFalse(finished, "server ended instead of continuing to listen")
+        XCTAssertNil(server.serverOutput)
+        if outputLimit != nil { XCTAssertEqual(server.localServerOutputStatus?.state, .notRequested) }
+        server.stop()
+        wait(for: [serverFinished], timeout: 5)
     }
 
     func testSwiftServerAcceptsAuthenticatedUDPCLIClient() throws {
@@ -2971,6 +3364,14 @@ final class IperfCLIIntegrationTests: XCTestCase {
     // MARK: Lifecycle
 
     func testStopDuringActiveRunReachesFinishedWithoutError() throws {
+        try assertStopDuringActiveRun(outputLimit: nil)
+    }
+
+    func testBoundedOutputStopDuringActiveMeasurement() throws {
+        try assertStopDuringActiveRun(outputLimit: 64)
+    }
+
+    private func assertStopDuringActiveRun(outputLimit: Int?) throws {
         let tools = try TestTools()
         let cliServer = try startCLIServer(tools)
         let port = cliServer.port
@@ -2983,6 +3384,8 @@ final class IperfCLIIntegrationTests: XCTestCase {
         configuration.mode = .upload
         configuration.duration = 60
         configuration.reporterInterval = 0.25
+        configuration.serverOutputByteLimit = outputLimit
+        configuration.getServerOutput = outputLimit != nil
 
         let running = expectation(description: "engine is transferring")
         let finished = expectation(description: "run finishes after stop()")
@@ -3786,7 +4189,134 @@ private struct Credentials {
 }
 
 final class IperfLogLifecycleTests: XCTestCase {
+    func testCombinedBudgetsReleaseAfterMalformedOrStoppedExchangeAndReuse() throws {
+        let tools = try TestTools()
+        let runner = IperfRunner(with: IperfConfiguration())
+        addTeardownBlock { runner.stop() }
+        var generations: Set<UUID> = []
+        for response in [BoundedOutputPeer.Response.malformed, .stall, .empty] {
+            let listener = try TestTools.boundListener()
+            let peer = BoundedOutputPeer(listener: listener.descriptor)
+            defer { peer.stop() }
+            let peerDone = expectation(description: "combined peer done")
+            let released = expectation(description: "combined resources released")
+            let cancel = response == .stall
+            peer.start(response: response, onExchange: {
+                if cancel { runner.stop() }
+            }, completion: { result in
+                switch result {
+                case .success(let bytes): XCTAssertGreaterThan(bytes, 0)
+                case .failure(let error): XCTFail("combined peer: \(error)")
+                }
+                peerDone.fulfill()
+            })
+            let url = tools.directory.appendingPathComponent(UUID().uuidString)
+            var config = IperfConfiguration()
+            config.address = "127.0.0.1"
+            config.port = listener.port
+            config.duration = 1
+            config.rate = 1_000_000
+            config.reporterInterval = 0.25
+            config.logfile = url.path
+            config.logfileByteLimit = 128
+            config.getServerOutput = true
+            config.serverOutputByteLimit = 64
+            var measured = 0
+            var errors = 0
+            var terminals: [IperfRunnerState] = []
+            var completion: IperfRunCompletion?
+            runner.start(with: config, { measured += $0.totalBytes }, { _ in errors += 1 }, { state in
+                if state == .finished || state == .error { terminals.append(state) }
+            }, onResourcesReleased: { result in
+                self.assertClosed(url)
+                completion = result
+                released.fulfill()
+            })
+            wait(for: [released, peerDone], timeout: 10)
+            XCTAssertGreaterThan(measured, 0)
+            XCTAssertEqual(errors, response == .malformed ? 1 : 0)
+            XCTAssertEqual(terminals, [response == .malformed ? .error : .finished])
+            let result = try XCTUnwrap(completion)
+            XCTAssertTrue(generations.insert(result.runID).inserted)
+            XCTAssertEqual(result, runner.completion)
+            XCTAssertEqual(result.logfile?.isTruncated, true)
+            XCTAssertNil(result.logfile?.closeError)
+            XCTAssertLessThanOrEqual(try Data(contentsOf: url).count, 128)
+            if response == .empty {
+                XCTAssertEqual(runner.serverOutputStatus?.state, .complete)
+                XCTAssertEqual(runner.serverOutput, "")
+            } else {
+                XCTAssertNil(runner.serverOutput)
+                XCTAssertNotEqual(runner.serverOutputStatus?.state, .waiting)
+            }
+        }
+    }
+
+    func testCombinedBudgetsKeepClientStatisticsAndReleaseFiles() throws {
+        let tools = try TestTools()
+        let runner = IperfRunner(with: IperfConfiguration())
+        addTeardownBlock { runner.stop() }
+        var generations: Set<UUID> = []
+        for prot in [IperfProtocol.tcp, .udp] {
+            for mode in [IperfTestMode.upload, .download, .bidirectional] {
+                for json in [false, true] {
+                    let port = try startCLIServer(tools, ["-1"] + (json ? ["-J"] : [])).port
+                    let url = tools.directory.appendingPathComponent(UUID().uuidString)
+                    var config = IperfConfiguration()
+                    config.address = "127.0.0.1"
+                    config.port = port
+                    config.prot = prot
+                    config.mode = mode
+                    config.rate = 1_000_000
+                    config.blockSize = prot == .tcp ? 16_384 : 1_200
+                    config.duration = 1
+                    config.reporterInterval = 0.1
+                    config.logfile = url.path
+                    config.logfileByteLimit = 128
+                    config.getServerOutput = true
+                    config.serverOutputByteLimit = 64
+                    let released = expectation(description: "combined client release")
+                    var bytes = 0
+                    var terminal: IperfRunnerState?
+                    var completion: IperfRunCompletion?
+                    runner.start(with: config, { bytes += $0.totalBytes },
+                                 { XCTFail("combined client: \($0)") }, { state in
+                        if state == .finished || state == .error { terminal = state }
+                    },
+                                 onResourcesReleased: { result in
+                        self.assertClosed(url)
+                        XCTAssertEqual(result, runner.completion)
+                        completion = result
+                        released.fulfill()
+                    })
+                    wait(for: [released], timeout: 8)
+                    XCTAssertGreaterThan(bytes, 0)
+                    XCTAssertEqual(terminal, .finished)
+                    let result = try XCTUnwrap(completion)
+                    XCTAssertTrue(generations.insert(result.runID).inserted)
+                    XCTAssertEqual(result.logfile?.isTruncated, true)
+                    XCTAssertNil(result.logfile?.writeError)
+                    XCTAssertNil(result.logfile?.closeError)
+                    XCTAssertLessThanOrEqual(try Data(contentsOf: url).count, 128)
+                    let output = try XCTUnwrap(runner.serverOutputStatus)
+                    XCTAssertEqual(output.state, json ? .discarded : .truncated)
+                    XCTAssertLessThanOrEqual(output.retainedByteCount, 64)
+                    if json { XCTAssertNil(runner.serverOutput) }
+                    else { XCTAssertLessThanOrEqual(try XCTUnwrap(runner.serverOutput).utf8.count, 64) }
+                }
+            }
+        }
+    }
+
     func testOneOffServerReuseSeparatesCompletionsAndPreservesExistingLog() throws {
+        try assertOneOffServerBudgets(outputLimit: nil)
+    }
+
+    func testCombinedBudgetsPreserveOneOffReuseAndRelease() throws {
+        try assertOneOffServerBudgets(outputLimit: 64)
+    }
+
+    private func assertOneOffServerBudgets(outputLimit: Int?) throws {
         let tools = try TestTools()
         let url = tools.directory.appendingPathComponent("one-off.log")
         let runner = IperfRunner(with: IperfConfiguration())
@@ -3803,6 +4333,7 @@ final class IperfLogLifecycleTests: XCTestCase {
             configuration.reporterInterval = 0.1
             configuration.logfile = url.path
             configuration.logfileByteLimit = 128
+            configuration.serverOutputByteLimit = outputLimit
             let released = expectation(description: "one-off resources released")
             var bytes = 0
             var result: IperfRunCompletion?
@@ -3816,11 +4347,20 @@ final class IperfLogLifecycleTests: XCTestCase {
             })
             try waitUntilSwiftServerListens(on: port)
             var arguments = ["-c", "127.0.0.1", "-p", String(port), "-t", "1", "-b", "1M", "-J"]
+            if outputLimit != nil { arguments += ["--get-server-output"] }
             if prot == .udp { arguments += ["-u", "-l", "1200"] }
             let cli = try tools.run(tools.iperf3, arguments: arguments)
             XCTAssertEqual(cli.status, 0, cli.output)
             wait(for: [released], timeout: 5)
             XCTAssertGreaterThan(bytes, 0)
+            if let outputLimit {
+                let status = try XCTUnwrap(runner.localServerOutputStatus)
+                XCTAssertEqual(status.state, .truncated)
+                XCTAssertLessThanOrEqual(status.retainedByteCount, outputLimit)
+                let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(cli.output.utf8)) as? [String: Any])
+                let output = try XCTUnwrap(payload["server_output_text"] as? String)
+                XCTAssertLessThanOrEqual(output.utf8.count, outputLimit)
+            }
             let completion = try XCTUnwrap(result)
             XCTAssertTrue(generations.insert(completion.runID).inserted)
             XCTAssertEqual(completion.logfile?.isTruncated, true)
@@ -3997,6 +4537,14 @@ final class IperfLogLifecycleTests: XCTestCase {
     }
 
     func testPersistentServerRetainsOneBudgetAcrossTCPAndUDPClientsThenStops() throws {
+        try assertPersistentServerBudgets(outputLimit: nil)
+    }
+
+    func testCombinedBudgetsSurvivePersistentClientsAndStop() throws {
+        try assertPersistentServerBudgets(outputLimit: 64)
+    }
+
+    private func assertPersistentServerBudgets(outputLimit: Int?) throws {
         let tools = try TestTools()
         let port = try TestTools.freePort()
         let url = tools.directory.appendingPathComponent("persistent.log")
@@ -4007,6 +4555,7 @@ final class IperfLogLifecycleTests: XCTestCase {
         configuration.reporterInterval = 0.1
         configuration.logfile = url.path
         configuration.logfileByteLimit = 128
+        configuration.serverOutputByteLimit = outputLimit
         let runner = IperfRunner(with: configuration)
         addTeardownBlock { runner.stop() }
         let released = expectation(description: "persistent server releases after stop")
@@ -4027,10 +4576,17 @@ final class IperfLogLifecycleTests: XCTestCase {
             // The server replaces its listener after every client.
             try waitUntilSwiftServerListens(on: port)
             var arguments = ["-c", "127.0.0.1", "-p", String(port), "-t", "1", "-b", "1M", "-J"]
+            if outputLimit != nil { arguments += ["--get-server-output"] }
             if prot == .udp { arguments += ["-u", "-l", "1200"] }
             let cli = try tools.run(tools.iperf3, arguments: arguments)
             XCTAssertEqual(cli.status, 0, cli.output)
             XCTAssertNil(runner.completion)
+            if let outputLimit {
+                let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(cli.output.utf8)) as? [String: Any])
+                let output = try XCTUnwrap(payload["server_output_text"] as? String)
+                XCTAssertLessThanOrEqual(output.utf8.count, outputLimit)
+                XCTAssertEqual(runner.localServerOutputStatus?.state, .truncated)
+            }
         }
         runner.stop(); runner.stop()
         wait(for: [released], timeout: 5)

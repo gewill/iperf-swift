@@ -162,6 +162,9 @@ public class IperfRunner {
     }
 
     private var storedServerOutput: String?
+    private var storedServerOutputStatus: IperfServerOutputStatus?
+    private var storedLocalServerOutputStatus: IperfServerOutputStatus?
+    private var capturedBoundedServerOutput = false
     private var storedJSONOutput: String?
     private var storedStreamTotals: [IperfStreamRunResult]?
 
@@ -180,6 +183,20 @@ public class IperfRunner {
     /// another run clears the previous value.
     public var serverOutput: String? {
         withState { storedServerOutput }
+    }
+
+    /// Status of the remote output when a byte budget is configured; `nil`
+    /// for the legacy unbounded mode. Empty complete output differs from missing
+    /// output. Read this alongside ``serverOutput`` after final reporting.
+    public var serverOutputStatus: IperfServerOutputStatus? {
+        withState { storedServerOutputStatus }
+    }
+
+    /// Metadata for this runner's budgeted server collection, refreshed after
+    /// reporting and before native teardown. No local payload is copied to Swift.
+    /// `nil` when the budget is disabled or this runner is a client.
+    public var localServerOutputStatus: IperfServerOutputStatus? {
+        withState { storedLocalServerOutputStatus }
     }
 
     /// The complete JSON document from the most recent JSON streaming run.
@@ -247,6 +264,7 @@ public class IperfRunner {
         iperf_reporter_callback(refTest)
         // Process the interval status after the engine has updated the test.
         if let testPointer = refTest {
+            runner?.captureLocalServerOutputStatus(from: testPointer)
             runner?.handleReporterStatus(testPointer)
         }
     }
@@ -283,6 +301,25 @@ public class IperfRunner {
     // Copies the server's textual (or JSON-mode) results out of the test
     // before the engine frees them. Runs on the libiperf worker thread.
     fileprivate func captureServerOutput(from testPointer: UnsafeMutablePointer<iperf_test>) {
+        if testPointer.pointee.server_output_byte_limit > 0 {
+            withState {
+                // Check ownership and once-only capture BEFORE allocating a Swift
+                // copy. The native buffer is owned by the current engine run.
+                guard currentTest == testPointer,
+                      configuration?.role == .client,
+                      configuration?.getServerOutput == true,
+                      testPointer.pointee.received_server_output_ready != 0,
+                      !capturedBoundedServerOutput else { return }
+                capturedBoundedServerOutput = true
+                let output = testPointer.pointee.received_server_output
+                storedServerOutputStatus = IperfServerOutputStatus(output)
+                if let value = output.value {
+                    storedServerOutput = String(decoding: UnsafeRawBufferPointer(
+                        start: value, count: output.length), as: UTF8.self)
+                }
+            }
+            return
+        }
         // A JSON-mode server delivers json_server_output instead of text,
         // matching the CLI's "Server JSON output" report.
         var output: String?
@@ -301,6 +338,24 @@ public class IperfRunner {
                 return
             }
             storedServerOutput = output
+        }
+    }
+
+    private func captureLocalServerOutputStatus(from pointer: UnsafeMutablePointer<iperf_test>) {
+        withState {
+            guard currentTest == pointer, configuration?.role == .server,
+                  pointer.pointee.server_output_byte_limit > 0 else { return }
+            guard pointer.pointee.get_server_output != 0 else {
+                storedLocalServerOutputStatus = .notRequested
+                return
+            }
+            var status = iperf_server_output()
+            iperf_output_get_local_status(pointer, &status)
+            // Before final exchange a complete collector is still growing.
+            // Report waiting, while preserving truncation/discard reasons early.
+            storedLocalServerOutputStatus = (status.state == IPERF_OUTPUT_MISSING ||
+                status.state == IPERF_OUTPUT_COMPLETE) && pointer.pointee.output_finalized == 0
+                ? .waiting : IperfServerOutputStatus(status)
         }
     }
 
@@ -345,7 +400,12 @@ public class IperfRunner {
             result.mode = .upload
         }
         
-        let testCompletesRunner = configuration.role == .client || configuration.oneOff
+        // In bounded mode the exchange may still time out or reject a malformed
+        // frame. A closing reporter during native error cleanup is not success.
+        // Publish the terminal state from runIperfProcess only after it
+        // captures the native outcome, so failure/stop is delivered once.
+        let testCompletesRunner = configuration.serverOutputByteLimit == nil &&
+            (configuration.role == .client || configuration.oneOff)
         if result.state == .EXCHANGE_RESULTS && testCompletesRunner {
             state = .finished
         }
@@ -687,6 +747,11 @@ public class IperfRunner {
             return nil
         }
 
+        if let limit = configuration.serverOutputByteLimit,
+           !(1...Int(IPERF_OUTPUT_MAX_BYTES)).contains(limit) ||
+            (configuration.jsonStream && configuration.jsonStreamFullOutput) {
+            return .IESERVEROUTPUTLIMIT
+        }
         if let limit = configuration.logfileByteLimit,
            limit < IperfConfiguration.minimumLogfileByteLimit || configuration.logfile == nil {
             return .IELOGFILELIMIT
@@ -782,6 +847,10 @@ public class IperfRunner {
             iperf_set_test_json_stream_full_output(currentTest, 1)
         }
         
+        if let limit = configuration.serverOutputByteLimit,
+           iperf_set_test_server_output_byte_limit(currentTest, limit) != 0 {
+            return .IESERVEROUTPUTLIMIT
+        }
         if let rcvTimeout = configuration.rcvTimeout, rcvTimeout.isFinite, rcvTimeout > 0 {
             let seconds = min(rcvTimeout, Double(UInt32.max))
             var interval = iperf_time(
@@ -986,7 +1055,13 @@ public class IperfRunner {
                 code = iperf_run_server(testPointer)
             }
             error = IperfError(rawValue: iperf_get_error()) ?? .UNKNOWN
-            wasStopped = iperf_get_test_done(testPointer) != 0
+            wasStopped = configuration.serverOutputByteLimit != nil
+                ? iperf_output_stop_requested(testPointer) != 0
+                : iperf_get_test_done(testPointer) != 0
+            if configuration.serverOutputByteLimit != nil {
+                captureServerOutput(from: testPointer)
+                captureLocalServerOutputStatus(from: testPointer)
+            }
             iperf_set_error(IperfError.IENONE.rawValue)
 
             // The engine distinguishes a failed client interaction from a
@@ -1014,6 +1089,7 @@ public class IperfRunner {
                     onErrorFunction(error)
                 }
                 previousDeliveredStreams = nil
+                capturedBoundedServerOutput = false
                 iperf_reset_test(testPointer)
                 return true
             }
@@ -1045,6 +1121,12 @@ public class IperfRunner {
             return
         }
 
+        if storedServerOutputStatus?.state == .waiting {
+            storedServerOutputStatus = .missing
+        }
+        if storedLocalServerOutputStatus?.state == .waiting {
+            storedLocalServerOutputStatus = .missing
+        }
         let run = activeRun
         var logfile: IperfLogfileResult?
         configuration = nil
@@ -1263,6 +1345,11 @@ public class IperfRunner {
         activeRun = RunContext(id: runID, onResourcesReleased: onResourcesReleased)
         storedCompletion = nil
         storedServerOutput = nil
+        capturedBoundedServerOutput = false
+        storedServerOutputStatus = configuration?.serverOutputByteLimit == nil ? nil :
+            (configuration?.role == .client && configuration?.getServerOutput == true ? .waiting : .notRequested)
+        storedLocalServerOutputStatus = configuration?.serverOutputByteLimit != nil && configuration?.role == .server
+            ? .notRequested : nil
         previousDeliveredStreams = nil
         storedJSONOutput = nil
         storedStreamTotals = nil

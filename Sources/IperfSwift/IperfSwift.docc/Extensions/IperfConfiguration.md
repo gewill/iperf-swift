@@ -51,6 +51,7 @@
 - ``reporterInterval``
 - ``omit``
 - ``getServerOutput``
+- ``serverOutputByteLimit``
 - ``logfile``
 - ``verbose``
 - ``jsonStream``

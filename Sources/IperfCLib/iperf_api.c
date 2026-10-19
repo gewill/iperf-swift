@@ -75,6 +75,7 @@
 #include "net.h"
 #include "iperf.h"
 #include "iperf_api.h"
+#include "iperf_output_budget.h"
 #include "iperf_tcp.h"
 #include "iperf_time.h"
 #include "iperf_udp.h"
@@ -2929,7 +2930,13 @@ send_results(struct iperf_test *test)
 
 	/* If on the server and sending server output, then do this */
 	if (test->role == 's' && test->get_server_output) {
-	    if (test->json_output) {
+            if (test->server_output_byte_limit) {
+                if (iperf_output_add_server_results(test, j) < 0) {
+                    iperf_set_error(IEPACKAGERESULTS);
+                    r = -1;
+                }
+            }
+	    else if (test->json_output) {
 		/* Add JSON output */
 		cJSON_AddItemReferenceToObject(j, "server_output_json", test->json_top);
 	    }
@@ -2988,12 +2995,13 @@ send_results(struct iperf_test *test)
 
 		}
 	    }
-	    if (r == 0 && test->debug) {
+	    if (r == 0 && test->debug && !test->server_output_byte_limit) {
                 char *str = cJSON_Print(j);
 		printf("send_results\n%s\n", str);
                 cJSON_free(str);
 	    }
-	    if (r == 0 && JSON_write(test->ctrl_sck, j) < 0) {
+	    if (r == 0 && (test->server_output_byte_limit ?
+                iperf_output_write_results(test, j) : JSON_write(test->ctrl_sck, j)) < 0) {
 		iperf_set_error(IESENDRESULTS);
 		r = -1;
 	    }
@@ -3038,7 +3046,19 @@ get_results(struct iperf_test *test)
     int retransmits;
     struct iperf_stream *sp;
 
-    j = JSON_read(test->ctrl_sck, 0);
+    if (test->server_output_byte_limit) {
+        iperf_clear_server_output(&test->received_server_output);
+        memset(&test->output_read_metrics, 0, sizeof(test->output_read_metrics));
+        j = iperf_read_bounded_results_socket(test->ctrl_sck, test->server_output_byte_limit,
+            IPERF_RESULT_READ_TIMEOUT_MS, iperf_output_stop_requested, test,
+            &test->received_server_output, &test->output_read_metrics);
+        if (j) iperf_output_apply_peer_status(&test->received_server_output, j);
+        test->received_server_output_ready = 1;
+        if (test->role != 'c' || !test->get_server_output)
+            iperf_clear_server_output(&test->received_server_output);
+    } else {
+        j = JSON_read(test->ctrl_sck, 0);
+    }
     if (j == NULL) {
 	iperf_set_error(IERECVRESULTS);
         r = -1;
@@ -3170,7 +3190,7 @@ get_results(struct iperf_test *test)
 		 * If we're the client and we're supposed to get remote results,
 		 * look them up and process accordingly.
 		 */
-		if (test->role == 'c' && iperf_get_test_get_server_output(test)) {
+		if (!test->server_output_byte_limit && test->role == 'c' && iperf_get_test_get_server_output(test)) {
 		    /* Look for JSON.  If we find it, grab the object so it doesn't get deleted. */
 		    j_server_output = cJSON_DetachItemFromObject(j, "server_output_json");
 		    if (j_server_output != NULL) {
@@ -3299,8 +3319,10 @@ JSONStream_Output(struct iperf_test * test, const char * event_name, cJSON * obj
     cJSON_AddStringToObject(event, "event", event_name);
     cJSON_AddItemReferenceToObject(event, "data", obj);
     char *str = cJSON_PrintUnformatted(event);
-    if (str == NULL)
+    if (str == NULL) {
+        cJSON_Delete(event);
         return -1;
+    }
     if (test->json_callback != NULL) {
         (test->json_callback)(test, str);
     } else {
@@ -3680,6 +3702,8 @@ iperf_free_test(struct iperf_test *test)
         free(prot);
     }
 
+    iperf_output_budget_reset(test);
+
     /* Destroy print mutex. iperf_printf() doesn't work after this point */
     int rc;
     rc = pthread_mutex_destroy(&(test->print_mutex));
@@ -3740,6 +3764,8 @@ iperf_free_test(struct iperf_test *test)
 void
 iperf_reset_test(struct iperf_test *test)
 {
+    iperf_output_budget_reset(test);
+    if (test->server_output_byte_limit) test->get_server_output = 0;
     struct iperf_stream *sp;
     int i;
 
@@ -4108,7 +4134,9 @@ iperf_print_intermediate(struct iperf_test *test)
      * 
      * The user can still opt in for all measurement data via the --json-stream-full-output option.
      */
-    discard_json = test->json_stream == 1 && !test->json_stream_full_output && !(test->role == 's' && test->get_server_output);
+    discard_json = (test->json_stream == 1 && !test->json_stream_full_output &&
+        !(test->role == 's' && test->get_server_output)) ||
+        (test->server_output_byte_limit && test->role == 's' && test->get_server_output);
 
     if (test->json_output) {
         json_interval = cJSON_CreateObject();
@@ -4117,8 +4145,10 @@ iperf_print_intermediate(struct iperf_test *test)
         if (!discard_json)
 	    cJSON_AddItemToArray(test->json_intervals, json_interval);
         json_interval_streams = cJSON_CreateArray();
-	if (json_interval_streams == NULL)
+	if (json_interval_streams == NULL) {
+            if (discard_json) cJSON_Delete(json_interval);
 	    return;
+        }
 	cJSON_AddItemToObject(json_interval, "streams", json_interval_streams);
     } else {
         json_interval = NULL;
@@ -4269,6 +4299,8 @@ iperf_print_intermediate(struct iperf_test *test)
 
     if (test->json_stream)
         JSONStream_Output(test, "interval", json_interval);
+    if (test->server_output_byte_limit && test->role == 's' && test->get_server_output && json_interval)
+        iperf_output_collect_interval(test, json_interval);
     if (discard_json)
         cJSON_Delete(json_interval);
 }
@@ -4799,7 +4831,9 @@ iperf_print_results(struct iperf_test *test)
             }
 
             /* Print server output if we're on the client and it was requested/provided */
-            if (test->role == 'c' && iperf_get_test_get_server_output(test) && !test->json_output) {
+            if (test->server_output_byte_limit && test->role == 'c' && test->get_server_output && !test->json_output)
+                iperf_output_print_received(test);
+            if (!test->server_output_byte_limit && test->role == 'c' && iperf_get_test_get_server_output(test) && !test->json_output) {
                 if (test->json_server_output) {
 		    char *str = cJSON_Print(test->json_server_output);
                     iperf_printf(test, "\nServer JSON output:\n%s\n", str);
@@ -5511,7 +5545,10 @@ iperf_json_finish(struct iperf_test *test)
         if (test->extra_data) {
             cJSON_AddStringToObject(test->json_top, "extra_data", test->extra_data);
         }
-        /* Include server output */
+        /* Include server output. Budgeted payloads are borrowed bounded strings,
+         * never expanded into a second cJSON tree. */
+        if (test->server_output_byte_limit)
+            iperf_output_add_received_json(test);
         if (test->json_server_output) {
             cJSON_AddItemToObject(test->json_top, "server_output_json", test->json_server_output);
         }
@@ -5532,6 +5569,12 @@ iperf_json_finish(struct iperf_test *test)
             }
             if (test->server_output_text) {
                 JSONStream_Output(test, "server_output_text", cJSON_CreateString(test->server_output_text));
+            }
+            if (test->server_output_byte_limit && test->received_server_output.value) {
+                const char *key = test->received_server_output.format == IPERF_OUTPUT_JSON ?
+                    "server_output_json" : "server_output_text";
+                cJSON *output = cJSON_GetObjectItemCaseSensitive(test->json_top, key);
+                if (output) JSONStream_Output(test, key, output);
             }
             JSONStream_Output(test, "end", test->json_end);
 
@@ -5726,6 +5769,11 @@ iperf_printf(struct iperf_test *test, const char* format, ...)
         r += r0;
     }
     else if (test->role == 's') {
+        if (test->server_output_byte_limit && test->get_server_output && !test->json_output) {
+            va_start(argp, format);
+            iperf_output_collect_printf(test, ct, format, argp);
+            va_end(argp);
+        }
 	if (ct) {
 	    r0 = snprintf(linebuffer, sizeof(linebuffer), "%s", ct);
             if (r0 < 0) {
@@ -5747,7 +5795,7 @@ iperf_printf(struct iperf_test *test, const char* format, ...)
         }
 	fprintf(test->outfile, "%s", linebuffer);
 
-	if (test->role == 's' && iperf_get_test_get_server_output(test)) {
+	if (!test->server_output_byte_limit && test->role == 's' && iperf_get_test_get_server_output(test)) {
 	    struct iperf_textline *l = (struct iperf_textline *) malloc(sizeof(struct iperf_textline));
 	    l->line = strdup(linebuffer);
 	    TAILQ_INSERT_TAIL(&(test->server_output_list), l, textlineentries);
@@ -5877,5 +5925,6 @@ int iperf_get_test_done(struct iperf_test *ipt)
 
 void iperf_request_test_stop(struct iperf_test *ipt)
 {
+    __atomic_store_n(&ipt->output_stop_requested, 1, __ATOMIC_SEQ_CST);
     __atomic_store_n(&ipt->done, 1, __ATOMIC_SEQ_CST);
 }
