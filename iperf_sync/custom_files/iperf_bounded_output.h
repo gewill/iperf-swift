@@ -19,6 +19,11 @@
  * pass the scanner and then fail cJSON. cJSON prints at most 25, so no iperf
  * peer sends one; the scanner rejects it as invalid input. */
 #define IPERF_RESULT_MAX_NUMBER_LENGTH 63U
+/* One absolute deadline for header and body. Upstream Nread, which the CLI
+ * uses for this frame, stops reading 30 seconds after the body starts to
+ * arrive (nread_overall_timeout), so a frame the CLI could not receive is not
+ * waited for longer here. Scaling by the declared length would trust the peer
+ * for up to 64 MiB, and an idle timeout alone has no upper bound. */
 #define IPERF_RESULT_READ_TIMEOUT_MS 30000U
 
 enum iperf_output_state {
