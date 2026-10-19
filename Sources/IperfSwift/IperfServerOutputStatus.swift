@@ -27,12 +27,21 @@ public struct IperfServerOutputStatus: Equatable, Sendable {
     static let waiting = Self(state: .waiting)
     static let missing = Self(state: .missing)
 
-    private init(state: State) {
+    /// Creates a status from its parts, for example for a test double that
+    /// stands in for a runner. The SDK reports only consistent combinations;
+    /// this initializer does not check them.
+    public init(
+        state: State,
+        format: Format? = nil,
+        reason: Reason? = nil,
+        retainedByteCount: Int = 0,
+        observedByteCount: UInt64? = nil
+    ) {
         self.state = state
-        format = nil
-        reason = nil
-        retainedByteCount = 0
-        observedByteCount = nil
+        self.format = format
+        self.reason = reason
+        self.retainedByteCount = retainedByteCount
+        self.observedByteCount = observedByteCount
     }
 
     init(_ output: iperf_server_output) {
