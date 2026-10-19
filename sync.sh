@@ -97,7 +97,6 @@ mv "$STAGING_PATH/include/iperf_openssl.h" "$STAGING_PATH/iperf_openssl.h"
 
 find "$STAGING_PATH" -type f \( -name '*.c' -o -name '*.h' \) \
     -exec perl -pi -e 's/<stdatomic\.h>/<iperf_stdatomic.h>/g' {} +
-patch --batch --forward -p1 -d "$STAGING_PATH" < "$SYNC_DATA/patches/bounded-output.patch"
 find "$STAGING_PATH" -name '*.orig' -delete
 
 remaining_stdatomic="$(
