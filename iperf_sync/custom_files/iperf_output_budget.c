@@ -350,8 +350,21 @@ void iperf_output_get_local_status(struct iperf_test *test, struct iperf_server_
 
 void iperf_output_print_received(struct iperf_test *test)
 {
-    if (test->received_server_output.value)
-        iperf_printf(test, "\nServer output:\n%s\n", test->received_server_output.value);
+    const struct iperf_server_output *output = &test->received_server_output;
+    if (!output->value) return;
+    if (output->format != IPERF_OUTPUT_JSON) {
+        iperf_printf(test, "\nServer output:\n%s\n", output->value);
+        return;
+    }
+    /* Print like the unbudgeted client, which formats the received tree with
+     * cJSON_Print. The payload passed the byte, value, depth and number limits,
+     * which also bound this transient tree and its text. If they cannot be
+     * allocated, print the same document compactly. */
+    cJSON *tree = cJSON_ParseWithLength(output->value, output->length);
+    char *text = tree ? cJSON_Print(tree) : NULL;
+    iperf_printf(test, "\nServer JSON output:\n%s\n", text ? text : output->value);
+    cJSON_free(text);
+    cJSON_Delete(tree);
 }
 
 void iperf_output_add_received_json(struct iperf_test *test)

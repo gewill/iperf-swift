@@ -311,6 +311,49 @@ final class IperfCLIIntegrationTests: XCTestCase {
         }
     }
 
+    func testBoundedOutputClientReportPrintsJSONServerOutputLikeTheUnbudgetedClient() throws {
+        let tools = try TestTools()
+        for limit: Int? in [nil, 262_144] {
+            let server = try startCLIServer(tools, ["-1", "-J"])
+            let url = tools.directory.appendingPathComponent(UUID().uuidString)
+            var config = IperfConfiguration()
+            config.address = "127.0.0.1"
+            config.port = server.port
+            config.duration = 1
+            config.rate = 1_000_000
+            config.getServerOutput = true
+            config.serverOutputByteLimit = limit
+            config.logfile = url.path
+            let runner = IperfRunner(with: config)
+            addTeardownBlock { runner.stop() }
+            let released = expectation(description: "client with limit \(String(describing: limit)) released")
+            runner.start({ _ in }, { XCTFail("client failed: \($0)") }, { _ in },
+                         onResourcesReleased: { _ in released.fulfill() })
+            wait(for: [released], timeout: 8)
+            // The engine's own report, which the client writes to its logfile.
+            let log = try String(contentsOf: url, encoding: .utf8)
+            XCTAssertFalse(log.contains("\nServer output:\n"), log)
+            let heading = try XCTUnwrap(log.range(of: "\nServer JSON output:\n"), log)
+            let report = log[heading.upperBound...]
+            let end = try XCTUnwrap(report.range(of: "\n}\n", options: .backwards), log)
+            let document = String(report[..<end.lowerBound]) + "\n}"
+            XCTAssertTrue(document.hasPrefix("{\n\t\"start\":\t{\n"), "not cJSON_Print's layout: \(document)")
+            let printed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(document.utf8)) as? NSDictionary)
+            XCTAssertNotNil(printed["end"])
+            let delivered = try XCTUnwrap(runner.serverOutput)
+            if limit == nil {
+                XCTAssertEqual(delivered, document)
+            } else {
+                // The budget measures the compact payload Swift receives; the
+                // report formats the same document.
+                XCTAssertFalse(delivered.contains("\n"))
+                XCTAssertEqual(delivered.utf8.count, runner.serverOutputStatus?.retainedByteCount)
+                let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(delivered.utf8)) as? NSDictionary)
+                XCTAssertEqual(object, printed)
+            }
+        }
+    }
+
     func testBoundedOutputServerInteroperatesWithCLIAndResetsBetweenClients() throws {
         let tools = try TestTools()
         for json in [false, true] {

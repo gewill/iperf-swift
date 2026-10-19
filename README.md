@@ -426,9 +426,13 @@ The opt-in path bounds each stage:
   share a 30-second absolute deadline; explicit stop is checked at least every
   100 ms while waiting. Normal measurement completion is not cancellation.
 - Swift copies a received payload only once per run, after verifying ownership;
-  its UTF-8 length is at most the configured limit. JSON callbacks can also
-  carry bounded output; callers remain responsible for their own retained
-  callback history. These byte limits are not process-footprint measurements.
+  its UTF-8 length is at most the configured limit, so JSON stays the compact
+  document the budget measured. The client's own text report still prints
+  received JSON under `Server JSON output:` formatted with `cJSON_Print`, like
+  the unbudgeted client, from a transient tree that the same limits bound.
+  JSON callbacks can also carry bounded output; callers remain responsible for
+  their own retained callback history. These byte limits are not
+  process-footprint measurements.
 
 Budgeted servers add versioned `iperf_swift_server_output` metadata to the
 result-control object so a budgeted receiver can distinguish sender truncation

@@ -120,11 +120,55 @@ static size_t check(const char *name, struct input input, size_t limit,
 
 
 /* This isolated allocator probe exercises collection and serialization, not an
- * engine run. The CLI tests cover the actual iperf_printf/network path. */
+ * engine run. The CLI tests cover the actual iperf_printf/network path; this
+ * stand-in only records what the client report would print. */
+static char printed[4096];
+
 int iperf_printf(struct iperf_test *test, const char *format, ...)
 {
-    (void)test; (void)format;
+    (void)test;
+    va_list arguments;
+    va_start(arguments, format);
+    vsnprintf(printed, sizeof(printed), format, arguments);
+    va_end(arguments);
     return 0;
+}
+
+/* A failed allocation while formatting received JSON for the client report
+ * must still print the document, compactly, and release everything. */
+static const char document[] = "{\"start\":{\"version\":\"iperf 3.22\",\"n\":1.5},\"intervals\":[{}],\"end\":{}}";
+
+static size_t print_received(size_t failure, const char *formatted)
+{
+    char value[sizeof(document)];
+    memcpy(value, document, sizeof(document));
+    struct iperf_test test = {0};
+    test.received_server_output.value = value;
+    test.received_server_output.length = sizeof(document) - 1;
+    test.received_server_output.format = IPERF_OUTPUT_JSON;
+    reset(failure);
+    printed[0] = 0;
+    iperf_output_print_received(&test);
+    assert(live_bytes == 0);
+    char expected[sizeof(printed)];
+    snprintf(expected, sizeof(expected), "\nServer JSON output:\n%s\n", failure ? document : formatted);
+    assert(strcmp(printed, expected) == 0);
+    return attempts;
+}
+
+static void print_received_allocations(void)
+{
+    reset(0);
+    cJSON *tree = cJSON_Parse(document);
+    char *formatted = cJSON_Print(tree);
+    assert(tree && formatted && strchr(formatted, '\t'));
+    char copy[sizeof(printed)];
+    snprintf(copy, sizeof(copy), "%s", formatted);
+    cJSON_free(formatted);
+    cJSON_Delete(tree);
+    size_t count = print_received(0, copy);
+    for (size_t i = 1; i <= count; ++i) print_received(i, copy);
+    printf("client report formatting failure fallback: %zu/%zu\n", count, count);
 }
 
 static void collect(struct iperf_test *test, const char *format, ...)
@@ -200,6 +244,7 @@ int main(void)
     size_t collector_attempts = collector_failure(0);
     for (size_t i = 1; i <= collector_attempts; ++i) collector_failure(i);
     printf("collector allocation failure cleanup: %zu/%zu\n", collector_attempts, collector_attempts);
+    print_received_allocations();
 
     const char *stats = "\",\"streams\":[{\"id\":1,\"bytes\":123456}]}";
     struct input text = { .prefix = "{\"server_output_text\":\"", .suffix = stats, .repeated = 8 * 1024 * 1024 };

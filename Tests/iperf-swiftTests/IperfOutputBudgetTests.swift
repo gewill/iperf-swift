@@ -204,6 +204,39 @@ final class IperfOutputBudgetTests: XCTestCase {
         }
     }
 
+    func testClientReportPrintsReceivedOutputLikeTheUnbudgetedClient() throws {
+        // The unbudgeted client prints server_output_text as received and
+        // cJSON_Print of server_output_json under its own heading.
+        let json = #"{"start":{"version":"iperf 3.22","rate":1.5},"intervals":[{"streams":[]}],"end":{}}"#
+        for (format, payload) in [(IPERF_OUTPUT_TEXT, "line one\nline two"), (IPERF_OUTPUT_JSON, json)] {
+            let test = try native(limit: 4096)
+            iperf_set_test_role(test, IperfRole.client.rawValue)
+            test.pointee.received_server_output.value = strdup(payload)
+            test.pointee.received_server_output.length = payload.utf8.count
+            test.pointee.received_server_output.format = format
+            test.pointee.received_server_output.state = IPERF_OUTPUT_COMPLETE
+            var buffer: UnsafeMutablePointer<CChar>?
+            var size = 0
+            let stream = try XCTUnwrap(open_memstream(&buffer, &size))
+            let standardOutput = test.pointee.outfile
+            test.pointee.outfile = stream
+            iperf_output_print_received(test)
+            test.pointee.outfile = standardOutput
+            fclose(stream)
+            defer { free(buffer) }
+            let printed = String(cString: try XCTUnwrap(buffer))
+            if format == IPERF_OUTPUT_JSON {
+                let tree = try XCTUnwrap(cJSON_Parse(payload))
+                defer { cJSON_Delete(tree) }
+                let formatted = try XCTUnwrap(cJSON_Print(tree))
+                defer { cJSON_free(formatted) }
+                XCTAssertEqual(printed, "\nServer JSON output:\n" + String(cString: formatted) + "\n")
+            } else {
+                XCTAssertEqual(printed, "\nServer output:\n" + payload + "\n")
+            }
+        }
+    }
+
     func testResetReclaimsUnfinishedJSONBeforePersistentRestart() throws {
         let test = try native(limit: 4096, json: true)
         for _ in 0..<20 {

@@ -181,6 +181,12 @@ public class IperfRunner {
     /// that callback onward and always by the time the runner reports
     /// ``IperfRunnerState/finished``. Treat `nil` as a valid outcome. Starting
     /// another run clears the previous value.
+    ///
+    /// A JSON-mode server's output is formatted like the CLI's
+    /// `Server JSON output` report. With
+    /// ``IperfConfiguration/serverOutputByteLimit`` it is the compact document
+    /// the budget measured instead, so it never exceeds the limit; the engine's
+    /// own report still formats it.
     public var serverOutput: String? {
         withState { storedServerOutput }
     }
