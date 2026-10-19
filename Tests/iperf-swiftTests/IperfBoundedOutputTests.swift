@@ -51,6 +51,7 @@ final class IperfBoundedOutputTests: XCTestCase {
         let text: String?
         let state: iperf_output_state
         let format: iperf_output_format
+        let reason: iperf_output_reason
         let observed: UInt64
         let error: Int32
         let metrics: iperf_result_read_metrics
@@ -71,7 +72,8 @@ final class IperfBoundedOutputTests: XCTestCase {
             core = try JSONSerialization.jsonObject(with: Data(String(cString: raw).utf8)) as? [String: Any]
         }
         return Parsed(core: core, text: output.value.map { String(cString: $0) }, state: output.state,
-            format: output.format, observed: output.observed_bytes, error: error, metrics: metrics)
+            format: output.format, reason: output.reason, observed: output.observed_bytes, error: error,
+            metrics: metrics)
     }
 
     private func parsed(_ text: String, limit: Int = 256, fragment: Int = 4096) throws -> Parsed {
@@ -198,6 +200,32 @@ final class IperfBoundedOutputTests: XCTestCase {
         }
     }
 
+    func testNumbersCJSONCannotParseAreInvalidDataNotAllocationFailure() throws {
+        // cJSON copies at most 63 characters of a number before strtod. A longer
+        // core number once passed the scanner, failed in cJSON, and was reported
+        // as ENOMEM / allocation failure.
+        let cap = Int(IPERF_RESULT_MAX_NUMBER_LENGTH)
+        for length in [cap, cap + 1, 100] {
+            let integer = "1" + String(repeating: "0", count: length - 1)
+            // Every part of a number counts towards its length.
+            let mixed = "-1." + String(repeating: "5", count: length - 7) + "e+99"
+            for number in [integer, mixed] {
+                XCTAssertEqual(number.count, length)
+                let result = try parsed(#"{"cpu_util_total":"# + number + #","streams":[]}"#)
+                XCTAssertEqual(result.core != nil, length <= cap, number)
+                XCTAssertEqual(result.state, length <= cap ? IPERF_OUTPUT_MISSING : IPERF_OUTPUT_INVALID)
+                if length > cap {
+                    XCTAssertEqual(result.error, EPROTO)
+                    XCTAssertEqual(result.reason, IPERF_OUTPUT_INVALID_DATA)
+                }
+                // The capacity this limit mirrors.
+                let direct = cJSON_Parse("[" + number + "]")
+                defer { cJSON_Delete(direct) }
+                XCTAssertEqual(direct != nil, length <= cap, number)
+            }
+        }
+    }
+
     func testMaximumBidirectionalStreamShapeFitsCoreBudget() throws {
         // send_results emits one object per stream; Both can create twice the
         // requested MAX_STREAMS. This checks the schema budget, not real traffic.
@@ -228,11 +256,24 @@ final class IperfBoundedOutputTests: XCTestCase {
             let optional = try parsed(#"{"server_output_json":{"x":"# + array + "}," + statistics + "}", limit: 100_000)
             try assertStatistics(optional)
             XCTAssertEqual(optional.state, count + 2 <= cap ? IPERF_OUTPUT_COMPLETE : IPERF_OUTPUT_DISCARDED)
+            XCTAssertEqual(optional.reason, count + 2 <= cap ? IPERF_OUTPUT_REASON_NONE : IPERF_OUTPUT_NODE_LIMIT)
         }
         let enormous = "[" + String(repeating: "0,", count: Int(IPERF_RESULT_MAX_VALUES)) + "0]"
         let result = try parsed(#"{"server_output_json":{"x":"# + enormous + "}," + statistics + "}")
         XCTAssertNil(result.core)
         XCTAssertEqual(result.error, EFBIG)
+    }
+
+    func testDiscardedJSONKeepsTheLimitThatDiscardedIt() throws {
+        // The byte limit is reached at the 17th byte, the value limit thousands
+        // of values later; the later limit must not rewrite the reason.
+        let values = Int(IPERF_RESULT_CORE_MAX_VALUES) + 1
+        let array = "[" + Array(repeating: "0", count: values).joined(separator: ",") + "]"
+        let result = try parsed(#"{"server_output_json":{"x":"# + array + "}," + statistics + "}", limit: 16)
+        try assertStatistics(result)
+        XCTAssertEqual(result.state, IPERF_OUTPUT_DISCARDED)
+        XCTAssertEqual(result.reason, IPERF_OUTPUT_BYTE_LIMIT)
+        XCTAssertNil(result.text)
     }
 
     func testUntrustedLengthIsRejectedBeforeReadingOrAllocatingBuffers() throws {

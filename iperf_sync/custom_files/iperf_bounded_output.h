@@ -15,6 +15,10 @@
 #define IPERF_RESULT_MAX_DEPTH 64U
 #define IPERF_RESULT_CORE_MAX_VALUES 16384U
 #define IPERF_RESULT_MAX_VALUES 1048576U
+/* cJSON's parse_number copies at most 63 characters, so a longer number would
+ * pass the scanner and then fail cJSON. cJSON prints at most 25, so no iperf
+ * peer sends one; the scanner rejects it as invalid input. */
+#define IPERF_RESULT_MAX_NUMBER_LENGTH 63U
 #define IPERF_RESULT_READ_TIMEOUT_MS 30000U
 
 enum iperf_output_state {

@@ -229,23 +229,26 @@ static int digit(int c) { return c >= '0' && c <= '9'; }
 
 static int number(struct parser *p)
 {
+    /* Count every character, as cJSON's parse_number does. A number ends in
+     * one of the checked digit loops unless it is "0" or "-0". */
+    const size_t maximum = IPERF_RESULT_MAX_NUMBER_LENGTH;
     size_t count = 0;
     if (peek(p) == '-') { take(p); ++count; }
     if (peek(p) == '0') { take(p); ++count; }
     else {
         if (peek(p) < '1' || peek(p) > '9') return fail(p, EPROTO);
-        do { take(p); if (++count > 128) return fail(p, EFBIG); } while (digit(peek(p)));
+        do { take(p); if (++count > maximum) return fail(p, EPROTO); } while (digit(peek(p)));
     }
     if (peek(p) == '.') {
         take(p); ++count;
         if (!digit(peek(p))) return fail(p, EPROTO);
-        do { take(p); if (++count > 128) return fail(p, EFBIG); } while (digit(peek(p)));
+        do { take(p); if (++count > maximum) return fail(p, EPROTO); } while (digit(peek(p)));
     }
     if (peek(p) == 'e' || peek(p) == 'E') {
         take(p); ++count;
         if (peek(p) == '+' || peek(p) == '-') { take(p); ++count; }
         if (!digit(peek(p))) return fail(p, EPROTO);
-        do { take(p); if (++count > 128) return fail(p, EFBIG); } while (digit(peek(p)));
+        do { take(p); if (++count > maximum) return fail(p, EPROTO); } while (digit(peek(p)));
     }
     return p->error == 0;
 }
@@ -257,7 +260,10 @@ static int value(struct parser *p, size_t depth, struct decoded *destination)
     if (depth > p->metrics->maximum_depth) p->metrics->maximum_depth = depth;
     if (p->capture == CORE && ++p->metrics->core_values > IPERF_RESULT_CORE_MAX_VALUES)
         return fail(p, EFBIG);
-    if (p->capture == OUTPUT_JSON && ++p->output_values > IPERF_RESULT_CORE_MAX_VALUES) {
+    /* Only complete output can still be discarded here: output that an earlier
+     * byte limit already discarded keeps that reason. */
+    if (p->capture == OUTPUT_JSON && ++p->output_values > IPERF_RESULT_CORE_MAX_VALUES &&
+        p->output->state == IPERF_OUTPUT_COMPLETE) {
         discard_output(p, IPERF_OUTPUT_DISCARDED);
         p->output->reason = IPERF_OUTPUT_NODE_LIMIT;
     }
@@ -415,10 +421,13 @@ cJSON *iperf_read_bounded_results(uint32_t frame_length, size_t output_limit,
         p.core[p.core_length] = 0;
         metrics->core_json_bytes = p.core_length;
         if (output->value) output->value[output->length] = 0;
-        /* The scanner has already bounded core bytes, node count and depth.
-         * cJSON sees only this compact core, never the optional output body. */
+        /* The scanner has already bounded core bytes, node count, depth and
+         * number length. cJSON sees only this compact core, never the optional
+         * output body, so it should fail only to allocate. Report anything
+         * else as invalid input rather than as an allocation failure. */
+        errno = 0;
         result = cJSON_ParseWithLengthOpts(p.core, p.core_length + 1, NULL, 1);
-        if (!result) fail(&p, ENOMEM);
+        if (!result) fail(&p, errno == ENOMEM ? ENOMEM : EPROTO);
     }
     free(p.core);
     if (!result) {

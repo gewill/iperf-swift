@@ -420,8 +420,9 @@ The opt-in path bounds each stage:
   at most 16,384 values plus its root, depth 64. Optional JSON has the same
   retained value limit; the whole scanner is capped at 1,048,576 values.
 - An optional oversized output is discarded or truncated while valid core
-  statistics survive. Invalid grammar, excessive depth/core size, a frame over
-  64 MiB, or failed I/O ends that control exchange explicitly. Header and body
+  statistics survive. Invalid grammar (including a number longer than the 63
+  characters cJSON parses), excessive depth/core size, a frame over 64 MiB, or
+  failed I/O ends that control exchange explicitly. Header and body
   share a 30-second absolute deadline; explicit stop is checked at least every
   100 ms while waiting. Normal measurement completion is not cancellation.
 - Swift copies a received payload only once per run, after verifying ownership;
