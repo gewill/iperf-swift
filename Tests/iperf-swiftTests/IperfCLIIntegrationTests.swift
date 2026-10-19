@@ -3685,7 +3685,7 @@ final class IperfCLIIntegrationTests: XCTestCase {
     }
 }
 
-private extension IperfCLIIntegrationTests {
+private extension XCTestCase {
     /// Starts `iperf3 -s -p <port>` followed by `arguments`, and returns it
     /// once it is listening; teardown terminates it.
     ///
@@ -3785,9 +3785,362 @@ private struct Credentials {
     }
 }
 
+final class IperfLogLifecycleTests: XCTestCase {
+    func testOneOffServerReuseSeparatesCompletionsAndPreservesExistingLog() throws {
+        let tools = try TestTools()
+        let url = tools.directory.appendingPathComponent("one-off.log")
+        let runner = IperfRunner(with: IperfConfiguration())
+        addTeardownBlock { runner.stop() }
+        var generations: Set<UUID> = []
+        var original: Data?
+        for prot in [IperfProtocol.tcp, .udp, .tcp] {
+            let port = try TestTools.freePort()
+            var configuration = IperfConfiguration()
+            configuration.role = .server
+            configuration.address = "127.0.0.1"
+            configuration.port = port
+            configuration.oneOff = true
+            configuration.reporterInterval = 0.1
+            configuration.logfile = url.path
+            configuration.logfileByteLimit = 128
+            let released = expectation(description: "one-off resources released")
+            var bytes = 0
+            var result: IperfRunCompletion?
+            runner.start(with: configuration, { bytes += $0.totalBytes },
+                         { XCTFail("one-off failed: \($0)") }, { _ in },
+                         onResourcesReleased: { completion in
+                self.assertClosed(url)
+                XCTAssertEqual(try? TestTools.tcpSocketStates(pid: getpid(), port: port), [])
+                result = completion
+                released.fulfill()
+            })
+            try waitUntilSwiftServerListens(on: port)
+            var arguments = ["-c", "127.0.0.1", "-p", String(port), "-t", "1", "-b", "1M", "-J"]
+            if prot == .udp { arguments += ["-u", "-l", "1200"] }
+            let cli = try tools.run(tools.iperf3, arguments: arguments)
+            XCTAssertEqual(cli.status, 0, cli.output)
+            wait(for: [released], timeout: 5)
+            XCTAssertGreaterThan(bytes, 0)
+            let completion = try XCTUnwrap(result)
+            XCTAssertTrue(generations.insert(completion.runID).inserted)
+            XCTAssertEqual(completion.logfile?.isTruncated, true)
+            let content = try Data(contentsOf: url)
+            if let original {
+                XCTAssertEqual(content, original)
+                XCTAssertEqual(completion.logfile?.bytesWritten, 0)
+            } else { original = content }
+            XCTAssertLessThanOrEqual(content.count, 128)
+        }
+    }
+
+    func testQueuedRestartBeforeOldCompletionCannotReplaceGenerationPayload() throws {
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "127.0.0.1"
+        let port = try TestTools.freePort()
+        configuration.port = port
+        let blocker = IperfRunner(with: configuration)
+        let stopped = expectation(description: "blocking server stopped")
+        addTeardownBlock { blocker.stop() }
+        blocker.start({ _ in }, { XCTFail("blocker failed: \($0)") }, { _ in },
+                      onResourcesReleased: { _ in stopped.fulfill() })
+        try waitUntilSwiftServerListens(on: port)
+        let runner = IperfRunner(with: IperfConfiguration())
+        let queued = expectation(description: "first generation queued")
+        let released = expectation(description: "both generations released")
+        released.expectedFulfillmentCount = 2
+        let lock = NSLock()
+        var results: [IperfRunCompletion] = []
+        runner.start({ _ in XCTFail("queued run measured") }, { _ in XCTFail("queued run failed") }, { [weak runner] state in
+            if state == .initialising { queued.fulfill() }
+            if state == .finished {
+                var invalid = IperfConfiguration()
+                invalid.port = 0
+                // Enqueued before the old release notification is delivered.
+                runner?.start(with: invalid, { _ in XCTFail("invalid run measured") },
+                              { XCTAssertEqual($0, .IEBADPORT) }, { _ in },
+                              onResourcesReleased: { result in
+                    lock.lock(); results.append(result); lock.unlock()
+                    released.fulfill()
+                })
+            }
+        }, onResourcesReleased: { result in
+            lock.lock(); results.append(result); lock.unlock()
+            released.fulfill()
+        })
+        wait(for: [queued], timeout: 3)
+        runner.stop()
+        wait(for: [released], timeout: 3)
+        lock.lock(); let captured = results; lock.unlock()
+        XCTAssertEqual(captured.count, 2)
+        XCTAssertEqual(Set(captured.map(\.runID)).count, 2)
+        XCTAssertEqual(runner.completion, captured.last)
+        blocker.stop()
+        wait(for: [stopped], timeout: 5)
+    }
+
+    private func assertClosed(_ url: URL, file: StaticString = #filePath, line: UInt = #line) {
+        // Inspect this process's actual descriptors, including those above 1024.
+        // Unlink succeeding alone would not prove the native FILE was closed.
+        let required = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, nil, 0)
+        XCTAssertGreaterThan(required, 0, file: file, line: line)
+        var descriptors = [proc_fdinfo](repeating: proc_fdinfo(),
+                                        count: Int(required) / MemoryLayout<proc_fdinfo>.stride + 32)
+        let size = Int32(descriptors.count * MemoryLayout<proc_fdinfo>.stride)
+        let used = descriptors.withUnsafeMutableBytes {
+            proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, $0.baseAddress, size)
+        }
+        XCTAssertGreaterThan(used, 0, file: file, line: line)
+        XCTAssertLessThan(used, size, "descriptor inventory was truncated", file: file, line: line)
+        for descriptor in descriptors.prefix(Int(max(used, 0)) / MemoryLayout<proc_fdinfo>.stride) {
+            var path = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+            if fcntl(descriptor.proc_fd, F_GETPATH, &path) == 0 {
+                XCTAssertNotEqual(String(cString: path), url.resolvingSymlinksInPath().path,
+                                  "native logfile descriptor remains open", file: file, line: line)
+            }
+        }
+    }
+
+    func testClientTextAndJSONBudgetsPreserveTCPAndUDPMeasurements() throws {
+        let tools = try TestTools()
+        for prot in [IperfProtocol.tcp, .udp] {
+            for json in [false, true] {
+                for limit: UInt64? in [nil, 128] {
+                    let port = try startCLIServer(tools, ["-1"]).port
+                    let url = tools.directory.appendingPathComponent(UUID().uuidString)
+                    var configuration = IperfConfiguration()
+                    configuration.address = "127.0.0.1"
+                    configuration.port = port
+                    configuration.prot = prot
+                    configuration.rate = 1_000_000
+                    configuration.blockSize = prot == .tcp ? 16_384 : 1_200
+                    configuration.duration = 1
+                    configuration.reporterInterval = 0.1
+                    configuration.logfile = url.path
+                    configuration.logfileByteLimit = limit
+                    configuration.jsonStream = json
+                    configuration.jsonStreamFullOutput = json
+                    let runner = IperfRunner(with: configuration)
+                    addTeardownBlock { runner.stop() }
+                    let released = expectation(description: "client resources released")
+                    var samplesAfterTruncation = 0
+                    var measured = 0
+                    var jsonEvents = 0
+                    runner.start({ interval in
+                        measured += interval.totalBytes
+                        if limit != nil, interval.totalBytes > 0,
+                           let text = try? String(contentsOf: url, encoding: .utf8),
+                           text.contains("[iperf log truncated]") {
+                            samplesAfterTruncation += 1
+                        }
+                    }, { error in XCTFail("bounded logging broke measurement: \(error)") }, { _ in },
+                    onJSONStream: { text in
+                        XCTAssertNotNil(try? JSONSerialization.jsonObject(with: Data(text.utf8)))
+                        jsonEvents += 1
+                    }, onResourcesReleased: { completion in
+                        self.assertClosed(url)
+                        XCTAssertEqual(runner.completion, completion)
+                        if let limit {
+                            XCTAssertEqual(completion.logfile?.byteLimit, limit)
+                            XCTAssertEqual(completion.logfile?.isTruncated, !json)
+                            XCTAssertNil(completion.logfile?.writeError)
+                            XCTAssertNil(completion.logfile?.closeError)
+                            XCTAssertEqual(completion.logfile?.fileBytes, UInt64((try? Data(contentsOf: url).count) ?? 0))
+                        } else {
+                            XCTAssertNil(completion.logfile)
+                        }
+                        released.fulfill()
+                    })
+                    wait(for: [released], timeout: 8)
+                    XCTAssertGreaterThan(measured, 0)
+                    XCTAssertEqual(jsonEvents > 0, json)
+                    let output = try Data(contentsOf: url)
+                    if json {
+                        // The existing json_callback route bypasses outfile.
+                        // Budgeting the file must not truncate structured callbacks.
+                        XCTAssertTrue(output.isEmpty)
+                    } else if let limit {
+                        XCTAssertLessThanOrEqual(output.count, Int(limit))
+                        XCTAssertGreaterThan(samplesAfterTruncation, 1)
+                        XCTAssertEqual(String(decoding: output, as: UTF8.self).components(separatedBy: "[iperf log truncated]").count, 2)
+                    } else {
+                        XCTAssertGreaterThan(output.count, 128)
+                    }
+                }
+            }
+        }
+    }
+
+    func testOpenFailureDoesNotFailMeasurementAndReportsUnknownFileSize() throws {
+        let tools = try TestTools()
+        let port = try startCLIServer(tools, ["-1"]).port
+        var configuration = IperfConfiguration()
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.duration = 1
+        configuration.rate = 1_000_000
+        configuration.logfile = tools.directory.appendingPathComponent("missing/log").path
+        configuration.logfileByteLimit = 128
+        let runner = IperfRunner(with: configuration)
+        addTeardownBlock { runner.stop() }
+        let released = expectation(description: "measurement survives unavailable logfile")
+        var bytes = 0
+        runner.start({ bytes += $0.totalBytes }, { XCTFail("measurement failed: \($0)") }, { _ in },
+                     onResourcesReleased: { completion in
+            XCTAssertEqual(completion.logfile?.openError, ENOENT)
+            XCTAssertNil(completion.logfile?.fileBytes)
+            XCTAssertEqual(completion.logfile?.bytesWritten, 0)
+            released.fulfill()
+        })
+        wait(for: [released], timeout: 8)
+        XCTAssertGreaterThan(bytes, 0)
+    }
+
+    func testPersistentServerRetainsOneBudgetAcrossTCPAndUDPClientsThenStops() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        let url = tools.directory.appendingPathComponent("persistent.log")
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        configuration.reporterInterval = 0.1
+        configuration.logfile = url.path
+        configuration.logfileByteLimit = 128
+        let runner = IperfRunner(with: configuration)
+        addTeardownBlock { runner.stop() }
+        let released = expectation(description: "persistent server releases after stop")
+        let lock = NSLock()
+        var protocols: Set<IperfProtocol> = []
+        runner.start({ interval in
+            if interval.totalBytes > 0 {
+                lock.lock(); protocols.insert(interval.prot); lock.unlock()
+            }
+        }, { XCTFail("server failed: \($0)") }, { _ in }, onResourcesReleased: { completion in
+            self.assertClosed(url)
+            XCTAssertEqual(try? TestTools.tcpSocketStates(pid: getpid(), port: port), [])
+            XCTAssertEqual(completion.logfile?.isTruncated, true)
+            XCTAssertNil(completion.logfile?.openError)
+            released.fulfill()
+        })
+        for prot in [IperfProtocol.tcp, .udp] {
+            // The server replaces its listener after every client.
+            try waitUntilSwiftServerListens(on: port)
+            var arguments = ["-c", "127.0.0.1", "-p", String(port), "-t", "1", "-b", "1M", "-J"]
+            if prot == .udp { arguments += ["-u", "-l", "1200"] }
+            let cli = try tools.run(tools.iperf3, arguments: arguments)
+            XCTAssertEqual(cli.status, 0, cli.output)
+            XCTAssertNil(runner.completion)
+        }
+        runner.stop(); runner.stop()
+        wait(for: [released], timeout: 5)
+        lock.lock(); let observed = protocols; lock.unlock()
+        XCTAssertEqual(observed, [.tcp, .udp])
+        let output = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertLessThanOrEqual(output.utf8.count, 128)
+        XCTAssertEqual(output.components(separatedBy: "[iperf log truncated]").count, 2)
+    }
+
+    func testStoppedClientsAndNativeErrorReleaseLogfile() throws {
+        let tools = try TestTools()
+        for prot in [IperfProtocol.tcp, .udp] {
+            let port = try startCLIServer(tools, ["-1"]).port
+            let url = tools.directory.appendingPathComponent(UUID().uuidString)
+            var configuration = IperfConfiguration()
+            configuration.address = "127.0.0.1"
+            configuration.port = port
+            configuration.prot = prot
+            configuration.duration = 60
+            configuration.rate = 1_000_000
+            configuration.reporterInterval = 0.1
+            configuration.logfile = url.path
+            configuration.logfileByteLimit = 128
+            let runner = IperfRunner(with: configuration)
+            addTeardownBlock { runner.stop() }
+            let released = expectation(description: "stopped client releases logfile")
+            var samples = 0
+            runner.start({ interval in
+                if interval.totalBytes > 0 { samples += 1 }
+                if samples == 3 { runner.stop(); runner.stop() }
+            }, { XCTFail("stopped client failed: \($0)") }, { _ in }, onResourcesReleased: { completion in
+                self.assertClosed(url)
+                XCTAssertEqual(completion.logfile?.isTruncated, true)
+                released.fulfill()
+            })
+            wait(for: [released], timeout: 8)
+            XCTAssertGreaterThanOrEqual(samples, 3)
+        }
+        var bad = IperfConfiguration()
+        bad.role = .server
+        bad.bindDevice = "iperf-invalid-device"
+        bad.port = try TestTools.freePort()
+        let url = tools.directory.appendingPathComponent("error.log")
+        bad.logfile = url.path
+        bad.logfileByteLimit = 128
+        let runner = IperfRunner(with: bad)
+        let failed = expectation(description: "native error delivered")
+        let released = expectation(description: "native failure released")
+        runner.start({ _ in XCTFail("unexpected measurement") }, { error in
+            XCTAssertEqual(error, .IEBINDDEV)
+            failed.fulfill()
+        }, { _ in }, onResourcesReleased: { _ in
+            self.assertClosed(url)
+            released.fulfill()
+        })
+        wait(for: [failed, released], timeout: 5, enforceOrder: true)
+    }
+
+    func testQueuedCancelIgnoredStartAndQueuedDeallocationCompleteOnce() throws {
+        let tools = try TestTools()
+        let port = try TestTools.freePort()
+        var configuration = IperfConfiguration()
+        configuration.role = .server
+        configuration.address = "127.0.0.1"
+        configuration.port = port
+        let blocker = IperfRunner(with: configuration)
+        addTeardownBlock { blocker.stop() }
+        let blockerReleased = expectation(description: "blocking native server released")
+        blocker.start({ _ in }, { XCTFail("blocker failed: \($0)") }, { _ in },
+                      onResourcesReleased: { _ in blockerReleased.fulfill() })
+        try waitUntilSwiftServerListens(on: port)
+
+        for deallocate in [false, true] {
+            let url = tools.directory.appendingPathComponent(UUID().uuidString)
+            var next = IperfConfiguration()
+            next.logfile = url.path
+            next.logfileByteLimit = 128
+            var queued: IperfRunner? = IperfRunner(with: next)
+            weak var weakQueued = queued
+            let initialising = expectation(description: "run is queued")
+            let released = expectation(description: "queued run released")
+            queued?.start({ _ in XCTFail("queued run measured") }, { XCTFail("queued run failed: \($0)") }, { state in
+                if state == .initialising { initialising.fulfill() }
+                XCTAssertNotEqual(state, .running)
+            }, onResourcesReleased: { completion in
+                XCTAssertNil(completion.logfile)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+                released.fulfill()
+            })
+            wait(for: [initialising], timeout: 3)
+            queued?.start(with: next, { _ in XCTFail("ignored start measured") }, { _ in XCTFail("ignored start failed") },
+                          { _ in XCTFail("ignored start changed state") }, onResourcesReleased: { _ in XCTFail("ignored start completed") })
+            if deallocate {
+                queued = nil
+            } else {
+                queued?.stop(); queued?.stop()
+            }
+            wait(for: [released], timeout: 3)
+            if deallocate { XCTAssertNil(weakQueued) }
+            else { XCTAssertNotNil(queued?.completion) }
+        }
+        blocker.stop()
+        wait(for: [blockerReleased], timeout: 5)
+    }
+}
+
 /// An `iperf3 -s` process, keeping what it writes for failure messages.
 ///
-/// ``IperfCLIIntegrationTests/startCLIServer(_:_:timeout:ports:)`` starts one
+/// ``XCTestCase/startCLIServer(_:_:timeout:ports:)`` starts one
 /// and returns it once it is listening.
 private final class CLIServer {
     struct StartupFailure: LocalizedError, CustomStringConvertible {
@@ -4030,7 +4383,7 @@ private final class TestTools {
     /// candidate is handed out only if ``isFree(port:)`` as well.
     ///
     /// The port is released before it is returned, so a server can still lose
-    /// it; ``IperfCLIIntegrationTests/startCLIServer(_:_:timeout:ports:)``
+    /// it; ``XCTestCase/startCLIServer(_:_:timeout:ports:)``
     /// starts such a server again on another port.
     static func freePort() throws -> Int {
         for _ in 0..<64 {

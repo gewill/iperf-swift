@@ -274,6 +274,18 @@ public struct IperfConfiguration {
     }
     /// The path used for libiperf log output, equivalent to `--logfile`.
     public var logfile: String?
+    /// Opt-in maximum logfile bytes, including existing content and the marker.
+    ///
+    /// Nil preserves the original unbounded CLI behavior. Requires `logfile`
+    /// and at least ``minimumLogfileByteLimit`` bytes. Overflow retains a UTF-8
+    /// scalar-aligned prefix and drops later output without stopping the test.
+    /// Up to marker-length + 3 bytes stay buffered until close, even on flush.
+    /// Inspect the release callback's ``IperfLogfileResult`` for failures and
+    /// truncation before treating text/JSON as complete. Do not modify or share
+    /// the path with another writer while the run owns it.
+    public var logfileByteLimit: UInt64?
+    /// Smallest budget that can contain one complete truncation marker.
+    public static var minimumLogfileByteLimit: UInt64 { iperf_log_minimum_limit() }
     /// Enables verbose libiperf output.
     public var verbose: Bool = false
     /// Emits line-delimited JSON events, equivalent to `--json-stream`.

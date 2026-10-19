@@ -33,6 +33,7 @@
 #include <sys/types.h>
 #include <stdio.h>
 #include <stdint.h>
+#include "iperf_bounded_log.h"
 #include <inttypes.h>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -335,6 +336,7 @@ struct iperf_test
 
     char     *logfile;				/* --logfile option */
     FILE     *outfile;
+    struct iperf_log_status logfile_status;
 
     int       ctrl_sck;
     int       mapped_v4;
