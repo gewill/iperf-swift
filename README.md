@@ -425,12 +425,14 @@ The opt-in path bounds each stage:
   failed I/O ends that control exchange explicitly. Header and body
   share a 30-second absolute deadline; explicit stop is checked at least every
   100 ms while waiting. Normal measurement completion is not cancellation.
-  The deadline is the CLI's own: upstream `Nread` stops reading a frame 30
-  seconds after its body starts to arrive, so waiting longer would not help a
-  CLI peer. A deadline scaled by the declared length would trust the peer for
-  up to 64 MiB, and an idle timeout alone has no upper bound. On a link too
-  slow for the frame, lower the budget; the frame carries the statistics and
-  the retained output, which JSON escaping can grow up to sixfold for text.
+  The deadline matches the CLI client's: upstream `Nread` stops reading a frame
+  30 seconds after its body starts to arrive. Upstream `Nwrite` has no
+  deadline, so waiting longer would let a slow link deliver a frame that a CLI
+  client drops; but a deadline scaled by the declared length would trust the
+  peer for up to 64 MiB, and an idle timeout alone has no upper bound. On a
+  link too slow for the frame, lower the budget; the frame carries the
+  statistics and the retained output, which JSON escaping can grow up to
+  sixfold for text.
 - Swift copies a received payload only once per run, after verifying ownership;
   its UTF-8 length is at most the configured limit, so JSON stays the compact
   document the budget measured. The client's own text report still prints
