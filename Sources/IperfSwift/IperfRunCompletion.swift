@@ -26,14 +26,37 @@ public struct IperfLogfileResult: Equatable, Sendable {
     /// First POSIX error closing the sink. The FILE is closed even on failure.
     public let closeError: Int32?
 
+    /// Creates a result from its parts, for example for a test double that
+    /// stands in for a runner. The SDK reports only consistent combinations;
+    /// this initializer does not check them.
+    public init(
+        byteLimit: UInt64,
+        bytesWritten: UInt64,
+        fileBytes: UInt64?,
+        isTruncated: Bool,
+        openError: Int32? = nil,
+        writeError: Int32? = nil,
+        closeError: Int32? = nil
+    ) {
+        self.byteLimit = byteLimit
+        self.bytesWritten = bytesWritten
+        self.fileBytes = fileBytes
+        self.isTruncated = isTruncated
+        self.openError = openError
+        self.writeError = writeError
+        self.closeError = closeError
+    }
+
     init(_ status: iperf_log_status) {
-        byteLimit = status.limit
-        bytesWritten = status.bytes_written
-        fileBytes = status.file_size_known != 0 ? status.file_bytes : nil
-        isTruncated = status.truncated != 0
-        openError = status.open_errno == 0 ? nil : status.open_errno
-        writeError = status.write_errno == 0 ? nil : status.write_errno
-        closeError = status.close_errno == 0 ? nil : status.close_errno
+        self.init(
+            byteLimit: status.limit,
+            bytesWritten: status.bytes_written,
+            fileBytes: status.file_size_known != 0 ? status.file_bytes : nil,
+            isTruncated: status.truncated != 0,
+            openError: status.open_errno == 0 ? nil : status.open_errno,
+            writeError: status.write_errno == 0 ? nil : status.write_errno,
+            closeError: status.close_errno == 0 ? nil : status.close_errno
+        )
     }
 }
 
@@ -51,6 +74,13 @@ public struct IperfRunCompletion: Equatable, Sendable {
     public let runID: UUID
     /// Nil when bounded logging was disabled or no logfile open was attempted.
     public let logfile: IperfLogfileResult?
+
+    /// Creates a completion, for example for a test double that stands in for
+    /// a runner's release callback.
+    public init(runID: UUID, logfile: IperfLogfileResult? = nil) {
+        self.runID = runID
+        self.logfile = logfile
+    }
 }
 
 /// Called once after all native resources of an accepted start are released.

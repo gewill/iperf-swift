@@ -186,4 +186,35 @@ final class IperfPublicAPITests: XCTestCase {
         XCTAssertEqual(result.throughput.rawValue, 0)
         XCTAssertEqual(result.duration, 0)
     }
+
+    // A downstream test double has to build the values a runner reports.
+    func testRunOutcomesCanBeBuiltForTestDoubles() {
+        let output = IperfServerOutputStatus(
+            state: .truncated,
+            format: .text,
+            reason: .byteLimit,
+            retainedByteCount: 64,
+            observedByteCount: 1_000
+        )
+        XCTAssertEqual(output.state, .truncated)
+        XCTAssertEqual(output.format, .text)
+        XCTAssertEqual(output.reason, .byteLimit)
+        XCTAssertEqual(output.retainedByteCount, 64)
+        XCTAssertEqual(output.observedByteCount, 1_000)
+        let missing = IperfServerOutputStatus(state: .missing)
+        XCTAssertNil(missing.format)
+        XCTAssertNil(missing.reason)
+        XCTAssertEqual(missing.retainedByteCount, 0)
+        XCTAssertNil(missing.observedByteCount)
+
+        let logfile = IperfLogfileResult(byteLimit: 128, bytesWritten: 100, fileBytes: 128, isTruncated: true)
+        XCTAssertNil(logfile.openError)
+        XCTAssertNil(logfile.writeError)
+        XCTAssertNil(logfile.closeError)
+        let runID = UUID()
+        let completion = IperfRunCompletion(runID: runID, logfile: logfile)
+        XCTAssertEqual(completion.runID, runID)
+        XCTAssertEqual(completion.logfile, logfile)
+        XCTAssertNil(IperfRunCompletion(runID: runID).logfile)
+    }
 }

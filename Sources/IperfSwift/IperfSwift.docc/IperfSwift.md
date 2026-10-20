@@ -23,6 +23,7 @@ the main actor or main queue, and keep terminal-state handling idempotent.
 - ``IperfConfiguration``
 - ``IperfRunner``
 - ``IperfRunnerState``
+- ``IperfServerOutputStatus``
 
 ### Callbacks
 

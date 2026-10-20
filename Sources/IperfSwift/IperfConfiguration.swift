@@ -220,6 +220,18 @@ public struct IperfConfiguration {
     ///
     /// The text becomes available through ``IperfRunner/serverOutput``.
     public var getServerOutput: Bool = false
+
+    /// Optional byte budget for raw server output, from 1 byte through 1 MiB.
+    ///
+    /// `nil` preserves the original unbounded behavior. Clients bound received
+    /// output before parsing/copying; servers bound collection before sending.
+    /// Text retains a valid UTF-8 prefix; oversized JSON is discarded entirely.
+    /// Inspect the runner's output status to distinguish these outcomes.
+    /// This does not limit FILE log writes or negotiate a remote server's budget.
+    /// JSON streaming remains available, but combining this budget with
+    /// ``jsonStreamFullOutput`` and ``jsonStream`` fails preflight because full
+    /// history retention is incompatible with bounded output collection.
+    public var serverOutputByteLimit: Int?
     /// Sets the IPv4 Do-Not-Fragment flag on UDP packets, equivalent to
     /// `--dont-fragment`. Enabling this for TCP or forced IPv6 fails with
     /// ``IperfError/IEUDPONLY`` or ``IperfError/IEIPV4ONLY`` respectively.
