@@ -220,6 +220,18 @@ public struct IperfConfiguration {
     ///
     /// The text becomes available through ``IperfRunner/serverOutput``.
     public var getServerOutput: Bool = false
+
+    /// Optional byte budget for raw server output, from 1 byte through 1 MiB.
+    ///
+    /// `nil` preserves the original unbounded behavior. Clients bound received
+    /// output before parsing/copying; servers bound collection before sending.
+    /// Text retains a valid UTF-8 prefix; oversized JSON is discarded entirely.
+    /// Inspect the runner's output status to distinguish these outcomes.
+    /// This does not limit FILE log writes or negotiate a remote server's budget.
+    /// JSON streaming remains available, but combining this budget with
+    /// ``jsonStreamFullOutput`` and ``jsonStream`` fails preflight because full
+    /// history retention is incompatible with bounded output collection.
+    public var serverOutputByteLimit: Int?
     /// Sets the IPv4 Do-Not-Fragment flag on UDP packets, equivalent to
     /// `--dont-fragment`. Enabling this for TCP or forced IPv6 fails with
     /// ``IperfError/IEUDPONLY`` or ``IperfError/IEIPV4ONLY`` respectively.
@@ -274,6 +286,18 @@ public struct IperfConfiguration {
     }
     /// The path used for libiperf log output, equivalent to `--logfile`.
     public var logfile: String?
+    /// Opt-in maximum logfile bytes, including existing content and the marker.
+    ///
+    /// Nil preserves the original unbounded CLI behavior. Requires `logfile`
+    /// and at least ``minimumLogfileByteLimit`` bytes. Overflow retains a UTF-8
+    /// scalar-aligned prefix and drops later output without stopping the test.
+    /// Up to marker-length + 3 bytes stay buffered until close, even on flush.
+    /// Inspect the release callback's ``IperfLogfileResult`` for failures and
+    /// truncation before treating text/JSON as complete. Do not modify or share
+    /// the path with another writer while the run owns it.
+    public var logfileByteLimit: UInt64?
+    /// Smallest budget that can contain one complete truncation marker.
+    public static var minimumLogfileByteLimit: UInt64 { iperf_log_minimum_limit() }
     /// Enables verbose libiperf output.
     public var verbose: Bool = false
     /// Emits line-delimited JSON events, equivalent to `--json-stream`.

@@ -49,7 +49,7 @@ Or add the package to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/gewill/iperf-swift.git",
-        from: "3.22.0"
+        from: "3.22.1"
     )
 ]
 ```
@@ -218,6 +218,70 @@ effect only when the resulting UDP socket is IPv4.
 
 ## Configuration mapping
 
+### Optional bounded logs and resource release
+
+`logfileByteLimit` is opt-in; `nil` keeps the existing CLI logfile behavior.
+Set a byte limit together with `logfile` to retain a prefix within a fixed
+file budget. The minimum is `IperfConfiguration.minimumLogfileByteLimit`;
+invalid limits or a missing path fail preflight with `IELOGFILELIMIT`.
+
+```swift
+var configuration = IperfConfiguration()
+configuration.logfile = ownedLogURL.path
+configuration.logfileByteLimit = 8 * 1024 * 1024
+let runner = IperfRunner(with: configuration)
+runner.start(
+    { interval in /* consume measurements promptly */ },
+    { error in /* handle measurement errors */ },
+    { state in /* update presentation */ },
+    onResourcesReleased: { completion in
+        // All native resources, including the logfile FILE, are now released.
+        // Inspect completion.logfile before using or reclaiming the owned file.
+    }
+)
+```
+
+The budget includes existing bytes and at most one new `[iperf log truncated]`
+marker per accepted run.
+Overflow discards subsequent output without stopping measurement or callbacks.
+The retained prefix ends at a UTF-8 scalar boundary for valid UTF-8 input; it
+does not promise a whole grapheme, line, or JSON document. A bounded logfile is
+not a replacement for structured result callbacks. At most the marker length
+plus three bytes remain buffered until close, including after `fflush`, so an
+exactly full file is not incorrectly labelled truncated.
+
+The existing Swift JSON streaming callback route bypasses logfile output; its
+file can be empty in both bounded and unbounded mode. This option limits only
+actual file writes, not JSON callback payloads or captured server-output memory.
+
+Existing content is never overwritten. If fewer than a marker's bytes remain,
+new output is discarded and truncation is reported only in the completion. An
+already oversized file is untouched and reports `EFBIG`; its existing size
+is not claimed to satisfy the new limit. Only regular files are supported.
+The caller must exclusively own the path throughout the run. Concurrent writers,
+external replacement, filesystem allocation overhead, and other files are
+outside this per-file byte budget. This does not promise persistent storage on
+tvOS or a whole-app memory/disk budget.
+
+With bounded logging enabled, open/write/close failures are recorded separately
+in `IperfLogfileResult` and do not fail the measurement. The first write failure
+disables later writes for that run. Default unbounded logging retains its
+existing engine error behavior. A persistent server shares one budget across
+client connections and closes/reopens its sink without repeating the marker.
+
+The existing `.finished` callback timing is unchanged and can precede native
+teardown. Use `onResourcesReleased` to delete an owned file safely. Each accepted
+start completes once, including validation failure, queued cancellation, and
+deallocation while queued; ignored overlapping starts do not complete. A
+persistent server completes only when it exits. `completion.runID` identifies
+the generation and `completion.logfile` is nil if bounded logging was disabled
+or no file open was attempted. Callbacks have no guaranteed delivery queue and
+must return promptly. The runner's `completion` property is cleared by a new
+accepted start, so retain the callback payload when restarting.
+Prefer a unique logfile path per run. If another run reuses a path before an
+older completion is delivered, that completion does not authorize deleting the
+new run's file; coordinate path ownership separately from the runner state.
+
 The wrapper follows the official iperf3 options where the embedded API exposes
 them. “Client” and “Server” below refer to the local Swift endpoint. Unless a
 row narrows it, a client test supports upload, download, and bidirectional modes
@@ -241,7 +305,8 @@ interface, and socket constraints remain runtime decisions.
 | `rcvTimeout` | `--rcv-timeout` | Server; Client download / bidirectional | `0.1...86,400` seconds; invalid values fail with `IERCVTIMEOUT`, while Client upload fails with `IERVRSONLYRCVTIMEOUT` |
 | `reporterInterval` | `--interval` | Client / Server | Seconds; zero disables periodic callbacks, otherwise accepts `0.1...60` (iperf3's `MIN_INTERVAL`/`MAX_INTERVAL`); values below the minimum, out of range, or nonfinite fail with `IEINTERVAL` before timer creation |
 | `statsInterval` | — | Ignored | Retained for compatibility; statistics always sample at `reporterInterval` |
-| `logfile` | `--logfile` | Client / Server | File-open failures are reported by the engine at runtime |
+| `logfile` | `--logfile` | Client / Server | Default unbounded mode reports file-open failures through the engine; bounded mode reports them separately at resource release |
+| `logfileByteLimit` | — | Client / Server | Optional per-file byte budget; see bounded-log semantics above |
 | `verbose` | `--verbose` | Client / Server | Enables verbose libiperf text logging |
 
 ### Client test options
@@ -313,6 +378,81 @@ remain higher priority than same-role credential completeness.
 | Explicit same-default role option | Assigning `numStreams`, `mode`, `prot`, `omit`, or `timeSkewThreshold` records caller intent, so wrong-role use still fails | Implemented |
 | `dontFragment` + `addressFamily == .any` | Allowed; the flag takes effect only if resolution produces an IPv4 UDP socket | Runtime by design |
 | `clientPort` + parallel/bidirectional streams | Highest port is `clientPort + numStreams - 1` for unidirectional tests and `clientPort + 2 × numStreams - 1` for bidirectional tests | Implemented; the highest port may equal `65,535` |
+
+### Bounded server output
+
+Set `serverOutputByteLimit` to `1...1_048_576` to opt into bounded raw server
+output. The default `nil` preserves existing behavior. A client still needs
+`getServerOutput = true`; a server applies its own budget when a client requests
+output. The client option does not limit memory in an unmodified remote CLI.
+
+```swift
+configuration.getServerOutput = true
+configuration.serverOutputByteLimit = 256 * 1024
+// After final reporting:
+// runner.serverOutput       — valid text prefix or complete compact JSON
+// runner.serverOutputStatus — state, format, reason, retained/observed bytes
+```
+
+`serverOutputStatus` is `nil` when the budget is disabled. With a budget it
+separates not-requested, waiting, missing, complete (including an empty string),
+truncated text, discarded JSON, and invalid output. An unknown observed byte
+count is `nil`, not zero. `localServerOutputStatus` reports the budgeted server's
+collection metadata without copying its payload to Swift. A new accepted run
+clears prior client output; overlapping starts do not. Persistent servers reset
+collection and the negotiated request flag between clients.
+In budgeted mode, a runner reports its terminal state after the native call
+returns; a result-exchange failure cannot first announce
+successful completion from a cleanup reporter callback.
+
+The opt-in path bounds each stage:
+
+- Text collection keeps at most the configured number of UTF-8 bytes, ending at
+  a scalar boundary. JSON intervals are encoded into a bounded buffer and not
+  accumulated in `json_intervals`; the complete document is sent only if its
+  byte/node/depth limits pass. Partial JSON is never returned as a document.
+- Server collection allocates at most `limit + 1` bytes plus `limit + 5` bytes
+  of JSON scratch, in addition to the engine's current interval/start/end data.
+  Result serialization uses a fixed `1 MiB + 6 × limit + 1029` byte buffer,
+  allowing for worst-case JSON string escaping without concatenating all logs.
+- Result reception uses a 4 KiB input chunk, a 1 MiB core-statistics buffer, and
+  one output buffer of `limit + 1` bytes. cJSON parses only bounded core data:
+  at most 16,384 values plus its root, depth 64. Optional JSON has the same
+  retained value limit; the whole scanner is capped at 1,048,576 values.
+- An optional oversized output is discarded or truncated while valid core
+  statistics survive. Invalid grammar (including a number longer than the 63
+  characters cJSON parses), excessive depth/core size, a frame over 64 MiB, or
+  failed I/O ends that control exchange explicitly. Header and body
+  share a 30-second absolute deadline; explicit stop is checked at least every
+  100 ms while waiting. Normal measurement completion is not cancellation.
+  The deadline matches the CLI client's: upstream `Nread` stops reading a frame
+  30 seconds after its body starts to arrive. Upstream `Nwrite` has no
+  deadline, so waiting longer would let a slow link deliver a frame that a CLI
+  client drops; but a deadline scaled by the declared length would trust the
+  peer for up to 64 MiB, and an idle timeout alone has no upper bound. On a
+  link too slow for the frame, lower the budget; the frame carries the
+  statistics and the retained output, which JSON escaping can grow up to
+  sixfold for text.
+- Swift copies a received payload only once per run, after verifying ownership;
+  its UTF-8 length is at most the configured limit, so JSON stays the compact
+  document the budget measured. The client's own text report still prints
+  received JSON under `Server JSON output:` formatted with `cJSON_Print`, like
+  the unbudgeted client, from a transient tree that the same limits bound.
+  JSON callbacks can also carry bounded output; callers remain responsible for
+  their own retained callback history. These byte limits are not
+  process-footprint measurements.
+
+Budgeted servers add versioned `iperf_swift_server_output` metadata to the
+result-control object so a budgeted receiver can distinguish sender truncation
+or discard from absent output. An unmodified CLI ignores this extension and
+still receives valid statistics plus the available standard output field.
+Malformed metadata cannot upgrade a local truncation/discard into completeness.
+
+Combining a budget with `jsonStream && jsonStreamFullOutput` fails preflight
+with `IESERVEROUTPUTLIMIT`: unlimited full-history retention contradicts this
+budget. Ordinary JSON streaming remains available. This option does not cap
+FILE log writes, change measurement statistics, or establish a device memory
+budget; those are separate contracts.
 
 ### JSON streaming
 
@@ -412,13 +552,26 @@ Run a focused suite:
 ```sh
 swift test --filter IperfSwiftUnitTests
 swift test --filter IperfCLIIntegrationTests
+swift test --filter IperfBoundedOutputTests
 ```
+
+For Xcode's macOS test runner, explicitly forward the selected executables:
+
+```sh
+TEST_RUNNER_IPERF3_PATH="$IPERF3_PATH" \
+TEST_RUNNER_OPENSSL_PATH="$OPENSSL_PATH" \
+xcodebuild -scheme IperfSwift -destination 'platform=macOS' test
+```
+
+`xcodebuild` strips the `TEST_RUNNER_` prefix when passing these environment
+variables to test processes; a shell-only override does not select the CLI there.
 
 Run the standalone C checks after resolving/building the package:
 
 ```sh
 ./Scripts/verify_auth_safety.sh
 ./Scripts/verify_engine_regressions.sh
+./Scripts/verify_bounded_output.sh
 ./Scripts/verify_no_ssl_stubs.sh
 ```
 
@@ -431,6 +584,20 @@ blocked in `sendfile()`, descriptors released at test end, and stream sockets
 after failed stream setup. The
 engine checks also run the pinned `iperf3` CLI, found through `IPERF3_PATH`.
 Set `SWIFT_BUILD_PATH` when using a SwiftPM scratch path instead of `.build`.
+
+`./Scripts/verify_bounded_output.sh` separately instruments heap requests in the
+actual collector, serializer, result-frame parser and cJSON under AddressSanitizer
+and UndefinedBehaviorSanitizer. It checks large optional output, core byte/node
+budgets and allocation-failure cleanup. The serialization probe deliberately
+fails at an invalid fd after encoding, while CLI interoperability tests verify
+successful real result exchange. Reported requested bytes exclude allocator
+overhead, stack, engine interval/start/end data, Swift copies and device footprint.
+The CLI budget matrix covers TCP/UDP, upload/download/Both, text/JSON output,
+small/normal budgets, runner reuse, persistent-server reset and request-off rounds.
+Standalone malformed-frame/socket tests do not by themselves prove runner-level
+failure recovery, so runner tests also drive a controlled peer through missing,
+empty, oversized, malformed, truncated and stalled result exchanges, alone and
+with a bounded logfile.
 
 The integration suite starts local Swift or CLI peers, creates temporary RSA
 credentials, and allocates random local ports. It covers TCP and UDP
@@ -486,7 +653,7 @@ generated C source because the next sync will overwrite them.
 ## Versioning
 
 The Swift package and embedded engine have separate versions. For example,
-package release `3.22.0` embeds the official iperf3 `3.22` engine. See
+package release `3.22.1` embeds the official iperf3 `3.22` engine. See
 [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## Roadmap

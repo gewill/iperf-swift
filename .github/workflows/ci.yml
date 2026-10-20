@@ -57,6 +57,8 @@ jobs:
         run: swift package generate-documentation --target IperfSwift --warnings-as-errors
       - name: Run tests
         run: swift test
+      - name: Verify bounded result allocation budgets
+        run: ./Scripts/verify_bounded_output.sh
       - name: Verify authentication and engine regressions with AddressSanitizer
         run: |
           ./Scripts/verify_auth_safety.sh
