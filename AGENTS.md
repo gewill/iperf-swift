@@ -109,6 +109,11 @@ A Swift server in the test process needs the same wait, since `.running`
 arrives before the engine listens: call `waitUntilSwiftServerListens(on:)`
 before each of its clients.
 
+To check that a server released its port, read its sockets the same way, with
+`IperfCLITestSupport.tcpSocketStates(pid:port:)`, rather than binding the port:
+any socket on the port refuses a wildcard bind — another process's connection,
+one in TIME_WAIT — and `SO_REUSEADDR` does not get past another user's.
+
 Do not commit private keys, passwords, logs, or machine-specific test fixtures.
 
 ## Documentation

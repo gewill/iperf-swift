@@ -9,6 +9,20 @@ package release number.
 
 ## [Unreleased]
 
+### Fixed
+
+- Internal: the wildcard server lifecycle test ([#158]) checks that `stop()`
+  released the listener by reading the test process's sockets with lsof
+  instead of binding the port, and takes its port from `freePort()`. A bind
+  probe fails on any socket on the port, and the test reserved its port with a
+  dual-stack bind to port 0, which avoids only ports that IPv6 sockets hold:
+  measured, it handed out ports that other apps' IPv4 connections held, and
+  there the probe still failed after the listener had closed, which matches
+  the "listener still holds the port" failure seen once while preparing 3.22.1.
+  `SO_REUSEADDR` would get the probe past this user's sockets but not another
+  user's. The server safety tests now share `freePort()` and the lsof reader
+  with the CLI tests.
+
 ## [3.22.1] - 2026-10-20
 
 Opt-in resource budgets for logs and raw server output ([#194], [#195],

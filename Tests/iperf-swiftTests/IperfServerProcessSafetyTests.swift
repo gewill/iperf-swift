@@ -128,11 +128,10 @@ final class IperfServerProcessSafetyTests: XCTestCase {
         // the wildcard address rather than loopback. Every other server test
         // sets the address explicitly, so without this one the default path is
         // never run.
-        // Not freePort(): that one proves a port is free on 127.0.0.1, which
-        // does not establish that a wildcard bind will succeed — measured, the
-        // server failed to listen on roughly half of those ports. Reserve it
-        // the way the server will claim it.
-        let port = try Self.freeWildcardPort()
+        // Not a dual-stack bind to port 0: the kernel then avoids only the
+        // ports IPv6 sockets hold, and measured, it handed out ports that
+        // other apps' IPv4 connections held. freePort() checks both families.
+        let port = try IperfCLITestSupport.freePort()
 
         var configuration = IperfConfiguration()
         configuration.role = .server
@@ -173,37 +172,38 @@ final class IperfServerProcessSafetyTests: XCTestCase {
         wait(for: [running], timeout: 5)
 
         // Wait for the listener rather than trusting `.running`: the runner
-        // reports that state before the listener is confirmed, so at that
-        // moment the port may not be taken yet and the listen can still fail
-        // afterwards. Probe IPv6, the family the engine binds — net.c forces
-        // AF_INET6 when no bind address is given. An IPv4 probe is not a
-        // substitute: measured, it sometimes binds successfully alongside a
-        // running server, because the engine sets SO_REUSEADDR and the two
-        // families coexist on one port.
+        // reports that state before the engine listens, and the listen can
+        // still fail afterwards. Read this process's sockets on the port, here
+        // and after stop(), rather than binding it. Any socket on the port
+        // refuses a wildcard bind — another process's connection from it, one
+        // in TIME_WAIT — so a bind probe can find the port held before the
+        // server listens, and still held once the listener is gone.
+        // `SO_REUSEADDR` gets such a bind past this user's sockets on other
+        // addresses, TIME_WAIT included, but not past another user's.
         var held = false
-        let deadline = Date().addingTimeInterval(3)
+        let deadline = Date().addingTimeInterval(10)
         while Date() < deadline {
             lock.lock()
             let failure = startupError
             lock.unlock()
             if let failure {
-                // Reserving a wildcard port still leaves the window #155
-                // describes. Say so, rather than letting it surface as the
-                // assertion below.
+                // freePort() releases the port before the server binds it,
+                // the window #155 describes. Say so, rather than letting it
+                // surface as the assertion below.
                 try XCTSkipIf(
                     failure == .IELISTEN,
-                    "the reserved wildcard port \(port) was taken before the server claimed it"
+                    "the free port \(port) was taken before the server claimed it"
                 )
                 XCTFail("wildcard server failed: \(failure.debugDescription)")
                 return
             }
-            if Self.wildcardBindError(AF_INET6, port: port) != nil {
+            if try IperfCLITestSupport.tcpSocketStates(pid: getpid(), port: port) == ["LISTEN"] {
                 held = true
                 break
             }
             Thread.sleep(forTimeInterval: 0.02)
         }
-        XCTAssertTrue(held, "the server never took the wildcard port")
+        XCTAssertTrue(held, "the server never listened on port \(port)")
 
         server.stop()
         wait(for: [terminal], timeout: 5)
@@ -213,96 +213,11 @@ final class IperfServerProcessSafetyTests: XCTestCase {
         lock.unlock()
         XCTAssertEqual(observed.last, .finished)
 
-        XCTAssertNil(
-            Self.wildcardBindError(AF_INET6, port: port),
+        // The engine closes its listener before it reports `.finished`.
+        XCTAssertEqual(
+            try IperfCLITestSupport.tcpSocketStates(pid: getpid(), port: port), [],
             "the listener still holds the port after stop()"
         )
-    }
-
-    /// A port that was free for a wildcard bind a moment ago.
-    private static func freeWildcardPort() throws -> Int {
-        let descriptor = socket(AF_INET6, SOCK_STREAM, 0)
-        guard descriptor >= 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EADDRNOTAVAIL)
-        }
-        defer { close(descriptor) }
-
-        var disableV6Only: Int32 = 0
-        setsockopt(
-            descriptor, IPPROTO_IPV6, IPV6_V6ONLY,
-            &disableV6Only, socklen_t(MemoryLayout<Int32>.size)
-        )
-
-        var address = sockaddr_in6()
-        address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
-        address.sin6_family = sa_family_t(AF_INET6)
-        address.sin6_port = 0
-        address.sin6_addr = in6addr_any
-        let bound = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in6>.size))
-            }
-        }
-        guard bound == 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EADDRNOTAVAIL)
-        }
-
-        var assigned = sockaddr_in6()
-        var length = socklen_t(MemoryLayout<sockaddr_in6>.size)
-        let named = withUnsafeMutablePointer(to: &assigned) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                getsockname(descriptor, $0, &length)
-            }
-        }
-        guard named == 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EADDRNOTAVAIL)
-        }
-        return Int(UInt16(bigEndian: assigned.sin6_port))
-    }
-
-    /// Attempts a wildcard bind of one family, returning `nil` on success and
-    /// the `errno` otherwise.
-    ///
-    /// The IPv6 socket clears `IPV6_V6ONLY` to match what the engine does, so
-    /// the probe collides with the engine's listener the same way a second
-    /// server would.
-    private static func wildcardBindError(_ family: Int32, port: Int) -> Int32? {
-        let descriptor = socket(family, SOCK_STREAM, 0)
-        guard descriptor >= 0 else {
-            return errno
-        }
-        defer { close(descriptor) }
-
-        if family == AF_INET6 {
-            var disableV6Only: Int32 = 0
-            setsockopt(
-                descriptor, IPPROTO_IPV6, IPV6_V6ONLY,
-                &disableV6Only, socklen_t(MemoryLayout<Int32>.size)
-            )
-            var address = sockaddr_in6()
-            address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
-            address.sin6_family = sa_family_t(AF_INET6)
-            address.sin6_port = UInt16(port).bigEndian
-            address.sin6_addr = in6addr_any
-            let result = withUnsafePointer(to: &address) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in6>.size))
-                }
-            }
-            return result == 0 ? nil : errno
-        }
-
-        var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = UInt16(port).bigEndian
-        address.sin_addr = in_addr(s_addr: in_addr_t(0))
-        let result = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-        return result == 0 ? nil : errno
     }
 
     private func runOneOffIdleTimeoutScenario() throws {
