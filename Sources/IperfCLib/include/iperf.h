@@ -33,6 +33,7 @@
 #include <sys/types.h>
 #include <stdio.h>
 #include <stdint.h>
+#include "iperf_bounded_log.h"
 #include <inttypes.h>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -54,6 +55,7 @@
 #include "timer.h"
 #include "queue.h"
 #include "cjson.h"
+#include "iperf_bounded_output.h"
 #include "iperf_time.h"
 #include "portable_endian.h"
 
@@ -335,6 +337,7 @@ struct iperf_test
 
     char     *logfile;				/* --logfile option */
     FILE     *outfile;
+    struct iperf_log_status logfile_status;
 
     int       ctrl_sck;
     int       mapped_v4;
@@ -432,6 +435,19 @@ struct iperf_test
     cJSON *json_connected;
     cJSON *json_intervals;
     cJSON *json_end;
+
+    /* Opt-in output budget. Owned on the engine queue, except the atomic stop
+     * flag. Text collection uses print_mutex like the existing reporter. */
+    size_t server_output_byte_limit;
+    struct iperf_server_output collected_server_output;
+    struct iperf_server_output received_server_output;
+    struct iperf_result_read_metrics output_read_metrics;
+    char *output_scratch;
+    size_t output_json_values;
+    size_t output_json_intervals;
+    int output_finalized;
+    int received_server_output_ready;
+    int output_stop_requested;
 
     /* Server output (use on client side only) */
     char *server_output_text;
