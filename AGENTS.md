@@ -88,8 +88,8 @@ authentication, interface binding, DSCP, and macOS TCP statistics. Continue
 expanding both pure Swift unit tests and CLI interoperability tests. Linux-only
 iperf features such as GSO/GRO require a Linux test runner.
 
-When a test starts a server or subprocess, use a random local port and clean it
-up with XCTest teardown.
+When a test starts a server or subprocess, give it a port from
+`IperfCLITestSupport.freePort()` and clean it up with XCTest teardown.
 
 Confirm it is listening before connecting, rather than sleeping a fixed
 interval. A helper that hands out a free port has already released it, so the
@@ -108,6 +108,11 @@ claimed it yet.
 A Swift server in the test process needs the same wait, since `.running`
 arrives before the engine listens: call `waitUntilSwiftServerListens(on:)`
 before each of its clients.
+
+To check that a server released its port, read its sockets the same way, with
+`IperfCLITestSupport.tcpSocketStates(pid:port:)`, rather than binding the port:
+any socket on the port refuses a wildcard bind — another process's connection,
+one in TIME_WAIT — and `SO_REUSEADDR` does not get past another user's.
 
 Do not commit private keys, passwords, logs, or machine-specific test fixtures.
 
