@@ -309,7 +309,7 @@ final class IperfServerProcessSafetyTests: XCTestCase {
         var configuration = IperfConfiguration()
         configuration.role = .server
         configuration.address = "127.0.0.1"
-        configuration.port = try Self.freePort()
+        configuration.port = try IperfCLITestSupport.freePort()
         configuration.oneOff = true
         configuration.idleTimeout = 1
 
@@ -365,7 +365,7 @@ final class IperfServerProcessSafetyTests: XCTestCase {
     private func runAbruptServerDisconnectScenario() throws {
         signal(SIGPIPE, SIG_DFL)
 
-        let port = try Self.freePort()
+        let port = try IperfCLITestSupport.freePort()
         let server = Process()
         let serverOutput = Pipe()
         server.executableURL = URL(fileURLWithPath: try IperfCLITestSupport.iperf3())
@@ -432,7 +432,7 @@ final class IperfServerProcessSafetyTests: XCTestCase {
     private func runAbruptClientDisconnectScenario() throws {
         signal(SIGPIPE, SIG_DFL)
 
-        let port = try Self.freePort()
+        let port = try IperfCLITestSupport.freePort()
         var configuration = IperfConfiguration()
         configuration.role = .server
         configuration.address = "127.0.0.1"
@@ -514,7 +514,7 @@ final class IperfServerProcessSafetyTests: XCTestCase {
             close(sentinelPipe[1])
         }
 
-        let port = try Self.freePort()
+        let port = try IperfCLITestSupport.freePort()
         var configuration = IperfConfiguration()
         configuration.role = .server
         configuration.address = "127.0.0.1"
@@ -746,12 +746,6 @@ final class IperfServerProcessSafetyTests: XCTestCase {
             }
         }
         return nil
-    }
-
-    private static func freePort() throws -> Int {
-        let listener = try boundListener()
-        close(listener.descriptor)
-        return listener.port
     }
 
     private enum SocketEndpoint {

@@ -88,8 +88,8 @@ authentication, interface binding, DSCP, and macOS TCP statistics. Continue
 expanding both pure Swift unit tests and CLI interoperability tests. Linux-only
 iperf features such as GSO/GRO require a Linux test runner.
 
-When a test starts a server or subprocess, use a random local port and clean it
-up with XCTest teardown.
+When a test starts a server or subprocess, give it a port from
+`IperfCLITestSupport.freePort()` and clean it up with XCTest teardown.
 
 Confirm it is listening before connecting, rather than sleeping a fixed
 interval. A helper that hands out a free port has already released it, so the
