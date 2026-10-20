@@ -169,6 +169,19 @@ enum IperfCLITestSupport {
         return descriptor
     }
 
+    /// A TCP socket listening on 127.0.0.1, at a port the kernel picks.
+    static func boundListener() throws -> (descriptor: Int32, port: Int) {
+        guard let descriptor = boundSocket(SOCK_STREAM, AF_INET, port: 0, loopback: true) else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EADDRNOTAVAIL)
+        }
+        guard listen(descriptor, 1) == 0, let port = boundPort(descriptor) else {
+            let failure = errno
+            close(descriptor)
+            throw POSIXError(POSIXErrorCode(rawValue: failure) ?? .EADDRNOTAVAIL)
+        }
+        return (descriptor, port)
+    }
+
     static func boundPort(_ descriptor: Int32) -> Int? {
         var address = sockaddr_storage()
         var length = socklen_t(MemoryLayout<sockaddr_storage>.size)
