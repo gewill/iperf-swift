@@ -49,7 +49,7 @@ Or add the package to `Package.swift`:
 dependencies: [
     .package(
         url: "https://github.com/gewill/iperf-swift.git",
-        from: "3.22.0"
+        from: "3.22.1"
     )
 ]
 ```
@@ -595,8 +595,9 @@ overhead, stack, engine interval/start/end data, Swift copies and device footpri
 The CLI budget matrix covers TCP/UDP, upload/download/Both, text/JSON output,
 small/normal budgets, runner reuse, persistent-server reset and request-off rounds.
 Standalone malformed-frame/socket tests do not by themselves prove runner-level
-failure recovery; final platform, hostile-peer and combined logfile-budget
-validation remain tracked in SDK #196 before release.
+failure recovery, so runner tests also drive a controlled peer through missing,
+empty, oversized, malformed, truncated and stalled result exchanges, alone and
+with a bounded logfile.
 
 The integration suite starts local Swift or CLI peers, creates temporary RSA
 credentials, and allocates random local ports. It covers TCP and UDP
@@ -652,7 +653,7 @@ generated C source because the next sync will overwrite them.
 ## Versioning
 
 The Swift package and embedded engine have separate versions. For example,
-package release `3.22.0` embeds the official iperf3 `3.22` engine. See
+package release `3.22.1` embeds the official iperf3 `3.22` engine. See
 [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## Roadmap
