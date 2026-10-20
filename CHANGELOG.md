@@ -9,6 +9,53 @@ package release number.
 
 ## [Unreleased]
 
+## [3.22.1] - 2026-10-20
+
+Opt-in resource budgets for logs and raw server output ([#194], [#195],
+[#196], [#197]). Both are disabled by default, so existing configurations keep
+their current behavior.
+
+**Migration:** exhaustive `switch` statements over `IperfError` must handle the
+new `IELOGFILELIMIT` and `IESERVEROUTPUTLIMIT` cases.
+
+### Added
+
+- `IperfConfiguration.logfileByteLimit` bounds a `logfile` where the engine
+  actually writes it. The budget includes existing bytes and at most one
+  `[iperf log truncated]` marker; the retained prefix ends on a UTF-8 scalar
+  boundary, and output past the budget is dropped without stopping the
+  measurement. Open, write and close failures are reported in
+  `IperfLogfileResult` instead of failing the run. A limit below
+  `minimumLogfileByteLimit`, or one without a `logfile`, fails preflight with
+  `IELOGFILELIMIT`.
+- `start` overloads take an `onResourcesReleased` callback that reports once
+  for each accepted start, after the logfile is closed and every native
+  resource is freed, including after a validation failure, a queued
+  cancellation, or deallocation while queued.
+  `IperfRunCompletion.runID` tells generations of a reused runner apart, and
+  `IperfRunner.completion` holds the latest result. `.finished` keeps its
+  timing and is still not a safe point to delete the logfile.
+- `IperfConfiguration.serverOutputByteLimit` (1...1 MiB) bounds raw server
+  output through server collection, result encoding, client reception and
+  parsing, and the Swift copy. Text keeps a UTF-8 prefix, JSON is delivered
+  complete or not at all, and valid statistics survive an oversized optional
+  output. `serverOutputStatus` and `localServerOutputStatus` distinguish
+  not-requested, waiting, missing, complete, truncated, discarded and invalid
+  output. Combining the budget with `jsonStream` and `jsonStreamFullOutput`
+  fails preflight with `IESERVEROUTPUTLIMIT`.
+- Public initializers for `IperfLogfileResult`, `IperfRunCompletion` and
+  `IperfServerOutputStatus`, so test doubles can deliver them.
+- `Scripts/verify_bounded_output.sh`, run in CI, checks the heap requests of
+  the output collector, serializer and result parser under AddressSanitizer
+  and UndefinedBehaviorSanitizer.
+
+### Changed
+
+- With `serverOutputByteLimit` set, the runner reports its terminal state after
+  the native run returns, so a failed result exchange is reported as an error
+  rather than after `.finished`. The result exchange then has a 30-second
+  absolute deadline, like the CLI client's frame read, and `stop()` cancels it.
+
 ### Fixed
 
 - Internal: CLI interoperability tests wait until each `iperf3` server is
@@ -937,7 +984,8 @@ unchanged from 3.21.6.
 
 - Embedded engine updated to iperf3 3.14.
 
-[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.22.0...HEAD
+[Unreleased]: https://github.com/gewill/iperf-swift/compare/v3.22.1...HEAD
+[3.22.1]: https://github.com/gewill/iperf-swift/compare/v3.22.0...v3.22.1
 [3.22.0]: https://github.com/gewill/iperf-swift/compare/v3.21.19...v3.22.0
 [3.21.19]: https://github.com/gewill/iperf-swift/compare/v3.21.18...v3.21.19
 [3.21.18]: https://github.com/gewill/iperf-swift/compare/v3.21.17...v3.21.18
@@ -1043,3 +1091,7 @@ unchanged from 3.21.6.
 [#191]: https://github.com/gewill/iperf-swift/issues/191
 [#198]: https://github.com/gewill/iperf-swift/issues/198
 [#199]: https://github.com/gewill/iperf-swift/pull/199
+[#194]: https://github.com/gewill/iperf-swift/issues/194
+[#195]: https://github.com/gewill/iperf-swift/pull/195
+[#196]: https://github.com/gewill/iperf-swift/issues/196
+[#197]: https://github.com/gewill/iperf-swift/pull/197
