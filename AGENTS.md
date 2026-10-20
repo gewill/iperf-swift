@@ -103,7 +103,9 @@ a persistent server's next client, call `waitUntilListening()` again — the
 server replaces its listener after every run. The helper observes the listener
 rather than probing the port: connecting would consume the one client a `-1`
 server will serve, and binding could take the port from a server that has not
-claimed it yet.
+claimed it yet, or fail on another socket there as if the server were
+listening. The isolated scenarios in `IperfServerProcessSafetyTests.swift`
+cannot reach the helper and have their own `startCLIServer()`.
 
 A Swift server in the test process needs the same wait, since `.running`
 arrives before the engine listens: call `waitUntilSwiftServerListens(on:)`

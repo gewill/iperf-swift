@@ -22,6 +22,15 @@ package release number.
   `SO_REUSEADDR` would get the probe past this user's sockets but not another
   user's. The server safety tests now share `freePort()` and the lsof reader
   with the CLI tests.
+- Internal: the abrupt server disconnect test waits until lsof shows its
+  `iperf3` server's listener, and starts the server again on another port when
+  it could not listen, instead of taking a refused bind on `127.0.0.1` at the
+  port for a listening server. Any socket on the port refuses that bind:
+  measured, another process's connection from `127.0.0.1` at the port made the
+  probe report a server that was not listening yet, and the client was
+  refused. The test runs in a child `xctest` process, where a skip would fail
+  the parent test, so a lost port is retried rather than skipped. The server
+  safety tests now share `boundListener()` with the CLI tests.
 
 ## [3.22.1] - 2026-10-20
 

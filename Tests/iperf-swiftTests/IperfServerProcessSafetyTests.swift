@@ -98,7 +98,7 @@ final class IperfServerProcessSafetyTests: XCTestCase {
     }
 
     func testServerListenFailureLeavesTheOccupiedDescriptorOpen() throws {
-        let occupied = try Self.boundListener()
+        let occupied = try IperfCLITestSupport.boundListener()
         defer { close(occupied.descriptor) }
 
         var configuration = IperfConfiguration()
@@ -280,21 +280,7 @@ final class IperfServerProcessSafetyTests: XCTestCase {
     private func runAbruptServerDisconnectScenario() throws {
         signal(SIGPIPE, SIG_DFL)
 
-        let port = try IperfCLITestSupport.freePort()
-        let server = Process()
-        let serverOutput = Pipe()
-        server.executableURL = URL(fileURLWithPath: try IperfCLITestSupport.iperf3())
-        server.arguments = ["-s", "-p", String(port)]
-        server.standardOutput = serverOutput
-        server.standardError = serverOutput
-        try server.run()
-        addTeardownBlock {
-            if server.isRunning {
-                server.terminate()
-                server.waitUntilExit()
-            }
-        }
-        try Self.waitForListener(boundTo: port, process: server)
+        let (server, port) = try startCLIServer()
 
         var configuration = IperfConfiguration()
         configuration.address = "127.0.0.1"
@@ -579,6 +565,67 @@ final class IperfServerProcessSafetyTests: XCTestCase {
         XCTAssertTrue(output.contains(completionMarker), output)
     }
 
+    private struct CLIServerNotListening: LocalizedError, CustomStringConvertible {
+        let description: String
+
+        var errorDescription: String? { description }
+    }
+
+    /// Starts `iperf3 -s` on a free port and returns it once it is listening;
+    /// teardown terminates it.
+    ///
+    /// It does what the CLI tests' `startCLIServer`, private to their file,
+    /// does: it waits until lsof shows that the server's only TCP socket on the
+    /// port is its listener, starts a server that could not listen again on
+    /// another port, up to five times, and otherwise throws with what the
+    /// server printed. A bind on the port cannot tell, since any socket there
+    /// refuses it: measured, another process's connection from 127.0.0.1 at
+    /// the port made such a probe report a server that was not listening yet,
+    /// and the client was refused. Skipping on a lost port would not help
+    /// either: a child that skips never writes the completion marker, so the
+    /// parent test fails.
+    private func startCLIServer() throws -> (process: Process, port: Int) {
+        let iperf3 = URL(fileURLWithPath: try IperfCLITestSupport.iperf3())
+        var attempt = 1
+        while true {
+            let port = try IperfCLITestSupport.freePort()
+            let server = Process()
+            let output = Pipe()
+            server.executableURL = iperf3
+            server.arguments = ["-s", "-p", String(port)]
+            server.standardOutput = output
+            server.standardError = output
+            try server.run()
+            addTeardownBlock {
+                if server.isRunning {
+                    server.terminate()
+                    server.waitUntilExit()
+                }
+            }
+            // Three of the isolated test's ten seconds; the client is given six.
+            let deadline = Date(timeIntervalSinceNow: 3)
+            while server.isRunning && Date() < deadline {
+                if try IperfCLITestSupport.tcpSocketStates(pid: server.processIdentifier, port: port) == ["LISTEN"] {
+                    return (server, port)
+                }
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+            let exited = !server.isRunning
+            if !exited {
+                server.terminate()
+            }
+            server.waitUntilExit()
+            let printed = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            guard exited, printed.contains("unable to start listener for connections"), attempt < 5 else {
+                throw CLIServerNotListening(description: exited
+                    ? "the iperf3 server on port \(port) exited with status \(server.terminationStatus) "
+                        + "before listening:\n\(printed)"
+                    : "the iperf3 server on port \(port) was not listening after 3s:\n\(printed)")
+            }
+            attempt += 1
+        }
+    }
+
     private static func xctestExecutableURL() throws -> URL {
         let lookup = Process()
         let output = Pipe()
@@ -606,36 +653,6 @@ final class IperfServerProcessSafetyTests: XCTestCase {
             Thread.sleep(forTimeInterval: 0.01)
         } while Date() < deadline
         throw POSIXError(.ENOENT)
-    }
-
-    private static func waitForListener(boundTo port: Int, process: Process) throws {
-        let deadline = Date().addingTimeInterval(3)
-        repeat {
-            let probe = socket(AF_INET, SOCK_STREAM, 0)
-            guard probe >= 0 else {
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EADDRNOTAVAIL)
-            }
-            var address = sockaddr_in()
-            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-            address.sin_family = sa_family_t(AF_INET)
-            address.sin_port = UInt16(port).bigEndian
-            address.sin_addr = in_addr(s_addr: in_addr_t(INADDR_LOOPBACK).bigEndian)
-            let result = withUnsafePointer(to: &address) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    Darwin.bind(probe, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-                }
-            }
-            let bindError = errno
-            close(probe)
-            if result < 0 && bindError == EADDRINUSE {
-                return
-            }
-            guard process.isRunning else {
-                throw POSIXError(.ECONNREFUSED)
-            }
-            Thread.sleep(forTimeInterval: 0.01)
-        } while Date() < deadline
-        throw POSIXError(.ETIMEDOUT)
     }
 
     private static func listenerDescriptor(boundTo port: Int) -> Int32? {
@@ -733,46 +750,6 @@ final class IperfServerProcessSafetyTests: XCTestCase {
         var enabledLength = socklen_t(MemoryLayout.size(ofValue: enabled))
         return getsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &enabled, &enabledLength) == 0
             && enabled == 1
-    }
-
-    private static func boundListener() throws -> (descriptor: Int32, port: Int) {
-        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
-        guard descriptor >= 0 else {
-            throw POSIXError(.EADDRNOTAVAIL)
-        }
-
-        var address = sockaddr_in()
-        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = 0
-        address.sin_addr = in_addr(s_addr: in_addr_t(INADDR_LOOPBACK).bigEndian)
-
-        let bindResult = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-        guard bindResult == 0 else {
-            close(descriptor)
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EADDRNOTAVAIL)
-        }
-        guard listen(descriptor, 1) == 0 else {
-            close(descriptor)
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EADDRNOTAVAIL)
-        }
-
-        var boundAddress = sockaddr_in()
-        var addressLength = socklen_t(MemoryLayout<sockaddr_in>.size)
-        let nameResult = withUnsafeMutablePointer(to: &boundAddress) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                getsockname(descriptor, $0, &addressLength)
-            }
-        }
-        guard nameResult == 0 else {
-            close(descriptor)
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EADDRNOTAVAIL)
-        }
-        return (descriptor, Int(UInt16(bigEndian: boundAddress.sin_port)))
     }
 }
 #endif
